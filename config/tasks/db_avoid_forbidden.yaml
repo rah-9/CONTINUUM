@@ -1,0 +1,7 @@
+# Pre-registered task (Continuum Lab database family).
+task_id: db_avoid_forbidden
+description: "Ship r1,r2 but never touch r9"
+factory: "continuum_lab.registry:lab_task"
+options:
+  task: db_avoid_forbidden
+  fake_models: true   # deterministic local agent; set false to use config/models.yaml

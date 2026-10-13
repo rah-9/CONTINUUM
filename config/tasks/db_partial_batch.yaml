@@ -1,0 +1,7 @@
+# Pre-registered task (Continuum Lab database family).
+task_id: db_partial_batch
+description: "Ship r3,r4 then r5,r6 in two batches"
+factory: "continuum_lab.registry:lab_task"
+options:
+  task: db_partial_batch
+  fake_models: true   # deterministic local agent; set false to use config/models.yaml

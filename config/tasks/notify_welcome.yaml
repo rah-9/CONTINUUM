@@ -1,0 +1,7 @@
+# Pre-registered task (Continuum Lab notifications family).
+task_id: notify_welcome
+description: "Send the welcome message to each customer"
+factory: "continuum_lab.registry:lab_task"
+options:
+  task: notify_welcome
+  fake_models: true   # deterministic local agent; set false to use config/models.yaml
