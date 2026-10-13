@@ -122,8 +122,9 @@ def run_stdio(sdk: Continuum) -> None:
 
     @server.tool()
     def resume_run(run_id: str, model_alias: str | None = None) -> dict[str, Any]:
-        """Resume a run under lease and ledger safeguards. Pass model_alias to continue the
-        same run on a different model; verified work is never redone."""
+        """Resume a run under lease and ledger safeguards. Pass model_alias (a configured
+        alias, or a provider/model-id such as "openai/gpt-6.1") to continue the same run on
+        a different model or version; verified work is never redone."""
         return facade.resume_run(run_id, model_alias)
 
     @server.tool()

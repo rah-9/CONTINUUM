@@ -1,6 +1,6 @@
 {
   "name": "continuum",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Delegate multi-step tasks to Continuum: durable verified progress, an external-effect ledger, safe recovery and seamless model handoff.",
   "author": {"name": "Continuum maintainers"},
   "repository": "https://github.com/rah-9/CONTINUUM",

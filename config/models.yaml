@@ -5,6 +5,15 @@
 # (UnsupportedCapabilityError); they are never silently used.
 # API keys come only from the environment (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY).
 # Routing (primary/fallbacks/backoff) is part of each task spec's model_policy.
+#
+# Upgrading or switching models (see docs/MODEL-SWITCHING.md):
+#   - point an alias at a new version, e.g. model_id: "openai/gpt-6.1", or
+#   - use `profile: auto` to take limits/prices from the LiteLLM model registry
+#     (refused unless the registry reports context, output limit and tool calling):
+#       D:
+#         model_id: "anthropic/claude-opus-5-5"
+#         profile: auto
+#   - or pass any provider/model-id directly: `continuum resume <run> --model <id>`.
 models:
   A:
     model_id: "provider_a/exact-version"
