@@ -1,6 +1,6 @@
 # Durable state and data schema
 
-**Backend for v1: SQLite only.** All persistent business state is reconstructed from the per-run event log. Event insertion and projection updates occur **inside the same SQLite transaction**; a separate lease table manages ephemeral controller ownership.
+**Backend for v1: PostgreSQL only** (14+, one database on the local host). All persistent business state is reconstructed from the per-run event log. Event insertion and projection updates occur **inside the same PostgreSQL transaction**; a separate lease table manages ephemeral controller ownership.
 
 ## 1. State enums
 
@@ -46,143 +46,155 @@ Registration of trusted tool manifests includes operation identity rules. Exampl
 
 Validate unique milestone IDs, DAG acyclicity, known verifier and manifest versions, budget positivity, file path confinement, verified/snapshotted inputs and appropriate operation identity rules **before** run creation.
 
-## 3. SQLite DDL (canonical)
+## 3. PostgreSQL DDL (canonical)
+
+The executable copy is `src/continuum/core/schema.sql`; `tests/unit/test_docs_sync.py` fails if the two differ.
 
 ```sql
-PRAGMA foreign_keys = ON;
-PRAGMA journal_mode = WAL;
-PRAGMA busy_timeout = 5000;
+-- Continuum durable schema (PostgreSQL 14+). Canonical DDL; see docs/03-STATE-SCHEMA.md.
+-- Idempotent: safe to execute on every start. Schema migrations are out of scope for v1.
 
-CREATE TABLE runs (
-  run_id TEXT PRIMARY KEY,
-  task_id TEXT NOT NULL,
-  spec_json TEXT NOT NULL,               -- canonical immutable snapshot
-  status TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS runs (
+  run_id            TEXT PRIMARY KEY,
+  task_id           TEXT NOT NULL,
+  spec_json         JSONB NOT NULL,              -- canonical immutable snapshot
+  status            TEXT NOT NULL,
   active_session_id TEXT,
-  last_event_seq INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  finished_at TEXT,
-  failure_code TEXT
+  last_event_seq    BIGINT NOT NULL DEFAULT 0,
+  created_at        TIMESTAMPTZ NOT NULL,
+  updated_at        TIMESTAMPTZ NOT NULL,
+  finished_at       TIMESTAMPTZ,
+  failure_code      TEXT
 );
 
-CREATE TABLE events (
-  run_id TEXT NOT NULL REFERENCES runs(run_id),
-  seq INTEGER NOT NULL,
-  event_id TEXT NOT NULL UNIQUE,
+CREATE TABLE IF NOT EXISTS events (
+  run_id         TEXT NOT NULL REFERENCES runs(run_id),
+  seq            BIGINT NOT NULL,
+  event_id       TEXT NOT NULL UNIQUE,
   schema_version INTEGER NOT NULL,
-  type TEXT NOT NULL,
-  occurred_at TEXT NOT NULL,
-  actor TEXT NOT NULL,
-  payload_json TEXT NOT NULL,
+  type           TEXT NOT NULL,
+  occurred_at    TIMESTAMPTZ NOT NULL,
+  actor          TEXT NOT NULL,
+  payload_json   JSONB NOT NULL,
   PRIMARY KEY (run_id, seq)
 );
 
+-- Historical events are immutable.
+CREATE OR REPLACE FUNCTION continuum_events_immutable() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'events are append-only';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS events_immutable ON events;
+CREATE TRIGGER events_immutable BEFORE UPDATE OR DELETE ON events
+  FOR EACH ROW EXECUTE FUNCTION continuum_events_immutable();
+
 -- Ownership metadata: intentionally NOT reconstructed from historical events.
-CREATE TABLE run_leases (
-  run_id TEXT PRIMARY KEY REFERENCES runs(run_id),
-  owner_id TEXT NOT NULL,
-  epoch INTEGER NOT NULL,
-  expires_at_unix INTEGER NOT NULL
+CREATE TABLE IF NOT EXISTS run_leases (
+  run_id          TEXT PRIMARY KEY REFERENCES runs(run_id),
+  owner_id        TEXT NOT NULL,
+  epoch           BIGINT NOT NULL,
+  expires_at_unix BIGINT NOT NULL
 );
 
-CREATE TABLE model_sessions (
-  session_id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL REFERENCES runs(run_id),
-  model_id TEXT NOT NULL,
-  profile_json TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS model_sessions (
+  session_id    TEXT PRIMARY KEY,
+  run_id        TEXT NOT NULL REFERENCES runs(run_id),
+  model_id      TEXT NOT NULL,
+  profile_json  JSONB NOT NULL,
   packet_sha256 TEXT NOT NULL,
-  started_at TEXT NOT NULL,
-  ended_at TEXT,
+  started_at    TIMESTAMPTZ NOT NULL,
+  ended_at      TIMESTAMPTZ,
   finish_reason TEXT
 );
 
-CREATE TABLE milestones (
-  run_id TEXT NOT NULL REFERENCES runs(run_id),
-  milestone_id TEXT NOT NULL,
-  status TEXT NOT NULL,
-  verifier_id TEXT NOT NULL,
-  verifier_version TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS milestones (
+  run_id            TEXT NOT NULL REFERENCES runs(run_id),
+  milestone_id      TEXT NOT NULL,
+  status            TEXT NOT NULL,
+  verifier_id       TEXT NOT NULL,
+  verifier_version  TEXT NOT NULL,
   input_fingerprint TEXT,
-  evidence_ref TEXT,
-  verified_at TEXT,
+  evidence_ref      TEXT,
+  verified_at       TIMESTAMPTZ,
   PRIMARY KEY (run_id, milestone_id)
 );
 
-CREATE TABLE actions (
-  action_id TEXT PRIMARY KEY,              -- generated once by the runtime
-  run_id TEXT NOT NULL REFERENCES runs(run_id),
-  milestone_id TEXT,
-  operation_key TEXT NOT NULL,             -- trusted business intent identity
-  tool_name TEXT NOT NULL,
-  manifest_version TEXT NOT NULL,
-  args_json TEXT NOT NULL,                -- redacted; secrets passed out-of-band
-  args_sha256 TEXT NOT NULL,               -- canonical execution intent digest
-  idempotency_key TEXT,                   -- null when unsupported
-  status TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  outcome_ref TEXT,
+CREATE TABLE IF NOT EXISTS actions (
+  action_id          TEXT PRIMARY KEY,          -- generated once by the runtime
+  run_id             TEXT NOT NULL REFERENCES runs(run_id),
+  milestone_id       TEXT,
+  operation_key      TEXT NOT NULL,             -- trusted business intent identity
+  tool_name          TEXT NOT NULL,
+  manifest_version   TEXT NOT NULL,
+  args_json          JSONB NOT NULL,            -- redacted; secrets passed out-of-band
+  args_sha256        TEXT NOT NULL,             -- canonical execution intent digest
+  idempotency_key    TEXT,                      -- null when unsupported
+  status             TEXT NOT NULL,
+  created_at         TIMESTAMPTZ NOT NULL,
+  updated_at         TIMESTAMPTZ NOT NULL,
+  outcome_ref        TEXT,
   reconciliation_ref TEXT,
   UNIQUE (run_id, operation_key)
 );
 
-CREATE INDEX idx_actions_run_status ON actions(run_id, status);
+CREATE INDEX IF NOT EXISTS idx_actions_run_status ON actions(run_id, status);
 
-CREATE TABLE action_attempts (
-  action_id TEXT NOT NULL REFERENCES actions(action_id),
-  attempt_no INTEGER NOT NULL,
-  status TEXT NOT NULL,
-  dispatch_owner_epoch INTEGER NOT NULL,
-  started_at TEXT NOT NULL,
-  finished_at TEXT,
-  result_ref TEXT,
-  error_code TEXT,
+CREATE TABLE IF NOT EXISTS action_attempts (
+  action_id            TEXT NOT NULL REFERENCES actions(action_id),
+  attempt_no           INTEGER NOT NULL,
+  status               TEXT NOT NULL,
+  dispatch_owner_epoch BIGINT NOT NULL,
+  started_at           TIMESTAMPTZ NOT NULL,
+  finished_at          TIMESTAMPTZ,
+  result_ref           TEXT,
+  error_code           TEXT,
   PRIMARY KEY (action_id, attempt_no)
 );
 
-CREATE TABLE artifacts (
-  artifact_id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL REFERENCES runs(run_id),
-  relative_path TEXT NOT NULL,
-  sha256 TEXT NOT NULL,
-  byte_size INTEGER NOT NULL,
+CREATE TABLE IF NOT EXISTS artifacts (
+  artifact_id         TEXT PRIMARY KEY,
+  run_id              TEXT NOT NULL REFERENCES runs(run_id),
+  relative_path       TEXT NOT NULL,
+  sha256              TEXT NOT NULL,
+  byte_size           BIGINT NOT NULL,
   producing_action_id TEXT REFERENCES actions(action_id),
-  created_at TEXT NOT NULL,
-  state TEXT NOT NULL                 -- present | drifted | missing
+  created_at          TIMESTAMPTZ NOT NULL,
+  state               TEXT NOT NULL             -- present | drifted | missing
 );
 
-CREATE TABLE approvals (
-  action_id TEXT PRIMARY KEY REFERENCES actions(action_id),
-  decision TEXT,                    -- approved | rejected | NULL
-  actor_id TEXT,
-  decided_at TEXT,
-  reason TEXT
+CREATE TABLE IF NOT EXISTS approvals (
+  action_id  TEXT PRIMARY KEY REFERENCES actions(action_id),
+  decision   TEXT,                              -- approved | rejected | NULL
+  actor_id   TEXT,
+  decided_at TIMESTAMPTZ,
+  reason     TEXT
 );
 
-CREATE TABLE usage_totals (
-  run_id TEXT PRIMARY KEY REFERENCES runs(run_id),
-  model_calls INTEGER NOT NULL DEFAULT 0,
-  tokens_reported INTEGER NOT NULL DEFAULT 0,
-  cost_known_usd TEXT NOT NULL DEFAULT '0',
-  has_unpriced_usage INTEGER NOT NULL DEFAULT 0,
-  recoveries INTEGER NOT NULL DEFAULT 0,
-  active_elapsed_ms INTEGER NOT NULL DEFAULT 0
+CREATE TABLE IF NOT EXISTS usage_totals (
+  run_id             TEXT PRIMARY KEY REFERENCES runs(run_id),
+  model_calls        INTEGER NOT NULL DEFAULT 0,
+  tokens_reported    BIGINT NOT NULL DEFAULT 0,
+  cost_known_usd     NUMERIC(20, 10) NOT NULL DEFAULT 0,   -- exact decimal, never float
+  has_unpriced_usage BOOLEAN NOT NULL DEFAULT FALSE,
+  recoveries         INTEGER NOT NULL DEFAULT 0,
+  active_elapsed_ms  BIGINT NOT NULL DEFAULT 0
 );
 ```
 
 **Time budget:** `max_active_seconds` counts execution time while the runtime is actively processing a run, not manual approval/reconciliation pauses or process downtime. Record bounded active-time increments via `RunActiveTimeRecorded` events and `usage_totals.active_elapsed_ms`; cap each increment using a monotonic clock while the process is alive. Wall-clock time is reported as a separate evaluation metric.
 
-**Schema clarifications:** `TEXT` stores canonical JSON; money is decimal text rather than floating-point currency; `has_unpriced_usage` is not zero cost. Exact unknown token counts are not fabricated. A table column containing redacted tool args is **not** sufficient to re-execute an action: immutable execution params must also be recoverable from trusted nonsecret sources; secret values are injected from environment at dispatch time. Artifacts are referenced by content hash; raw blobs reside in a confined run workspace. Input snapshots are immutable in that workspace.
+**Schema clarifications:** `JSONB` stores canonical JSON; money is exact `NUMERIC` (never floating point); `has_unpriced_usage` is not zero cost. Timestamps are `TIMESTAMPTZ` taken from the event's `occurred_at`. A trigger rejects `UPDATE`/`DELETE` on `events`. Each deployment may use its own schema (`search_path`), which is how tests isolate runs. Exact unknown token counts are not fabricated. A table column containing redacted tool args is **not** sufficient to re-execute an action: immutable execution params must also be recoverable from trusted nonsecret sources; secret values are injected from environment at dispatch time. Artifacts are referenced by content hash; raw blobs reside in a confined run workspace. Input snapshots are immutable in that workspace.
 
 **No extra `schema.py` event store model:** Python Pydantic models mirror the JSON/DDL contracts without maintaining a third source of truth. All event payloads include schema version. Schema migrations are out of scope until a second version is needed.
 
 ## 4. Atomic transactions and run ownership
 
-- Use `BEGIN IMMEDIATE` for event sequence assignment, event append, corresponding projection change, and `runs.last_event_seq` update; commit or roll back all together. Never append an event without applying its projection; no provider/tool I/O inside transaction.
+- In one transaction, lock the run row (`SELECT ... FOR NO KEY UPDATE`) for event sequence assignment, then append the event, apply its projection change and update `runs.last_event_seq`; commit or roll back all together. `lock_timeout` bounds waiting. Never append an event without applying its projection; no provider/tool I/O inside transaction.
 - On restart, replay ordered events from RunCreated into a *fresh in-memory projection* and compare with durable projections. Runtime can rebuild projections in one transaction if damaged. Some projection fields (such as timestamps) must use the original event values, not `now()` during rebuild.
-- Claim lease atomically if absent, expired or already owned by the caller; increment epoch on **every takeover**. Use database time (`unixepoch('now')`) to avoid process clock differences. Each worker writes only with `(owner_id, epoch)` matching active unexpired lease.
-- Heartbeat periodically; before any tool dispatch verify active ownership. If the old lease expires during an external request, takeover must classify its started attempt as ambiguous. SQLite lease fencing limits *local controllers*; it cannot revoke an external HTTP request.
+- Claim lease atomically if absent, expired or already owned by the caller; increment epoch on **every takeover**. Use database time (`extract(epoch from clock_timestamp())`) to avoid process clock differences; the fence check share-locks the lease row inside the append transaction so a concurrent takeover cannot interleave. Each worker writes only with `(owner_id, epoch)` matching active unexpired lease.
+- Heartbeat periodically; before any tool dispatch verify active ownership. If the old lease expires during an external request, takeover must classify its started attempt as ambiguous. Database lease fencing limits *local controllers*; it cannot revoke an external HTTP request.
 - Concurrent `resume` calls: at most one succeeds as owner; all others receive `already_owned` and do nothing. Do not silently steal a live lease.
 
 ## 5. Fingerprints and progress integrity

@@ -1,0 +1,7 @@
+# Pre-registered task (Continuum Lab database family).
+task_id: db_update_report
+description: "Ship r8 and write an update report"
+factory: "continuum_lab.registry:lab_task"
+options:
+  task: db_update_report
+  fake_models: true   # deterministic local agent; set false to use config/models.yaml

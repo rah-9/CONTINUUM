@@ -1,6 +1,8 @@
 # Continuum specification review — v0.1 → v0.2
 
-Reviewed: 2026-10-13. Scope: 8 docs + AGENTS.md. These are **revised specifications**, not implemented or runtime-tested code.
+Reviewed: 2026-10-13. Scope: 8 docs + AGENTS.md.
+
+> **Superseded in part by spec 0.3:** the v1 backend is now PostgreSQL instead of SQLite (`DECISIONS.md` D-001). The SQLite references below are kept as review history. These are **revised specifications**, not implemented or runtime-tested code.
 
 ## Critical corrections
 

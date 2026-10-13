@@ -1,0 +1,7 @@
+# Pre-registered task (Continuum Lab csv family).
+task_id: csv_normalize_categories
+description: "Lowercase categories, upload, and report"
+factory: "continuum_lab.registry:lab_task"
+options:
+  task: csv_normalize_categories
+  fake_models: true   # deterministic local agent; set false to use config/models.yaml

@@ -1,0 +1,29 @@
+# Live provider profiles for the LiteLLM adapter (docs/05 section 3).
+#
+# Fill exact model IDs and *verified* limits/prices during provider contract
+# testing. Placeholder values below are deliberately rejected at session start
+# (UnsupportedCapabilityError); they are never silently used.
+# API keys come only from the environment (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY).
+# Routing (primary/fallbacks/backoff) is part of each task spec's model_policy.
+models:
+  A:
+    model_id: "provider_a/exact-version"
+    context_window_tokens: 0
+    max_output_tokens: 0
+    supports_native_tools: true
+    supports_json_schema: false
+    supports_tool_call_ids: true
+    price: {input_per_million_usd: null, output_per_million_usd: null, as_of: null}
+    profile_source: provider_docs_and_contract_tests
+  B:
+    model_id: "provider_b/exact-version"
+    context_window_tokens: 0
+    max_output_tokens: 0
+    supports_native_tools: true
+    price: {input_per_million_usd: null, output_per_million_usd: null, as_of: null}
+  C:
+    model_id: "provider_c/exact-version"
+    context_window_tokens: 0
+    max_output_tokens: 0
+    supports_native_tools: true
+    price: {input_per_million_usd: null, output_per_million_usd: null, as_of: null}

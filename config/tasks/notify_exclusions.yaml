@@ -1,0 +1,7 @@
+# Pre-registered task (Continuum Lab notifications family).
+task_id: notify_exclusions
+description: "Welcome customers except opted-out bob"
+factory: "continuum_lab.registry:lab_task"
+options:
+  task: notify_exclusions
+  fake_models: true   # deterministic local agent; set false to use config/models.yaml
