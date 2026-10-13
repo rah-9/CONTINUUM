@@ -8,8 +8,10 @@ import sys
 from dataclasses import asdict
 from typing import Any
 
+from continuum.core.canonical import canonical_json
 from continuum.core.errors import ContinuumError
 from continuum.core.runtime import RunResult
+from continuum.core.tracing import configure_logging
 from continuum.interfaces.sdk import Continuum
 
 
@@ -22,6 +24,8 @@ def _print(value: Any) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="continuum", description=__doc__)
+    p.add_argument("--log-level", default="WARNING",
+                   help="JSON trace log level on stderr (e.g. INFO for every event)")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("db-init", help="create the PostgreSQL schema")
     sub.add_parser("tasks", help="list pre-registered tasks")
@@ -36,6 +40,9 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("run_id")
     ins = sub.add_parser("inspect", help="side-effect-free diagnostic replay")
     ins.add_argument("run_id")
+    tr = sub.add_parser("trace", help="export the run's JSON-lines trace (read-only)")
+    tr.add_argument("run_id")
+    tr.add_argument("--out", help="write to this file instead of stdout")
     rv = sub.add_parser("resolve", help="record a human decision for an action")
     rv.add_argument("run_id")
     rv.add_argument("action_id")
@@ -57,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    configure_logging(args.log_level)
     sdk = Continuum()
     try:
         match args.cmd:
@@ -75,6 +83,14 @@ def main(argv: list[str] | None = None) -> int:
                 _print(sdk.status(args.run_id))
             case "inspect":
                 _print(sdk.inspect(args.run_id))
+            case "trace":
+                lines = "".join(canonical_json(r) + "\n" for r in sdk.trace(args.run_id))
+                if args.out:
+                    with open(args.out, "w", encoding="utf-8") as fh:
+                        fh.write(lines)
+                    _print({"ok": True, "out": args.out})
+                else:
+                    sys.stdout.write(lines)
             case "resolve":
                 _print(sdk.resolve_action(args.run_id, args.action_id, args.decision,
                                           actor=args.actor, reason=args.reason,

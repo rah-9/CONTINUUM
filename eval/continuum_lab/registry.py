@@ -5,6 +5,8 @@ Options:
   fake_models:  true (default) uses the deterministic plan-following fake agent;
                 false routes to live providers from ``config/models.yaml``
   store_mode / db_mode / msg_mode: mock connector contract modes
+  script:       scripted service faults applied once when services are created,
+                e.g. {"store.put": ["commit_then_drop"]} (demonstrations)
 """
 
 from __future__ import annotations
@@ -22,7 +24,14 @@ def lab_task(state_dir: Path, options: dict[str, Any]) -> TaskBinding:
     modes = {k: options[k] for k in ("store_mode", "db_mode", "msg_mode") if k in options}
     services = state_dir / "services"
     # Seed mock services once; later processes (resume) must see the same ground truth.
-    env = make_env(definition, services, seed=not services.exists(), **modes)
+    first_use = not services.exists()
+    env = make_env(definition, services, seed=first_use, **modes)
+    if first_use:
+        targets = {"store.put": (env.store, "put"), "db.update": (env.db, "update"),
+                   "message.send": (env.messages, "send")}
+        for tool, behaviours in (options.get("script") or {}).items():
+            service, op = targets[tool]
+            service.script(op, *behaviours)
     input_root = state_dir / "inputs"
     definition.write_inputs(input_root)
     router = fake_router(definition)[0] if options.get("fake_models", True) else None

@@ -1,6 +1,6 @@
 # Continuum Lab report
 
-- Suite: `safety`; adapter: **deterministic fake (PlanPolicy)**; seeds: 2; generated: 2026-10-13T17:36:18+00:00
+- Suite: `safety`; adapter: **deterministic fake (PlanPolicy)**; seeds: 2; generated: 2026-10-13T17:51:30+00:00
 - Cells run: 912 (B0=456, C1=456)
 - Deterministic fake-model results test modeled safety properties only; they are
   not evidence about live provider behaviour. Two repeats are exploratory.
@@ -21,6 +21,7 @@
 | metric | B0 | C1 |
 |---|---|---|
 | verified completion | 456/456 = 1.00 [0.99, 1.00] | 354/456 = 0.78 [0.74, 0.81] |
+| clean completion (no duplicate/unintended effect) | 328/456 = 0.72 [0.68, 0.76] | 354/456 = 0.78 [0.74, 0.81] |
 | runs with a committed duplicate | 128/444 = 0.29 [0.25, 0.33] | 0/444 = 0.00 [0.00, 0.01] |
 | committed duplicate effects | 140 | 0 |
 | intended write effects | 816 | 816 |
@@ -40,24 +41,25 @@
 Matched differences (C1 - B0, paired bootstrap 95%):
 
 - verified completion: -0.224 [-0.263, -0.189] over 456 matched cells
+- clean completion: +0.057 [+0.011, +0.103] over 456 matched cells
 - committed duplicates per cell: -0.307 [-0.357, -0.261] over 456 matched cells
 
 ## Per fault
 
-| fault | config | completion | duplicates | paused |
-|---|---|---|---|---|
-| commit_late | B0 | 74/74 = 1.00 [0.95, 1.00] | 56 | 0 |
-| commit_late | C1 | 24/74 = 0.32 [0.23, 0.44] | 0 | 50 |
-| commit_then_drop | B0 | 74/74 = 1.00 [0.95, 1.00] | 36 | 0 |
-| commit_then_drop | C1 | 48/74 = 0.65 [0.54, 0.75] | 0 | 26 |
-| kill_after_remote_commit | B0 | 74/74 = 1.00 [0.95, 1.00] | 30 | 0 |
-| kill_after_remote_commit | C1 | 48/74 = 0.65 [0.54, 0.75] | 0 | 26 |
-| kill_at_progress | B0 | 78/78 = 1.00 [0.95, 1.00] | 6 | 0 |
-| kill_at_progress | C1 | 78/78 = 1.00 [0.95, 1.00] | 0 | 0 |
-| none | B0 | 78/78 = 1.00 [0.95, 1.00] | 6 | 0 |
-| none | C1 | 78/78 = 1.00 [0.95, 1.00] | 0 | 0 |
-| provider_unavailable | B0 | 78/78 = 1.00 [0.95, 1.00] | 6 | 0 |
-| provider_unavailable | C1 | 78/78 = 1.00 [0.95, 1.00] | 0 | 0 |
+| fault | config | completion | clean completion | duplicates | paused |
+|---|---|---|---|---|---|
+| commit_late | B0 | 74/74 = 1.00 [0.95, 1.00] | 24/74 = 0.32 [0.23, 0.44] | 56 | 0 |
+| commit_late | C1 | 24/74 = 0.32 [0.23, 0.44] | 24/74 = 0.32 [0.23, 0.44] | 0 | 50 |
+| commit_then_drop | B0 | 74/74 = 1.00 [0.95, 1.00] | 44/74 = 0.59 [0.48, 0.70] | 36 | 0 |
+| commit_then_drop | C1 | 48/74 = 0.65 [0.54, 0.75] | 48/74 = 0.65 [0.54, 0.75] | 0 | 26 |
+| kill_after_remote_commit | B0 | 74/74 = 1.00 [0.95, 1.00] | 44/74 = 0.59 [0.48, 0.70] | 30 | 0 |
+| kill_after_remote_commit | C1 | 48/74 = 0.65 [0.54, 0.75] | 48/74 = 0.65 [0.54, 0.75] | 0 | 26 |
+| kill_at_progress | B0 | 78/78 = 1.00 [0.95, 1.00] | 72/78 = 0.92 [0.84, 0.96] | 6 | 0 |
+| kill_at_progress | C1 | 78/78 = 1.00 [0.95, 1.00] | 78/78 = 1.00 [0.95, 1.00] | 0 | 0 |
+| none | B0 | 78/78 = 1.00 [0.95, 1.00] | 72/78 = 0.92 [0.84, 0.96] | 6 | 0 |
+| none | C1 | 78/78 = 1.00 [0.95, 1.00] | 78/78 = 1.00 [0.95, 1.00] | 0 | 0 |
+| provider_unavailable | B0 | 78/78 = 1.00 [0.95, 1.00] | 72/78 = 0.92 [0.84, 0.96] | 6 | 0 |
+| provider_unavailable | C1 | 78/78 = 1.00 [0.95, 1.00] | 78/78 = 1.00 [0.95, 1.00] | 0 | 0 |
 
 ## Non-completed cells (102)
 

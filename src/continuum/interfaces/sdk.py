@@ -43,7 +43,9 @@ class Continuum:
         models = binding.models or load_live_router(self.settings.config_dir / "models.yaml")
         config = RuntimeConfig(workspace_root=self.settings.home / "workspaces",
                                input_root=binding.input_root, owner_id=self.settings.owner_id,
-                               lease_ttl_seconds=self.settings.lease_ttl_seconds)
+                               lease_ttl_seconds=self.settings.lease_ttl_seconds,
+                               heartbeat_interval_seconds=max(
+                                   self.settings.lease_ttl_seconds / 3, 1.0))
         return Runtime(store=self.store, tools=binding.tools, verifiers=binding.verifiers,
                        models=models, config=config, clock=self.clock, ids=self.ids)
 
@@ -72,6 +74,10 @@ class Continuum:
 
     def inspect(self, run_id: str) -> dict[str, Any]:
         return self._runtime_for_run(run_id).inspect(run_id)
+
+    def trace(self, run_id: str) -> list[dict[str, Any]]:
+        """Read-only JSON trace export (events with redacted blobs inlined)."""
+        return self._runtime_for_run(run_id).trace_export(run_id)
 
     def runs(self) -> list[str]:
         with self.store.read() as q:
