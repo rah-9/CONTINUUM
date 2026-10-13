@@ -54,6 +54,7 @@ from continuum.core.state import (
     TaskSpec,
 )
 from continuum.core.store import ActionRow, RunTx, Store
+from continuum.core.tracing import span
 from continuum.tools.manifest import (
     BindContext,
     ToolAmbiguousFailure,
@@ -399,14 +400,17 @@ class ToolGateway:
                           timeout_seconds=m.timeout_seconds)
         result: ToolResult | None = None
         failure: tuple[str, str, str] | None = None  # (kind, code, message)
-        try:
-            result = tool.invoke(dict(bound), ctx)
-        except ToolCleanFailure as exc:
-            failure = ("clean", exc.code, self.redactor.text(str(exc)))
-        except ToolAmbiguousFailure as exc:
-            failure = ("ambiguous", exc.code, self.redactor.text(str(exc)))
-        except Exception as exc:
-            failure = ("ambiguous", type(exc).__name__, self.redactor.text(str(exc)))
+        with span("tool_dispatch", run_id=run.run_id, action_id=action_id, tool=m.name,
+                  attempt=attempt_no, effect=m.effect) as fields:
+            try:
+                result = tool.invoke(dict(bound), ctx)
+            except ToolCleanFailure as exc:
+                failure = ("clean", exc.code, self.redactor.text(str(exc)))
+            except ToolAmbiguousFailure as exc:
+                failure = ("ambiguous", exc.code, self.redactor.text(str(exc)))
+            except Exception as exc:  # any unclassified failure is ambiguous
+                failure = ("ambiguous", type(exc).__name__, self.redactor.text(str(exc)))
+            fields["outcome"] = "ok" if failure is None else failure[0]
         if failure and failure[0] == "ambiguous" and m.effect == "read":
             failure = ("clean", failure[1], failure[2])  # reads cannot commit an effect
         if result is not None and result.artifacts:
