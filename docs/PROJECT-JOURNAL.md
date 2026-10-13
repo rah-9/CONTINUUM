@@ -74,7 +74,23 @@ Every feature is judged by one question: *does it keep valid work and prevent un
 
 Results are from the deterministic fake-model safety matrix: 15 tasks × 6 faults × 3 connector modes × 2 seeds, 912 paired cells. They test **modeled** safety properties only. They are not claims about live providers. The full report is in `lab-reports/`.
 
-LAB_RESULTS_PLACEHOLDER
+| Metric | B0: plain loop + retries | C1: Continuum |
+|---|---|---|
+| Verified completion (correct final state) | 456/456 = 1.00 | 354/456 = 0.78 |
+| **Clean completion** (correct *and* no duplicate or unintended effect) | 328/456 = 0.72 | **354/456 = 0.78** |
+| Runs with a committed duplicate | 128/444 = 0.29 | **0/444** |
+| Committed duplicate effects | 140 | **0** |
+| Preserved progress after a crash | 156/214 = 0.73 | **202/202 = 1.00** |
+| Ambiguous actions resolved or escalated | n/a | 222/222 |
+| False completions / policy bypasses | 0 / 0 | 0 / 0 |
+| Runs paused for a human | 0 | 102 |
+| Model calls / estimated cost | 2276 / $0.82 | 1292 / $0.42 |
+
+Matched paired differences (C1 − B0, 95% bootstrap):
+
+- clean completion **+0.057 [+0.011, +0.103]**
+- verified completion −0.224 [−0.263, −0.189]
+- duplicates per cell −0.307 [−0.357, −0.261]
 
 **How to read it.**
 
