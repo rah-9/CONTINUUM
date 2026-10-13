@@ -73,3 +73,52 @@ def test_malformed_tool_output_is_retried_then_handed_off(make_lab):
     result = lab.runtime.start(lab.definition.spec)
     assert result.status == RunStatus.COMPLETED
     assert lab.adapters["A"].calls == 2  # threshold, then handoff
+
+
+def _packet_from(adapter):
+    """The continuation packet the model was given at the start of its session."""
+    import json
+
+    first = adapter.seen[0]
+    packet_msg = next(m for m in first if m.content and "Continuation packet" in m.content)
+    return json.loads(packet_msg.content.split("\n", 1)[1])
+
+
+def test_context_overflow_prefers_a_model_with_a_larger_window(make_lab):
+    faults = ModelFaults(errors={"A": {1: ModelError("context_overflow")}},
+                         context_window={"A": 64_000, "B": 32_000, "C": 200_000})
+    lab = make_lab("db_update_selected", model_faults=faults)
+    result = lab.runtime.start(lab.definition.spec)
+    assert result.status == RunStatus.COMPLETED
+    [switch] = _events(lab, result.run_id, "ModelSwitched")
+    assert switch.payload["to_model_alias"] == "C"  # larger window wins over policy order
+    assert lab.adapters["B"].calls == 0
+
+
+def test_other_failures_keep_operator_order(make_lab):
+    faults = ModelFaults(fail_always={"A": ModelError("provider_unavailable")},
+                         context_window={"A": 64_000, "B": 32_000, "C": 200_000})
+    lab = make_lab("db_update_selected", model_faults=faults)
+    result = lab.runtime.start(lab.definition.spec)
+    [switch] = _events(lab, result.run_id, "ModelSwitched")
+    assert switch.payload["to_model_alias"] == "B"
+
+
+def test_packet_carries_handoff_provenance_and_verified_state(make_lab):
+    # A finishes m1 (normalize) and m2 (upload), then fails on its 3rd call; B must
+    # continue from verified state and only do m3.
+    faults = ModelFaults(errors={"A": {3: ModelError("provider_unavailable"),
+                                       4: ModelError("provider_unavailable"),
+                                       5: ModelError("provider_unavailable")}})
+    lab = make_lab("csv_normalize_categories", model_faults=faults)
+    result = lab.runtime.start(lab.definition.spec)
+    assert result.status == RunStatus.COMPLETED
+    packet = _packet_from(lab.adapters["B"])
+    assert packet["handoff"] == {"reason": "provider_unavailable", "handoff_count": 1,
+                                 "from_model_id": "fake/A"}
+    assert [m["id"] for m in packet["verified_milestones"]] == ["m1", "m2"]
+    assert [m["id"] for m in packet["pending_milestones"]] == ["m3"]
+    assert {c["operation_key"] for c in packet["confirmed_actions"]} == {
+        "m1:csv.normalize:artifacts/normalized.csv", "m2:store.put:uploads/categories.csv"}
+    assert lab.env.store.commits_for("uploads/categories.csv") == 1  # B did not redo it
+    assert _packet_from(lab.adapters["A"])["handoff"] is None  # a fresh start has none

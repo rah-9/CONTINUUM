@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
+from collections.abc import Coroutine
 from decimal import Decimal
 from typing import Any, Literal, Protocol
 
@@ -124,6 +127,16 @@ class ModelRouter:
 
     def aliases(self) -> list[str]:
         return list(self._endpoints)
+
+
+def run_coro[T](coro: Coroutine[Any, Any, T]) -> T:
+    """Run an adapter coroutine from sync code, even inside a running event loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 def estimate_tokens(text: str) -> int:
