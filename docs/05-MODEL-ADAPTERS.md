@@ -91,11 +91,13 @@ Packet serialization is canonical JSON, schema-versioned, and deterministic for 
   "remaining_budget": {"model_calls": 10, "tokens": 80000, "cost_usd": "1.20",
                        "cost_has_unpriced_usage": false, "active_seconds": 600},
   "data_refs": [{"ref": "blob:sha256:...", "tool": "csv.normalize", "untrusted": true,
-                 "data": {}}]
+                 "data": {}}],
+  "handoff": {"reason": "provider_unavailable", "handoff_count": 1,
+              "from_model_id": "provider_a/exact-version"}
 }
 ```
 
-`pending_milestones[].description` is the optional text removed first under "compact evidence descriptions"; references are never removed. `open_actions` lists unresolved and approval-pending actions; any entry makes the packet inspection-only for writes.
+`handoff` is runtime provenance (`{reason, handoff_count, from_model_id}`) and is `null` on a fresh start. It is never model narrative. `pending_milestones[].description` is the optional text removed first under "compact evidence descriptions"; references are never removed. `open_actions` lists unresolved and approval-pending actions; any entry makes the packet inspection-only for writes.
 
 Rules:
 
@@ -109,7 +111,10 @@ Rules:
 
 ## 5. Handoff and fallback policy
 
-- Trigger when model request fails after bounded same-provider retry/backoff, context overflow, repeated invalid provider tool responses, or **explicit** user selection.
+- Trigger when model request fails after bounded same-provider retry/backoff, context overflow, repeated invalid provider tool responses, or **explicit** user selection (`resume(..., model_alias=...)`).
+- Select the next model by capability: skip non-deployable profiles and models whose context cannot hold the packet; after `context_overflow`, try models with a **larger** context window first; otherwise keep the operator's order.
+- Size packets with the target provider's tokenizer when the adapter offers one (`count_tokens`), else a conservative character estimate.
+- If a provider reports tokens but no cost, estimate cost from the profile's price snapshot and mark it `estimated`; unknown tokens or prices stay unknown.
 - Evaluate compatibility before committing the switch. Do not change models solely to circumvent a run-wide hard budget.
 - On process restart acquire ownership, identify ambiguous attempts, reconcile or pause, check evidence dependencies, **then** open the new model session.
 - No raw chat history migration. A packet may omit unverified conversational context; continuity is defined by **state/effect correctness**, not identical prose.

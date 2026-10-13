@@ -121,3 +121,24 @@ def test_http_trace_endpoint(sdk):
     run_id = client.post("/runs", json={"task_id": "db_update_selected"}).json()["run_id"]
     trace = client.get(f"/runs/{run_id}/trace").json()
     assert trace[0]["type"] == "RunCreated"
+
+
+def test_mcp_facade_delegation_and_read_only_views(sdk):
+    facade = McpFacade(sdk)
+    assert any(t["task_id"] == "db_update_selected" for t in facade.list_tasks()["tasks"])
+    paused = facade.run_task("notify_with_approval")
+    assert paused["status"] == "paused_for_approval"
+    decisions = facade.pending_decisions(paused["run_id"])["decisions"]
+    assert decisions[0]["decisions"] == ["approve", "reject"]
+    cancelled = facade.cancel_run(paused["run_id"], reason="user changed their mind")
+    assert cancelled["status"] == "cancelled"
+    runs = facade.list_runs(5)["runs"]
+    assert runs[0]["run_id"] == paused["run_id"]
+    assert not hasattr(facade, "resolve_action")  # human decisions are never agent tools
+
+
+def test_doctor_reports_installation_health(sdk):
+    report = sdk.doctor()
+    assert report["database"]["ok"] and report["schema"]["ok"] and report["tasks"]["ok"]
+    assert report["live_models"]["A"]["deployable"] is False  # placeholders are rejected
+    assert report["ok"] is True

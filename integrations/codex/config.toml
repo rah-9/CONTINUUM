@@ -1,0 +1,9 @@
+# Append to ~/.codex/config.toml
+[mcp_servers.continuum]
+command = "continuum"
+args = ["mcp"]
+
+[mcp_servers.continuum.env]
+CONTINUUM_DATABASE_URL = "postgresql://continuum:continuum@localhost:5432/continuum"
+CONTINUUM_CONFIG_DIR = "/absolute/path/to/CONTINUUM/config"
+CONTINUUM_HOME = "/absolute/path/to/.continuum"

@@ -1,6 +1,6 @@
 # Continuum — specification index
 
-**Spec version:** 0.3 (2026-10-13: durable backend changed from SQLite to PostgreSQL; see `DECISIONS.md` D-001)  
+**Spec version:** 0.4 (2026-10-13: PostgreSQL backend, D-001; MCP plugin surface, D-022)  
 **Status:** v0.1.0 implementation in `src/`, `eval/` and `tests/`; see `CHANGELOG.md`
 
 **Purpose:** keep multi-step agent progress in runtime-owned, model-independent state. After an interruption or model handoff, reuse *valid verified work* and reconcile any uncertain external effect **before** new side-effecting work.
@@ -38,7 +38,7 @@ For any conflict: **04 governs effects/retries; 03 governs persisted state; 02 g
 
 - For tasks and tools meeting the declared contracts, Continuum **attempts to retain verified progress and avoid unsafe duplicate dispatches**. It does **not** guarantee exactly-once effects across arbitrary external services.
 - PostgreSQL (14+) is the **only** durable backend in v1, for a local single-host runtime (one database, controllers on one machine). Multiple workers claiming one run are blocked by lease/epoch rules, but external side effects still require reconciliation.
-- v1 has a Python SDK, CLI, minimal localhost HTTP surface and a thin **local stdio MCP task-delegation facade** (`run_task`, `get_status`) built last. Distributed/multi-host deployment, arbitrary MCP tool ingestion, code execution, dashboards and production hosting are **post-MVP**.
+- v1 has a Python SDK, CLI, minimal localhost HTTP surface and a **local stdio MCP server** for task delegation and read-only inspection (`list_tasks`, `run_task`, `resume_run`, `cancel_run`, `get_status`, `inspect_run`, `pending_decisions`, `list_runs`), so any MCP-capable coding agent can use Continuum as a plugin. Human decisions are never exposed through MCP. Distributed/multi-host deployment, arbitrary MCP tool ingestion, code execution, dashboards and production hosting are **post-MVP**.
 
 ## Repo layout note
 

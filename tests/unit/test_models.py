@@ -71,3 +71,27 @@ def test_scripted_adapter_returns_responses_then_raises_injected_errors():
     with pytest.raises(ModelError):
         asyncio.run(adapter.complete(messages=[], tools=[], max_output_tokens=10,
                                      timeout_seconds=1))
+
+
+def test_cost_is_estimated_from_profile_price_never_invented():
+    from decimal import Decimal
+
+    from continuum.core.sessions import estimate_cost
+    from continuum.models.base import Price
+
+    priced = fake_profile("A").model_copy(update={"price": Price(
+        input_per_million_usd=Decimal("3"), output_per_million_usd=Decimal("15"),
+        as_of="2026-10-01")})
+    out = estimate_cost(priced, Usage(input_tokens=1000, output_tokens=200, source="reported"))
+    assert Decimal(out.cost_usd) == Decimal("0.006")
+    assert out.source == "estimated"
+    reported = Usage(input_tokens=1, output_tokens=1, cost_usd="0.5", source="reported")
+    assert estimate_cost(priced, reported) == reported  # provider-reported cost wins
+    assert estimate_cost(fake_profile("A"), Usage(input_tokens=1, output_tokens=1)).cost_usd \
+        is None  # no price snapshot: stays unknown
+    assert estimate_cost(priced, Usage()).cost_usd is None  # unknown tokens: stays unknown
+
+
+def test_litellm_token_counter_falls_back_to_estimate():
+    adapter = LiteLLMAdapter("no-such-provider/model")
+    assert adapter.count_tokens("x" * 400) >= 1
