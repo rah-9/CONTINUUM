@@ -1,0 +1,7 @@
+# Pre-registered task (Continuum Lab csv family).
+task_id: inventory_upload_v1
+description: "Normalize CSV, upload the validated file"
+factory: "continuum_lab.registry:lab_task"
+options:
+  task: inventory_upload_v1
+  fake_models: true   # deterministic local agent; set false to use config/models.yaml
