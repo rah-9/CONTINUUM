@@ -84,7 +84,7 @@ For non-file effects, verification observes mock service ground truth or a docum
 - Structured local tracing: every committed event, model call and tool dispatch is logged as one JSON line (IDs, types, statuses and durations only; never arguments or payloads).
 - `resume`: real continuation under lease and ledger safeguards. Do **not** implement a `live replay` mode in v1.
 - SDK/CLI execute locally. Minimal HTTP binds to `127.0.0.1` by default; production authentication/deployment are explicitly excluded.
-- A v1 local **stdio MCP facade** delegates pre-registered `run_task` and `get_status` calls; it does not install a harness inside the host. Arbitrary remote MCP tool discovery remains post-MVP. Tool annotations from external MCP servers are untrusted until an operator creates a trusted manifest.
+- A v1 local **stdio MCP server** lets any MCP-capable agent delegate and follow pre-registered tasks (`list_tasks`, `run_task`, `resume_run`, `cancel_run`, `get_status`, `inspect_run`, `pending_decisions`, `list_runs`); it does not install a harness inside the host. Human decisions are not MCP tools: `pending_decisions` returns the exact command a *person* runs. `resume_run(model_alias=...)` continues the same run on another model from verified state. Arbitrary remote MCP tool discovery remains post-MVP. Tool annotations from external MCP servers are untrusted until an operator creates a trusted manifest.
 
 ## 9. Required crash boundaries
 

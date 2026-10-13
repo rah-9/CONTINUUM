@@ -75,6 +75,46 @@ class Continuum:
     def inspect(self, run_id: str) -> dict[str, Any]:
         return self._runtime_for_run(run_id).inspect(run_id)
 
+    def pending_decisions(self, run_id: str) -> list[dict[str, Any]]:
+        """Read-only: decisions only a human may make, with the command to make them."""
+        return self._runtime_for_run(run_id).pending_decisions(run_id)
+
+    def doctor(self) -> dict[str, Any]:
+        """Check the installation: database, schema, registered tasks and model profiles."""
+        checks: dict[str, Any] = {}
+        try:
+            with self.store.connection() as conn:
+                version = conn.execute(b"SHOW server_version").fetchone()
+                conn.rollback()
+            checks["database"] = {"ok": True, "server_version": version["server_version"]
+                                  if version else None}
+        except Exception as exc:  # report, never raise: doctor must always answer
+            checks["database"] = {"ok": False, "error": type(exc).__name__, "detail": str(exc)}
+        try:
+            with self.store.read() as q:
+                q.run_ids()
+            checks["schema"] = {"ok": True, "schema": self.settings.db_schema}
+        except Exception as exc:
+            checks["schema"] = {"ok": False, "hint": "run `continuum db-init`",
+                                "error": type(exc).__name__}
+        tasks = self.registry.task_ids()
+        checks["tasks"] = {"ok": bool(tasks), "count": len(tasks),
+                           "config_dir": str(self.settings.config_dir.resolve())}
+        models: dict[str, Any] = {}
+        try:
+            router = load_live_router(self.settings.config_dir / "models.yaml")
+            for alias in router.aliases():
+                try:
+                    router.get(alias).profile.check_deployable()
+                    models[alias] = {"deployable": True}
+                except Exception as exc:
+                    models[alias] = {"deployable": False, "reason": str(exc)}
+        except Exception as exc:
+            models["error"] = str(exc)
+        checks["live_models"] = models
+        checks["ok"] = all(checks[k]["ok"] for k in ("database", "schema", "tasks"))
+        return checks
+
     def trace(self, run_id: str) -> list[dict[str, Any]]:
         """Read-only JSON trace export (events with redacted blobs inlined)."""
         return self._runtime_for_run(run_id).trace_export(run_id)

@@ -28,6 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="JSON trace log level on stderr (e.g. INFO for every event)")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("db-init", help="create the PostgreSQL schema")
+    sub.add_parser("doctor", help="check database, schema, tasks and model profiles")
     sub.add_parser("tasks", help="list pre-registered tasks")
     sub.add_parser("runs", help="list run ids")
     run = sub.add_parser("run", help="start a pre-registered task")
@@ -71,6 +72,10 @@ def main(argv: list[str] | None = None) -> int:
             case "db-init":
                 sdk.init_db()
                 _print({"ok": True})
+            case "doctor":
+                report = sdk.doctor()
+                _print(report)
+                return 0 if report["ok"] else 1
             case "tasks":
                 _print(sdk.tasks())
             case "runs":

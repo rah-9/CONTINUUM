@@ -104,7 +104,7 @@ continuum/
 - W4-1: baseline tool loop with transcript handoff, same trusted tool APIs and final verifier.
 - W4-2: 15 checkable mock tasks, deterministic fault injection at verified progress boundaries and write-ack loss.
 - W4-3: paired experiments, raw result JSON, Wilson/bootstrap intervals where appropriate, concise Markdown report.
-- W4-4: SDK, CLI, minimal FastAPI loopback endpoints and local stdio MCP facade (`run_task`, `get_status` for registered task specs); repeatable demo and documentation.
+- W4-4: SDK, CLI, minimal FastAPI loopback endpoints and local stdio MCP server (delegation + read-only inspection for registered task specs; see `integrations/`); repeatable demo and documentation.
 
 **Gate:** deterministic safety tests pass; at least smoke + fault/handoff matrix completed and traceable. If cost prevents all live experiments, publish partial coverage, do not pretend the whole suite ran.
 
@@ -137,7 +137,7 @@ Done when: tests and type checks pass; docs and changelog updated if contracts c
 - PostgreSQL-only (single host, one database) and local API only.
 - Event store is authoritative; leases are ephemeral infrastructure metadata.
 - Explicit task-defined milestones and operation identity; no model-generated milestones.
-- Trusted Python tools and a thin task-delegation-only local stdio MCP facade; no arbitrary code executor or remote MCP tool discovery.
+- Trusted Python tools and a local stdio MCP server limited to task delegation and read-only inspection (no human decisions); no arbitrary code executor or remote MCP tool discovery.
 - `inspect/replay` is side-effect-free; actual continuation happens via `resume`.
 - Continuum Lab is internal `eval/`; not a separate service/product.
 
