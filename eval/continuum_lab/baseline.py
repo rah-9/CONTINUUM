@@ -23,8 +23,7 @@ from continuum.core.canonical import canonical_json
 from continuum.core.clock import Clock
 from continuum.core.evidence import Workspace
 from continuum.core.faults import FaultInjector, NoFaults
-from continuum.core.runtime import run_coro
-from continuum.models.base import Message, ModelError, ModelRouter, ToolProposal
+from continuum.models.base import Message, ModelError, ModelRouter, ToolProposal, run_coro
 from continuum.tools.manifest import (
     BindContext,
     ToolAmbiguousFailure,

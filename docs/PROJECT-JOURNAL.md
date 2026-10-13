@@ -70,6 +70,26 @@ Every feature is judged by one question: *does it keep valid work and prevent un
 - **Clean-completion metric** in the lab.
 - **Registry identity fix.** Runs from tasks that share a definition now resume against the correct binding.
 
+### Phase 3: v0.3.0, plugin for coding agents and seamless handoff
+
+- **Code structure.** The 960-line controller is split into single-responsibility components (`journal`, `budgets`, `verification`, `sessions`), so each invariant has one owner. The refactor was proven against the unchanged test suite before any new behaviour was added (D-019).
+- **Seamless model-to-model transition** (D-020, D-021):
+  - After a context overflow, the next model is one with a *larger* context window.
+  - Incompatible models are skipped explicitly.
+  - The new model's packet states it is continuing a handoff: from which model, why, and how many handoffs so far.
+  - Packets are sized with the provider's own tokenizer.
+  - Cost is estimated from the price snapshot when a provider doesn't report it.
+  - Tests show model B continuing from verified state without redoing an upload.
+- **Plugin for any coding agent via MCP** (D-022):
+  - eight delegation and read-only tools
+  - server instructions that tell the agent how to behave
+  - a Claude Code plugin with a skill and a marketplace entry
+  - ready configs for Cursor, VS Code, Codex and Claude Desktop
+  - `continuum doctor` for setup checks
+  - an end-to-end test over the real stdio protocol
+
+  Human decisions stay off the agent surface on purpose.
+
 ## 4. Evidence so far
 
 Results are from the deterministic fake-model safety matrix: 15 tasks × 6 faults × 3 connector modes × 2 seeds, 912 paired cells. They test **modeled** safety properties only. They are not claims about live providers. The full report is in `lab-reports/`.
@@ -106,13 +126,14 @@ Matched paired differences (C1 − B0, 95% bootstrap):
 
 These are ordered by value to the core idea. Each item should become its own branch and PR under the docs/06 workflow.
 
-1. **Live provider validation.** Fill verified profiles for three providers in `config/models.yaml`. Run `CONTINUUM_LIVE=1 pytest -m live`, then run the live clean subset and the interrupted subset from docs/07 §6 within a fixed budget, and publish the results, including negative ones.
+1. **Live provider validation** (also exercises the new tokenizer and cost paths). Fill verified profiles for three providers in `config/models.yaml`. Run `CONTINUUM_LIVE=1 pytest -m live`, then run the live clean subset and the interrupted subset from docs/07 §6 within a fixed budget, and publish the results, including negative ones.
 2. **Real connector contract tests.** Before trusting any real object store, database or messaging API, write a contract test proving its idempotency retention and query semantics. The manifest must mirror the tested contract.
 3. **Human remediation workflow** for `drift_requires_remediation`: a reviewed "supersede operation" path that issues a new, explicit operation version instead of overwriting history. The spec must be amended first.
 4. **B1 checkpoint-only baseline** (docs/07 stretch). Needed before any claim against checkpoint frameworks.
-5. **Packet token accounting** with each provider's own tokenizer, replacing the 4-characters-per-token estimate.
-6. **Optional OpenTelemetry export** from the JSON trace (post-MVP per the PRD).
-7. **Out of scope until evidence justifies it:** multi-host deployment, a dashboard and remote MCP tool discovery.
+5. ~~Packet token accounting with each provider's own tokenizer~~: done in v0.3.0 for LiteLLM-backed providers. Remaining: validate the counts against real provider usage reports.
+6. **MCP progress notifications** so agents can stream long runs instead of waiting for `run_task` to return; an async `run_task` + `get_status` polling mode.
+7. **Optional OpenTelemetry export** from the JSON trace (post-MVP per the PRD).
+8. **Out of scope until evidence justifies it:** multi-host deployment, a dashboard and remote MCP tool discovery.
 
 ## 6. How we work
 

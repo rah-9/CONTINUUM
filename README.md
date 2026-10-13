@@ -19,7 +19,8 @@ Python 3.12, Pydantic v2, **PostgreSQL 14+** (psycopg 3), jsonschema, FastAPI (l
 ```text
 SDK / CLI / loopback HTTP / stdio MCP          src/continuum/interfaces/
         │
-Run controller + lease (fencing epochs)        core/runtime.py, core/leases.py
+Run controller + lease (fencing epochs)        core/runtime.py, core/leases.py, core/journal.py
+Budgets / model sessions + handoff             core/budgets.py, core/sessions.py
         │
 Step loop + packet builder ── ModelAdapter     core/handoff.py, models/
         │
@@ -27,7 +28,7 @@ Permission + Tool Gateway ── trusted tools     tools/gateway.py, tools/trust
         │
 Action ledger ◄── Reconciler                   core/ledger.py, core/reconciliation.py
         │
-Milestone verifiers ── evidence/workspace      verify/, core/evidence.py
+Milestone verifiers ── evidence/workspace      verify/, core/verification.py, core/evidence.py
         │
 PostgreSQL events + projections (1 tx each)    core/store.py, core/projections.py, core/schema.sql
 ```
@@ -111,6 +112,18 @@ The pre-registered tasks use the deterministic local fake agent by default. To u
 1. Fill verified profiles in `config/models.yaml`. Placeholder profiles are rejected at session start.
 2. Set `fake_models: false` in the task's YAML.
 
+## Use Continuum from any coding agent (MCP plugin)
+
+`continuum mcp` is a local stdio MCP server, so Claude Code, Cursor, VS Code, Codex, Claude Desktop or any other MCP client can delegate tasks to Continuum. It exposes `list_tasks`, `run_task`, `resume_run` (optionally on another model), `cancel_run`, `get_status`, `inspect_run`, `pending_decisions` and `list_runs`.
+
+Human decisions are deliberately **not** tools. The agent shows you the exact `continuum resolve` command instead. Setup for each agent is in [`integrations/README.md`](integrations/README.md).
+
+```bash
+claude mcp add continuum -- continuum mcp                 # Claude Code (server only)
+/plugin marketplace add rah-9/CONTINUUM                   # Claude Code plugin + skill
+continuum doctor                                          # verify the installation
+```
+
 ## Development workflow
 
 Each change follows the cycle in `docs/06-DEV-WORKFLOW.md`:
@@ -152,6 +165,7 @@ AGENTS.md  README.md  Makefile  pyproject.toml
 config/            models.yaml (live profiles), tasks/*.yaml (pre-registered tasks)
 docs/              00–07 spec, DECISIONS.md, CHANGELOG.md, REVIEW-CHANGES.md
 src/continuum/     core/  models/  tools/  verify/  interfaces/
+integrations/      MCP client configs: Claude Code plugin, Cursor, VS Code, Codex, Claude Desktop
 eval/continuum_lab mock_services/  tasks/  baseline.py  fault_injection.py  runner.py  metrics.py  report.py
 tests/             unit/  integration/  contract/  chaos/
 ```

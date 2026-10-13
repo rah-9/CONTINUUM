@@ -1,0 +1,11 @@
+{
+  "name": "continuum",
+  "owner": {"name": "Continuum maintainers"},
+  "plugins": [
+    {
+      "name": "continuum",
+      "source": "./integrations/claude-code",
+      "description": "Continuum MCP server plus a skill for safe task delegation, recovery and model handoff."
+    }
+  ]
+}

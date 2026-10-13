@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "continuum": {
+      "command": "continuum",
+      "args": ["mcp"]
+    }
+  }
+}
