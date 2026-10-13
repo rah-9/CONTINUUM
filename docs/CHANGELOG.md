@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0 — 2026-10-13
+
+### Added
+- **Schema v2** (D-025):
+  - CHECK constraints enforce status validity, I3 (verified ⇒ evidence), confirmed ⇒ outcome, attempt and run consistency, well-formed digests and non-negative usage
+  - `TRUNCATE` on `events` is blocked
+  - lookup indexes
+  - `schema_meta` version
+  - idempotent upgrade through `db-init`
+- **Verification** (D-026):
+  - requirements traceability matrix enforced by a test
+  - Hypothesis stateful tests across connector modes
+  - non-functional tests (NF1–NF5)
+  - CI runs every layer
+- `docs/OPERATIONS.md` explains how Continuum runs (no always-on server; PostgreSQL is the only service), how MCP connects over stdio, configuration and the schema design. `docs/VERIFICATION.md` covers the strategy, the defects found and the results.
+
+### Fixed
+- **Lease expiry could arrive up to one second early.** DB time was cast with `::bigint`, which rounds to nearest. Leases now use fractional seconds (`DOUBLE PRECISION`, migrated idempotently). This was found when a chaos test failed under load, then reproduced deterministically before fixing (D-027).
+- Starting a run with an existing id now raises a typed `run_exists` error instead of a raw database error.
+
 ## 0.4.0 — 2026-10-13
 
 ### Fixed

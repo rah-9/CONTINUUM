@@ -104,6 +104,17 @@ Every feature is judged by one question: *does it keep valid work and prevent un
   In every scenario, each effect happened exactly once and no request was rejected.
 - **Switching your coding agent's own model** (Codex, Claude Code) has no effect on runs. Their state lives in Continuum and is reachable from any chat. See `docs/MODEL-SWITCHING.md`.
 
+### Phase 5: v0.5.0, end-to-end verification and schema hardening
+
+- **How it runs.** `docs/OPERATIONS.md` explains it. No always-on Continuum server is needed; PostgreSQL is the only service. Your coding agent spawns `continuum mcp` as a child process and talks to it over stdio. The CLI, SDK and optional loopback HTTP are other short-lived entry points over the same state.
+- **Database design reviewed and hardened** (D-025). PostgreSQL itself now rejects invalid states, blocks `TRUNCATE` of the event log, and indexes every hot lookup. The full suite produced zero constraint violations.
+- **Verified at every layer** (D-026, `docs/VERIFICATION.md`):
+  - a traceability matrix covering 51 requirement ids
+  - 450 randomized stateful scenarios with all invariants intact
+  - non-functional checks (no lock across I/O, secret hygiene, reproducibility, parallelism, performance)
+  - chaos and contract layers
+- **One more defect found and fixed:** starting an existing run id leaked a raw database error.
+
 ## 4. Evidence so far
 
 Results are from the deterministic fake-model safety matrix: 15 tasks × 6 faults × 3 connector modes × 2 seeds, 912 paired cells. They test **modeled** safety properties only. They are not claims about live providers. The full report is in `lab-reports/`.

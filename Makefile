@@ -1,7 +1,7 @@
 # Developer entry points. Requires a local PostgreSQL (see README "Setup").
 PY ?= .venv/bin
 
-.PHONY: install db lint type test unit integration chaos check lab-smoke lab-safety
+.PHONY: install db lint type test unit integration chaos property nonfunctional check lab-smoke lab-safety
 
 install:
 	uv venv -p 3.12 .venv && uv pip install -p .venv -e ".[dev,http,mcp,live]"
@@ -23,6 +23,12 @@ integration:
 
 chaos:
 	$(PY)/pytest tests/chaos -q
+
+property:
+	CONTINUUM_PROPERTY_EXAMPLES=$${EXAMPLES:-150} $(PY)/pytest tests/property -q
+
+nonfunctional:
+	$(PY)/pytest tests/nonfunctional -q -s
 
 test:
 	$(PY)/pytest -q

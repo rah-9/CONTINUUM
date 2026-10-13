@@ -38,7 +38,10 @@ from continuum.core.state import ActionStatus, MilestoneStatus, RunStatus, TaskS
 from continuum.core.tracing import trace
 
 JSON_COLUMNS = frozenset({"spec_json", "profile_json", "args_json", "payload_json"})
-LEASE_NOW_SQL = "COALESCE(%(now)s::bigint, extract(epoch from clock_timestamp())::bigint)"
+# Fractional seconds, never rounded: an integer cast rounds to nearest and could make a
+# lease expire up to a second early (a 1s TTL could last ~0.1s).
+LEASE_NOW_SQL = ("COALESCE(%(now)s::double precision, "
+                 "extract(epoch from clock_timestamp())::double precision)")
 
 
 @dataclass(frozen=True)
@@ -137,7 +140,7 @@ class LeaseRow(_Row):
     run_id: str
     owner_id: str
     epoch: int
-    expires_at_unix: int
+    expires_at_unix: float
 
 
 class ApprovalRow(_Row):
@@ -375,7 +378,7 @@ class Store:
         with self.pool.connection() as conn:
             yield conn
 
-    def lease_now(self) -> int | None:
+    def lease_now(self) -> float | None:
         return self.clock.lease_time()
 
     @contextmanager
