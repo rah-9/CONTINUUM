@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS run_leases (
   run_id          TEXT PRIMARY KEY REFERENCES runs(run_id),
   owner_id        TEXT NOT NULL,
   epoch           BIGINT NOT NULL,
-  expires_at_unix BIGINT NOT NULL
+  expires_at_unix DOUBLE PRECISION NOT NULL   -- fractional unix seconds (DB time)
 );
 
 CREATE TABLE IF NOT EXISTS model_sessions (
@@ -128,3 +128,80 @@ CREATE TABLE IF NOT EXISTS usage_totals (
   recoveries         INTEGER NOT NULL DEFAULT 0,
   active_elapsed_ms  BIGINT NOT NULL DEFAULT 0
 );
+
+-- ---------------------------------------------------------------------------
+-- Integrity constraints and indexes (schema version 2).
+-- Defense in depth: the database itself rejects states that would violate the
+-- core invariants, even if application code regresses. Each statement is
+-- idempotent, so existing databases are upgraded by re-running db-init.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS schema_meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+INSERT INTO schema_meta (key, value) VALUES ('schema_version', '2')
+  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+
+-- TRUNCATE would bypass the row-level immutability trigger.
+DROP TRIGGER IF EXISTS events_no_truncate ON events;
+CREATE TRIGGER events_no_truncate BEFORE TRUNCATE ON events
+  FOR EACH STATEMENT EXECUTE FUNCTION continuum_events_immutable();
+
+CREATE OR REPLACE FUNCTION continuum_add_constraint(tbl TEXT, name TEXT, def TEXT)
+RETURNS void AS $$
+BEGIN
+  EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I %s', tbl, name, def);
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN
+  NULL;  -- already present
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT continuum_add_constraint('runs', 'runs_status_valid', $c$CHECK (status IN (
+  'created', 'running', 'recovering', 'paused_for_approval', 'awaiting_reconciliation',
+  'completed', 'failed', 'cancelled'))$c$);
+SELECT continuum_add_constraint('runs', 'runs_seq_nonnegative', 'CHECK (last_event_seq >= 0)');
+SELECT continuum_add_constraint('runs', 'runs_terminal_finished', $c$CHECK (
+  (status IN ('completed', 'failed', 'cancelled')) = (finished_at IS NOT NULL))$c$);
+SELECT continuum_add_constraint('events', 'events_seq_positive',
+  'CHECK (seq > 0 AND schema_version >= 1)');
+SELECT continuum_add_constraint('run_leases', 'run_leases_epoch_positive', 'CHECK (epoch >= 1)');
+SELECT continuum_add_constraint('milestones', 'milestones_status_valid',
+  $c$CHECK (status IN ('pending', 'verified', 'invalidated'))$c$);
+-- I3: a verified milestone always carries its fingerprint and evidence.
+SELECT continuum_add_constraint('milestones', 'milestones_verified_has_evidence', $c$CHECK (
+  status <> 'verified' OR (input_fingerprint IS NOT NULL AND evidence_ref IS NOT NULL
+                           AND verified_at IS NOT NULL))$c$);
+SELECT continuum_add_constraint('actions', 'actions_status_valid', $c$CHECK (status IN (
+  'proposed', 'awaiting_approval', 'authorized', 'in_flight', 'confirmed', 'failed_clean',
+  'unknown', 'needs_human', 'rejected', 'skipped'))$c$);
+SELECT continuum_add_constraint('actions', 'actions_confirmed_has_outcome',
+  $c$CHECK (status <> 'confirmed' OR outcome_ref IS NOT NULL)$c$);
+SELECT continuum_add_constraint('actions', 'actions_args_digest',
+  $c$CHECK (args_sha256 LIKE 'sha256:%')$c$);
+SELECT continuum_add_constraint('action_attempts', 'attempts_status_valid',
+  $c$CHECK (status IN ('started', 'confirmed', 'failed_clean', 'ambiguous'))$c$);
+SELECT continuum_add_constraint('action_attempts', 'attempts_numbers_positive',
+  'CHECK (attempt_no >= 1 AND dispatch_owner_epoch >= 1)');
+-- An attempt is finished exactly when it has left the started state.
+SELECT continuum_add_constraint('action_attempts', 'attempts_finished_iff_terminal',
+  $c$CHECK ((status = 'started') = (finished_at IS NULL))$c$);
+SELECT continuum_add_constraint('artifacts', 'artifacts_state_valid',
+  $c$CHECK (state IN ('present', 'drifted', 'missing'))$c$);
+SELECT continuum_add_constraint('artifacts', 'artifacts_hash_and_size',
+  $c$CHECK (sha256 ~ '^[0-9a-f]{64}$' AND byte_size >= 0)$c$);
+SELECT continuum_add_constraint('approvals', 'approvals_decision_valid',
+  $c$CHECK (decision IS NULL OR decision IN ('approved', 'rejected'))$c$);
+SELECT continuum_add_constraint('usage_totals', 'usage_nonnegative', $c$CHECK (
+  model_calls >= 0 AND tokens_reported >= 0 AND cost_known_usd >= 0 AND recoveries >= 0
+  AND active_elapsed_ms >= 0)$c$);
+
+-- Leases use fractional seconds (rounding to whole seconds shortened leases).
+ALTER TABLE run_leases ALTER COLUMN expires_at_unix TYPE DOUBLE PRECISION;
+
+CREATE INDEX IF NOT EXISTS idx_model_sessions_run ON model_sessions(run_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_action ON artifacts(producing_action_id);
+-- Recovery scans for attempts that started but never recorded an outcome.
+CREATE INDEX IF NOT EXISTS idx_attempts_started ON action_attempts(action_id)
+  WHERE status = 'started';

@@ -26,7 +26,7 @@ class Lease:
     run_id: str
     owner_id: str
     epoch: int
-    expires_at_unix: int
+    expires_at_unix: float
 
     @property
     def fence(self) -> Fence:

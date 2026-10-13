@@ -86,3 +86,13 @@ def test_resume_of_completed_run_is_a_noop(make_lab):
     again = lab.new_runtime().resume(result.run_id)
     assert again.status == RunStatus.COMPLETED
     assert len(lab.env.db.attempts_log()) == before
+
+
+def test_starting_an_existing_run_id_is_a_typed_error(make_lab):
+    from continuum.core.errors import SpecValidationError
+
+    lab = make_lab("db_update_selected")
+    lab.runtime.start(lab.definition.spec, run_id="run_fixed")
+    with pytest.raises(SpecValidationError) as exc:
+        lab.new_runtime().start(lab.definition.spec, run_id="run_fixed")
+    assert exc.value.code == "run_exists"
