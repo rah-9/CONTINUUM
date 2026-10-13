@@ -73,6 +73,7 @@ def summarize(rows: list[Row]) -> dict[str, Any]:
         out[config] = {
             "runs": len(rs),
             "verified_completion": proportion(rs, lambda r: r["verified_completion"]),
+            "clean_completion": proportion(rs, lambda r: r["clean_completion"]),
             "runs_with_duplicate": proportion(writes, lambda r: r["committed_duplicates"] > 0),
             "committed_duplicates": sum(r["committed_duplicates"] for r in rs),
             "intended_writes": sum(r["intended_writes"] for r in rs),
@@ -93,6 +94,8 @@ def summarize(rows: list[Row]) -> dict[str, Any]:
         }
     out["paired_completion_diff"] = paired_bootstrap(
         rows, lambda r: float(r["verified_completion"]))
+    out["paired_clean_completion_diff"] = paired_bootstrap(
+        rows, lambda r: float(r["clean_completion"]))
     out["paired_duplicate_diff"] = paired_bootstrap(
         rows, lambda r: float(r["committed_duplicates"]))
     return out
