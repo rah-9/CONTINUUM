@@ -4,7 +4,7 @@ This is the **normative document for all side-effecting actions**. Avoid interpr
 
 ## 1. Event storage
 
-Each committed event has `{schema_version, event_id, run_id, seq, type, occurred_at, actor, payload}`. `(run_id, seq)` is assigned under a SQLite write transaction. Append event + update projection **atomically** as specified in 03. Hash chains and a distributed event bus are **not** required in v1. Never log raw secrets or oversized provider responses; store safe redacted references instead. `ModelCallFinished` records a reference to the sanitized **normalized model response** (including tool proposals), while attempt events reference sanitized tool results; this makes diagnostic replay possible without new provider or tool calls.
+Each committed event has `{schema_version, event_id, run_id, seq, type, occurred_at, actor, payload}`. `(run_id, seq)` is assigned under a PostgreSQL write transaction holding the run row lock. Append event + update projection **atomically** as specified in 03. Hash chains and a distributed event bus are **not** required in v1. Never log raw secrets or oversized provider responses; store safe redacted references instead. `ModelCallFinished` records a reference to the sanitized **normalized model response** (including tool proposals), while attempt events reference sanitized tool results; this makes diagnostic replay possible without new provider or tool calls.
 
 **Events used in v1** (payloads include IDs, evidence refs, reason and version as applicable):
 
@@ -128,7 +128,7 @@ timeout_seconds: 20
 
 ## 7. Crash, lease and event failures
 
-- Write-ahead is **event and projection commit before dispatch**; it does not make remote execution transactional with SQLite.
+- Write-ahead is **event and projection commit before dispatch**; it does not make remote execution transactional with PostgreSQL.
 - Only a lease owner holding the active fencing epoch may append ordinary run/action events. On crash recovery, a new owner atomically takes the expired lease and logs `RecoveryStarted`; incomplete attempts become ambiguous.
 - Stale worker responses must never overwrite a new owner's state. They may still have committed at the target. Reconciliation is the way to establish truth, not fencing alone.
 - Ensure action idempotency is respected even if `ActionAttemptStarted` was persisted, the tool committed, and the process crashed before `ActionAttemptConfirmed`.
