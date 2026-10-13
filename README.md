@@ -8,7 +8,7 @@ Continuum is a model-agnostic **agent continuity runtime**. It keeps a multi-ste
 
 After a crash, timeout or model switch, Continuum reuses work that is still valid. It also reconciles any effect whose outcome is uncertain **before** it allows a new side-effecting call.
 
-> Specification: [`docs/00-README.md`](docs/00-README.md) (read in order). Coding-agent contract: [`AGENTS.md`](AGENTS.md). Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md).
+> Specification: [`docs/00-README.md`](docs/00-README.md) (read in order). Coding-agent contract: [`AGENTS.md`](AGENTS.md). Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md). What we decided, did and plan next: [`docs/PROJECT-JOURNAL.md`](docs/PROJECT-JOURNAL.md).
 
 ## Stack
 
@@ -75,7 +75,9 @@ continuum status <run_id>
 continuum resume <run_id> --model B               # continue under lease + ledger rules
 continuum resolve <run_id> <action_id> confirmed --actor ops --reason "seen" --evidence receipt:123
 continuum resolve <run_id> <action_id> approve   --actor lead --reason "reviewed"
-continuum inspect <run_id>                        # side-effect-free replay + projection diff
+continuum inspect <run_id>                        # side-effect-free timeline + projection diff
+continuum trace <run_id> --out run.jsonl          # full JSON-lines trace with redacted blobs
+continuum --log-level INFO run db_update_selected # stream structured JSON trace to stderr
 continuum serve                                   # http://127.0.0.1:8765 (loopback only)
 continuum mcp                                     # stdio MCP: run_task, get_status
 ```
@@ -86,6 +88,22 @@ from continuum.interfaces.sdk import Continuum
 with Continuum() as c:
     result = c.start("upload_and_notify")
     print(result.status, c.status(result.run_id)["milestones"])
+```
+
+### See the core idea in two minutes
+
+```bash
+# The store commits the upload but the acknowledgement is lost. Continuum marks the
+# attempt `unknown`, proves the effect with an authoritative query, and finishes
+# without uploading twice.
+continuum run demo_ack_loss_recovery
+continuum inspect <run_id>       # timeline: ambiguous outcome -> reconciliation -> verified
+
+# An opaque provider times out after sending. Continuum never re-sends on its own:
+continuum run demo_opaque_needs_human                    # -> awaiting_reconciliation
+continuum resolve <run_id> <action_id> confirmed --actor you --reason "seen in console" \
+    --evidence receipt:123
+continuum resume <run_id>                                # -> completed, exactly one send
 ```
 
 The pre-registered tasks use the deterministic local fake agent by default. To use live models:

@@ -74,11 +74,14 @@ Human-confirmed statements are not equivalent to deterministic milestone evidenc
 
 Verifier receives a read-only view of the task, artifacts and ledger. It returns `{status, evidence_refs, input_fingerprint, verifier_version}`. Store evidence artifacts by content hash. Re-check on resume and before final completion. Any changed input, artifact, dependency or verifier version invalidates affected milestone and its transitive dependents.
 
+If an invalidated milestone (or a descendant) already has **confirmed** write effects, its redo would need those operations again, and confirmed operation keys are never re-sent. The run therefore stops explicitly with `failure_code = drift_requires_remediation` rather than looping; a new task spec version or a human remediation workflow is required (docs/03 §5).
+
 For non-file effects, verification observes mock service ground truth or a documented authoritative source. Model narrative or a successful HTTP response alone is insufficient if a stronger task verifier is specified.
 
 ## 8. Replay, interfaces and threading
 
-- `inspect/replay`: replay recorded events, model decisions and tool results into an isolated state projection; **never call providers or tools**. This is a diagnostic feature, distinct from run resume.
+- `inspect/replay`: replay recorded events, model decisions and tool results into an isolated state projection; **never call providers or tools**. This is a diagnostic feature, distinct from run resume. `inspect` returns a timeline (model decisions, action outcomes, reconciliation, milestones) and a projection diff; `trace` exports every event as JSON lines with its redacted blobs inlined, for Continuum Lab.
+- Structured local tracing: every committed event, model call and tool dispatch is logged as one JSON line (IDs, types, statuses and durations only; never arguments or payloads).
 - `resume`: real continuation under lease and ledger safeguards. Do **not** implement a `live replay` mode in v1.
 - SDK/CLI execute locally. Minimal HTTP binds to `127.0.0.1` by default; production authentication/deployment are explicitly excluded.
 - A v1 local **stdio MCP facade** delegates pre-registered `run_task` and `get_status` calls; it does not install a harness inside the host. Arbitrary remote MCP tool discovery remains post-MVP. Tool annotations from external MCP servers are untrusted until an operator creates a trusted manifest.

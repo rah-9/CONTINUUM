@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0 — 2026-10-13
+
+### Added
+- Structured JSON tracing (`continuum.core.tracing`) covering committed events, model calls and tool dispatches (ids, statuses and durations only). The CLI flag `--log-level INFO` streams it to stderr.
+- Read-only `inspect` timeline and `trace` export (`continuum trace`, `GET /runs/{id}/trace`, `Continuum.trace`): events as JSON lines, with redacted blobs inlined.
+- Background lease heartbeat (`LeaseKeeper`; SDK interval is TTL/3), so a long model or tool call keeps ownership.
+- Demo tasks `demo_ack_loss_recovery` and `demo_opaque_needs_human`, plus a `script` option for lab task bindings.
+- Lab metric `clean_completion` (completed with no duplicate or unintended effect), with a paired difference.
+- Project journal: `docs/PROJECT-JOURNAL.md`.
+
+### Changed
+- Drift that would require re-sending confirmed operations now stops the run at once with `failure_code = drift_requires_remediation` (docs/02 §7, docs/03 §5). Previously it looped until models were exhausted.
+- The registered task id is stamped onto the run's spec, so resume always finds the binding that started the run.
+
 ## 0.1.0 — 2026-10-13
 
 First implementation of the v1 MVP (spec 0.3).
