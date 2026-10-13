@@ -17,9 +17,9 @@ Secondary correctness issue: an agent's self-report must not substitute for inde
 
 ## 2. Scope / explicit exclusions
 
-**In v1:** one run at a time per ownership lease; milestone-driven workflow; SQLite append-only events and transactional projections; read/write tool gateway; durable action identity and retries; unknown-action reconciliation; deterministic verifiers; two-provider handoff supported and three independently tested provider configurations as benchmark goal; Python SDK/CLI; minimal localhost HTTP access; a thin local stdio MCP task-delegation facade; local mocks and integrated Continuum Lab.
+**In v1:** one run at a time per ownership lease; milestone-driven workflow; PostgreSQL append-only events and transactional projections; read/write tool gateway; durable action identity and retries; unknown-action reconciliation; deterministic verifiers; two-provider handoff supported and three independently tested provider configurations as benchmark goal; Python SDK/CLI; minimal localhost HTTP access; a thin local stdio MCP task-delegation facade; local mocks and integrated Continuum Lab.
 
-**Out of v1:** generic planning, multi-agent coordination, arbitrary external MCP servers, hosted multi-tenancy, vector DB, long-term chat memory, dashboard, PostgreSQL backend, distributed orchestration, sandboxed arbitrary code/shell execution, live side-effect replay, VS Code/browser plugins and remote MCP tool **discovery/hosting**. Document their future interface boundaries only; do not implement speculatively.
+**Out of v1:** generic planning, multi-agent coordination, arbitrary external MCP servers, hosted multi-tenancy, vector DB, long-term chat memory, dashboard, multi-host/distributed database deployment, distributed orchestration, sandboxed arbitrary code/shell execution, live side-effect replay, VS Code/browser plugins and remote MCP tool **discovery/hosting**. Document their future interface boundaries only; do not implement speculatively.
 
 Tools run as **trusted, explicitly registered Python adapters** with schema validation, allowlists and fixed endpoints. Arbitrary tool code supplied by a model is disallowed.
 
@@ -37,7 +37,7 @@ Tools run as **trusted, explicitly registered Python adapters** with schema vali
 
 **R1 Task spec:** immutable snapshot of goal, instructions, milestones, verifier versions, dependencies, allowed tool manifests, operation-key policy, model routing and hard budgets. Milestones form an acyclic dependency graph.
 
-**R2 Durable state:** an SQLite transaction appends the event **and applies its projections atomically**. Rebuild from events is deterministic. No durable transition relies only on volatile model text.
+**R2 Durable state:** one PostgreSQL transaction appends the event **and applies its projections atomically**. Rebuild from events is deterministic. No durable transition relies only on volatile model text.
 
 **R3 Single owner:** lease and monotonically increasing fencing epoch per run; enforce epoch on every durable state update and immediately before tool dispatch. Recovery treats earlier unfinished dispatches as possibly committed.
 
@@ -61,7 +61,7 @@ Tools run as **trusted, explicitly registered Python adapters** with schema vali
 
 ## 5. Non-functional requirements
 
-- SQLite WAL + `busy_timeout`, short transactions, no DB lock held over model or tool network calls. A single machine is supported; no cross-host guarantee.
+- PostgreSQL row locks (`FOR NO KEY UPDATE` on the run row) + `lock_timeout`, short transactions, no DB lock held over model or tool network calls. A single machine is supported; no cross-host guarantee.
 - Per-run workspace with path containment, atomic file replacement and sha256 evidence. External inputs are snapshotted or versioned; changed inputs invalidate dependent milestones.
 - Secrets are supplied only from environment/config, never serialized to task events, packets or reports. Redact/error-filter before persistence. Treat tool outputs as untrusted data.
 - Structured JSON local tracing is required; OTel integration is optional after MVP. No arbitrary shell, network sandbox or Docker runtime required for core v1.
@@ -83,7 +83,7 @@ Target **15–20 checkable tasks**, three provider configurations, two or more r
 ## 7. Risks and assumptions
 
 - Idempotency behavior and TTL differ across external providers. Tests verify a connector's declared contract; incorrect manifests invalidate guarantees.
-- Event sourcing adds complexity. Keep one SQLite event transaction and simple derived tables; no distributed event bus or hash-chained audit log.
+- Event sourcing adds complexity. Keep one PostgreSQL event transaction and simple derived tables; no distributed event bus or hash-chained audit log.
 - Source-level task steps cannot always be matched semantically across different models. MVP requires developer-defined milestone IDs and operation-key extraction rules.
 - A local controller lease cannot stop a request already in flight at an external service. Reconcile after takeover; do not overclaim fencing.
 - Reliable *negative* outcome evidence may not exist. Favor a human pause over an unsafe retry.

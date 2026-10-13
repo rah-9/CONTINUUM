@@ -15,12 +15,12 @@ Python SDK / CLI / localhost HTTP / local MCP facade
                 |
          Milestone verifier ---- artifact/evidence store
                 |
-       SQLite event store + projections (ONE transaction per transition)
+     PostgreSQL event store + projections (ONE transaction per transition)
                 |
           JSON trace export -> Continuum Lab (in-repo tests)
 ```
 
-**Ownership:** model adapters propose actions but never execute tools; only gateway dispatches, **including read-only verifier/reconciliation probes** (labeled by trusted caller in the event log). Controller governs run state and budgets; verifier alone confers milestone progress. Runtime, ledger and evidence remain model-independent. SQLite is the source of truth; workspace files are content-verified artifacts.
+**Ownership:** model adapters propose actions but never execute tools; only gateway dispatches, **including read-only verifier/reconciliation probes** (labeled by trusted caller in the event log). Controller governs run state and budgets; verifier alone confers milestone progress. Runtime, ledger and evidence remain model-independent. PostgreSQL is the source of truth; workspace files are content-verified artifacts.
 
 ## 2. Run lifecycle
 
@@ -44,7 +44,7 @@ No auto-resume from `awaiting_reconciliation` on a timer if uncertainty remains.
 ## 4. Gateway / external effect flow
 
 1. Validate JSON Schema, route + allowlist, effect policy, canonical args and operation-key fields.
-2. In a short SQLite transaction protected by active controller fencing epoch, find existing logical action by `(run_id, operation_key)` or create it. If existing immutable args differ: **reject as intent conflict**, do not silently create a second action.
+2. In a short PostgreSQL transaction protected by active controller fencing epoch, find existing logical action by `(run_id, operation_key)` or create it. If existing immutable args differ: **reject as intent conflict**, do not silently create a second action.
 3. Persist authorization (after approval if required). Persist `ActionAttemptStarted` and attempt row **before** remote dispatch. Commit transaction.
 4. Immediately check lease ownership and cancellation before starting actual invocation. If ownership changed after a persisted start, treat attempt as uncertain until reconciliation. Never hold a DB transaction open over I/O.
 5. On acknowledged success, persist confirmation. On definitively side-effect-free rejection, persist `failed_clean`. On ambiguous failure/timeout, persist `unknown`; **do not return a normal retriable error** to the model.

@@ -1,7 +1,7 @@
 # Continuum — specification index
 
-**Spec version:** 0.2 (reviewed 2026-10-13)  
-**Status:** implementation-ready MVP design; not a claim that code exists
+**Spec version:** 0.3 (2026-10-13: durable backend changed from SQLite to PostgreSQL; see `DECISIONS.md` D-001)  
+**Status:** v0.1.0 implementation in `src/`, `eval/` and `tests/`; see `CHANGELOG.md`
 
 **Purpose:** keep multi-step agent progress in runtime-owned, model-independent state. After an interruption or model handoff, reuse *valid verified work* and reconcile any uncertain external effect **before** new side-effecting work.
 
@@ -11,7 +11,7 @@ This is a **single project**. Continuum Lab is its in-repository fault-injection
 
 1. [01-PRD.md](01-PRD.md): problem, hard requirements, exclusions, acceptance
 2. [02-ARCHITECTURE-AND-FLOWS.md](02-ARCHITECTURE-AND-FLOWS.md): component boundaries, runtime and recovery flows
-3. [03-STATE-SCHEMA.md](03-STATE-SCHEMA.md): durable entities, SQLite schema, invariants
+3. [03-STATE-SCHEMA.md](03-STATE-SCHEMA.md): durable entities, PostgreSQL schema, invariants
 4. [04-EVENT-LOG-AND-LEDGER.md](04-EVENT-LOG-AND-LEDGER.md): state transitions, identity, retry/reconciliation policy
 5. [05-MODEL-ADAPTERS.md](05-MODEL-ADAPTERS.md): provider contract, capability limits and packet
 6. [06-DEV-WORKFLOW.md](06-DEV-WORKFLOW.md): implementation sequence, repo structure, gates
@@ -37,9 +37,9 @@ For any conflict: **04 governs effects/retries; 03 governs persisted state; 02 g
 ## Explicit guarantees and limits
 
 - For tasks and tools meeting the declared contracts, Continuum **attempts to retain verified progress and avoid unsafe duplicate dispatches**. It does **not** guarantee exactly-once effects across arbitrary external services.
-- SQLite is the **only** durable backend required in v1, for a local single-host runtime. Multiple workers claiming one run are blocked by lease/epoch rules, but external side effects still require reconciliation.
-- v1 has a Python SDK, CLI, minimal localhost HTTP surface and a thin **local stdio MCP task-delegation facade** (`run_task`, `get_status`) built last. PostgreSQL, arbitrary MCP tool ingestion, code execution, dashboards and production hosting are **post-MVP**.
+- PostgreSQL (14+) is the **only** durable backend in v1, for a local single-host runtime (one database, controllers on one machine). Multiple workers claiming one run are blocked by lease/epoch rules, but external side effects still require reconciliation.
+- v1 has a Python SDK, CLI, minimal localhost HTTP surface and a thin **local stdio MCP task-delegation facade** (`run_task`, `get_status`) built last. Distributed/multi-host deployment, arbitrary MCP tool ingestion, code execution, dashboards and production hosting are **post-MVP**.
 
 ## Repo layout note
 
-Place this file and `01`–`07` in `docs/`; place `AGENTS.md` at repo root. `docs/DECISIONS.md` and `docs/CHANGELOG.md` are created by implementation tasks as needed.
+This file and `01`–`07` live in `docs/`; `AGENTS.md` is at the repo root. `docs/DECISIONS.md` records implementation decisions and `docs/CHANGELOG.md` contract changes.

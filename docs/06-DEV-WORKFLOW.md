@@ -25,7 +25,9 @@ continuum/
     core/
       state.py                  # typed specs and state enums
       events.py                 # canonical event encoder
-      store.py                  # SQLite transactions and projections
+      store.py                  # PostgreSQL transactions and projections
+      schema.sql                # canonical DDL (mirrored in 03)
+      projections.py            # pure event -> row changes (live + rebuild)
       leases.py                 # owner and fencing epoch
       ledger.py                 # logical actions + attempts
       reconciliation.py
@@ -63,14 +65,14 @@ continuum/
     chaos/
 ```
 
-**Dependencies:** Python 3.12+, Pydantic v2, SQLite stdlib, FastAPI only for HTTP, LiteLLM for live adapters, JSON Schema validator, pytest, hypothesis, ruff and mypy. Other packages need a measured reason recorded in `DECISIONS.md`. No Docker runtime, Postgres, Redis, Temporal/DBOS, agent framework, UI stack or vector DB required in v1.
+**Dependencies:** Python 3.12+, Pydantic v2, PostgreSQL 14+ via psycopg 3 (+ psycopg-pool), FastAPI only for HTTP, LiteLLM for live adapters, JSON Schema validator, pytest, hypothesis, ruff and mypy. Other packages need a measured reason recorded in `DECISIONS.md`. No Docker runtime, Redis, Temporal/DBOS, agent framework, UI stack or vector DB required in v1.
 
 ## 3. Four-week implementation sequence (deliver slices, not calendar guarantees)
 
 ### Week 1 — core state and identity
 
 - W1-1: scaffold repo, types, strict spec/manifest validation, fake clock and deterministic IDs.
-- W1-2: SQLite schema, `BEGIN IMMEDIATE` event+projection atomicity, rebuild test.
+- W1-2: PostgreSQL schema, run-row-locked event+projection atomicity, rebuild test.
 - W1-3: lease acquisition/renewal/epoch and concurrent-resume test using **two processes**.
 - W1-4: immutable `(run_id, operation_key)` action identity, attempt rows, idempotency keys and transition tests.
 - W1-5: crash boundary test around `ActionAttemptStarted` before/after simulated commit.
@@ -123,7 +125,7 @@ Done when: tests and type checks pass; docs and changelog updated if contracts c
 
 - **Unit:** state transitions, operation key derivation, immutable argument conflicts, packet determinism, input fingerprints and budgeting.
 - **Property:** event replay equivalence, gapless sequence, idempotency key stability, duplicate-proposal safety.
-- **Integration:** gateway + SQLite + fake adapters + mock services.
+- **Integration:** gateway + PostgreSQL + fake adapters + mock services.
 - **Chaos/process:** kill at each write-ahead/commit boundary; parallel resumers; expired lease with old in-flight response.
 - **Contract/live opt-in:** three provider configurations with exact IDs and recorded model characteristics.
 - **Security:** secrets redacted; path traversal rejected; arbitrary tool execution denied; model prompt injection cannot change allowlists.
@@ -132,7 +134,7 @@ Done when: tests and type checks pass; docs and changelog updated if contracts c
 
 ## 6. Decisions already frozen for v1
 
-- SQLite-only (single host) and local API only.
+- PostgreSQL-only (single host, one database) and local API only.
 - Event store is authoritative; leases are ephemeral infrastructure metadata.
 - Explicit task-defined milestones and operation identity; no model-generated milestones.
 - Trusted Python tools and a thin task-delegation-only local stdio MCP facade; no arbitrary code executor or remote MCP tool discovery.

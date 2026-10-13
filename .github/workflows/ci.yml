@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "rahul/**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: continuum
+          POSTGRES_PASSWORD: continuum
+          POSTGRES_DB: continuum_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U continuum -d continuum_test" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      CONTINUUM_TEST_DATABASE_URL: postgresql://continuum:continuum@localhost:5432/continuum_test
+      CONTINUUM_DATABASE_URL: postgresql://continuum:continuum@localhost:5432/continuum_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        # setup-uv already created and activated .venv (python-version input)
+        run: uv pip install -e ".[dev,mcp,live]"
+      - name: Lint (ruff)
+        run: uv run --no-sync ruff check src eval tests
+      - name: Type check (mypy --strict)
+        run: uv run --no-sync mypy
+      - name: Unit + property tests
+        run: uv run --no-sync pytest tests/unit -q
+      - name: Integration + contract tests
+        run: uv run --no-sync pytest tests/integration tests/contract -q
+      - name: Chaos / process tests
+        run: uv run --no-sync pytest tests/chaos -q
+      - name: Continuum Lab smoke
+        run: uv run --no-sync continuum-lab run --suite smoke --out results/smoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lab-smoke-report
+          path: results/smoke/

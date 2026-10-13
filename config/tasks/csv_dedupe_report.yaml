@@ -1,0 +1,7 @@
+# Pre-registered task (Continuum Lab csv family).
+task_id: csv_dedupe_report
+description: "Remove duplicate SKUs and report the count"
+factory: "continuum_lab.registry:lab_task"
+options:
+  task: csv_dedupe_report
+  fake_models: true   # deterministic local agent; set false to use config/models.yaml

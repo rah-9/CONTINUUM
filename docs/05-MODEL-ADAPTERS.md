@@ -79,18 +79,23 @@ Packet serialization is canonical JSON, schema-versioned, and deterministic for 
 ```json
 {
   "packet_version": 1,
+  "builder_version": "1",
   "run_id": "run_example",
   "task": {"goal": "...", "instructions": "...", "constraints": []},
   "verified_milestones": [{"id": "m1", "evidence_ref": "...", "fingerprint": "..."}],
-  "pending_milestones": [{"id": "m2", "depends_on": ["m1"]}],
+  "pending_milestones": [{"id": "m2", "depends_on": ["m1"], "description": "..."}],
   "artifacts": [{"path": "artifacts/a.csv", "sha256": "..."}],
   "confirmed_actions": [{"operation_key": "...", "result_ref": "..."}],
   "open_actions": [],
   "allowed_tools": ["csv.normalize", "store.put"],
-  "remaining_budget": {"model_calls": 10},
-  "data_refs": []
+  "remaining_budget": {"model_calls": 10, "tokens": 80000, "cost_usd": "1.20",
+                       "cost_has_unpriced_usage": false, "active_seconds": 600},
+  "data_refs": [{"ref": "blob:sha256:...", "tool": "csv.normalize", "untrusted": true,
+                 "data": {}}]
 }
 ```
+
+`pending_milestones[].description` is the optional text removed first under "compact evidence descriptions"; references are never removed. `open_actions` lists unresolved and approval-pending actions; any entry makes the packet inspection-only for writes.
 
 Rules:
 
