@@ -8,6 +8,8 @@ Continuum is a model-agnostic **agent continuity runtime**. It keeps a multi-ste
 
 After a crash, timeout or model switch, Continuum reuses work that is still valid. It also reconciles any effect whose outcome is uncertain **before** it allows a new side-effecting call.
 
+> How it runs and connects: [`docs/OPERATIONS.md`](docs/OPERATIONS.md). How it is verified: [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
+>
 > Specification: [`docs/00-README.md`](docs/00-README.md) (read in order). Coding-agent contract: [`AGENTS.md`](AGENTS.md). Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md). What we decided, did and plan next: [`docs/PROJECT-JOURNAL.md`](docs/PROJECT-JOURNAL.md).
 
 ## Stack
@@ -151,6 +153,8 @@ Each change follows the cycle in `docs/06-DEV-WORKFLOW.md`:
 | Unit / property | `tests/unit` | spec validation, transitions, identity, canonical encoding, packet determinism, fingerprints, redaction, adapter normalization, doc/DDL sync |
 | Integration | `tests/integration` | atomic events+projections, fencing, leases, gateway dedupe/conflict/permissions, reconciliation table, U1–U7 flows, drift, budgets, replay, SDK/CLI/HTTP/MCP, lab safety gates |
 | Contract | `tests/contract` | provider-format tool calls normalized via LiteLLM; error taxonomy drives retry/handoff; live tests opt-in (`CONTINUUM_LIVE=1 pytest -m live`) |
+| Property (stateful) | `tests/property` | Hypothesis-generated interleavings of proposals, faults, crashes and human decisions preserve every ledger invariant in all connector modes |
+| Non-functional | `tests/nonfunctional` | no DB lock across I/O, secret hygiene, reproducibility, parallel processes, performance baselines |
 | Chaos | `tests/chaos` | crash at every write-ahead/commit boundary, then resume; real two-process lease races; `os._exit` after remote commit; stale owner returning |
 
 ## Continuum Lab

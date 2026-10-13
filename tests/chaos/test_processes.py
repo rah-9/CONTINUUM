@@ -136,3 +136,28 @@ def test_old_owner_returning_after_takeover_cannot_overwrite_state(make_lab):
     assert put.status == ActionStatus.CONFIRMED
     assert [a.status for a in attempts] == ["ambiguous"]  # stale "confirmed" never landed
     assert lab.store.projection_diff(old.run_id) == []
+
+
+def test_lease_ttl_is_not_shortened_by_rounding(schema, store):
+    """Regression: `extract(epoch)::bigint` rounds, so a lease taken at x.4s expired at
+    x.5s — a 1s TTL lasted ~0.1s. Leases must last their full TTL in real DB time."""
+    import time
+
+    from continuum.core.events import RunCreated, make_event
+
+    definition = get_task("db_update_selected")
+    real = Store(DSN, schema=schema, clock=SystemClock(), ids=RandomIds(), pool_size=2)
+    try:
+        with real.run_tx("run_ttl", None, create=True) as tx:
+            tx.append(make_event(RunCreated(task_id="t", spec=definition.spec.canonical(),
+                                            owner_id="x"), actor="test"))
+        leases = LeaseManager(real, ttl_seconds=1)
+        for i in range(3):
+            while not 0.40 <= time.time() % 1 < 0.45:  # the worst-case sub-second offset
+                time.sleep(0.005)
+            lease = leases.acquire("run_ttl", f"owner-{i}")
+            time.sleep(0.3)
+            assert leases.is_active(lease), "lease expired long before its 1s TTL"
+            leases.release(lease)
+    finally:
+        real.close()

@@ -18,7 +18,7 @@ class Clock(Protocol):
 
     def sleep(self, seconds: float) -> None: ...
 
-    def lease_time(self) -> int | None:
+    def lease_time(self) -> float | None:
         """Unix seconds for lease checks, or ``None`` to use database time."""
         ...
 
@@ -34,7 +34,7 @@ class SystemClock:
         if seconds > 0:
             time.sleep(seconds)
 
-    def lease_time(self) -> int | None:
+    def lease_time(self) -> float | None:
         return None
 
 
@@ -58,5 +58,5 @@ class FakeClock:
         self._now += timedelta(seconds=seconds)
         self._mono += seconds
 
-    def lease_time(self) -> int | None:
-        return int(self._now.timestamp())
+    def lease_time(self) -> float | None:
+        return self._now.timestamp()
