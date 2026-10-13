@@ -9,6 +9,7 @@ byte-identical packet (no timestamps, no random ordering).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -80,26 +81,31 @@ class PacketBuilder:
         return min(int(window * self.context_fraction), hard)
 
     def build(self, snap: RunSnapshot, profile: CapabilityProfile, *,
-              data_refs: list[DataRef], tool_schema_tokens: int, max_output_tokens: int
-              ) -> Packet:
+              data_refs: list[DataRef], tool_schema_tokens: int, max_output_tokens: int,
+              handoff: dict[str, Any] | None = None,
+              count_tokens: Callable[[str], int] = estimate_tokens) -> Packet:
+        """Build the packet. ``handoff`` is runtime provenance (never model narrative);
+        ``count_tokens`` is the target provider's tokenizer when available."""
+        estimate = count_tokens
         body = self._body(snap, data_refs, with_descriptions=True)
+        body["handoff"] = handoff
         capacity = self.capacity(profile, tool_schema_tokens=tool_schema_tokens,
                                  max_output_tokens=max_output_tokens)
         truncation: list[str] = []
         text = canonical_json(body)
         # Reduction order: drop oldest untrusted data, then compact descriptions
         # (references are always retained), then fail rather than drop invariants.
-        while estimate_tokens(text) > capacity and body["data_refs"]:
+        while estimate(text) > capacity and body["data_refs"]:
             body["data_refs"].pop(0)
             if "data_refs_dropped" not in truncation:
                 truncation.append("data_refs_dropped")
             text = canonical_json(body)
-        if estimate_tokens(text) > capacity:
+        if estimate(text) > capacity:
             for m in body["pending_milestones"]:
                 m.pop("description", None)
             truncation.append("descriptions_compacted")
             text = canonical_json(body)
-        tokens = estimate_tokens(text)
+        tokens = estimate(text)
         if tokens > capacity:
             raise PacketTooLargeError(
                 f"packet needs ~{tokens} tokens but {profile.alias} allows {capacity}")

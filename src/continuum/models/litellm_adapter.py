@@ -16,6 +16,7 @@ from continuum.models.base import (
     ModelResponse,
     ToolProposal,
     Usage,
+    estimate_tokens,
 )
 
 
@@ -53,6 +54,15 @@ class LiteLLMAdapter:
     def __init__(self, model_id: str, **completion_kwargs: Any) -> None:
         self.model_id = model_id
         self.kwargs = completion_kwargs
+
+    def count_tokens(self, text: str) -> int:
+        """Provider tokenizer via LiteLLM; conservative estimate if unavailable."""
+        try:
+            import litellm
+
+            return int(litellm.token_counter(model=self.model_id, text=text))
+        except Exception:  # unknown tokenizer: never undercount silently
+            return estimate_tokens(text)
 
     async def complete(self, *, messages: list[Message], tools: list[dict[str, Any]],
                        max_output_tokens: int, timeout_seconds: float) -> ModelResponse:
