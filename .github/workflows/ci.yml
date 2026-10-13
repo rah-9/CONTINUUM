@@ -45,6 +45,10 @@ jobs:
         run: uv run --no-sync pytest tests/integration tests/contract -q
       - name: Chaos / process tests
         run: uv run --no-sync pytest tests/chaos -q
+      - name: Property (stateful, randomized) tests
+        run: uv run --no-sync pytest tests/property -q
+      - name: Non-functional tests (locks, secrets, determinism, concurrency, performance)
+        run: uv run --no-sync pytest tests/nonfunctional -q -s
       - name: Continuum Lab smoke
         run: uv run --no-sync continuum-lab run --suite smoke --out results/smoke
       - uses: actions/upload-artifact@v4

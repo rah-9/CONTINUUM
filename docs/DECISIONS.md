@@ -162,3 +162,43 @@ Ready-made client configs ship in `integrations/`: a Claude Code plugin with a s
 Either way, the profile comes from LiteLLM's model registry. It is accepted only when the registry reports a context window, an output limit and native tool calling. A zero registry price is treated as unknown. Every profile is snapshotted in `ModelSessionStarted`, so each session's model and limits stay auditable.
 
 Bare names without a provider prefix are refused, so a typo cannot silently route somewhere else.
+
+## D-025 — Schema v2: invariants enforced by PostgreSQL
+
+The database now rejects states that would violate core invariants, independently of application code:
+
+- valid status enums (kept equal to the Python enums by a test)
+- a verified milestone always has its fingerprint, evidence and timestamp (I3)
+- a confirmed action always has an outcome
+- an attempt is finished exactly when it is no longer `started`
+- a terminal run always has `finished_at`
+- digests and hashes are well formed
+- usage counters are non-negative
+- `TRUNCATE` on `events` is blocked
+
+New indexes cover sessions and artifacts by run, artifacts by action, and unfinished attempts. A `schema_meta` row records the version. Constraints are added through an idempotent helper, so `db-init` upgrades existing databases in place.
+
+The full suite, including chaos, ran with zero violations. That is evidence the runtime never writes an invalid state.
+
+## D-026 — Verification is traceable and multi-layered
+
+`tests/traceability.yaml` maps every requirement to its tests:
+
+- R1–R12, U1–U7 and I1–I8
+- the non-functional requirements NF1–NF9
+- the safety gates G1–G6
+
+A unit test enforces the mapping. Two layers were added:
+
+- property-based stateful tests (Hypothesis) over the ledger, gateway, recovery and human decisions
+- non-functional tests: no DB lock across I/O, end-to-end secret hygiene, reproducibility, parallel processes, performance baselines
+
+CI runs every layer. See `docs/VERIFICATION.md`.
+
+## D-027 — Lease time is fractional
+
+`extract(epoch from clock_timestamp())::bigint` rounds to the nearest second, so a lease acquired at `x.4 s` read as expired at `x.5 s`. Every lease was up to a second shorter than its TTL, and a 1 s TTL could last about 0.1 s.
+
+Lease expiry and DB time are now `DOUBLE PRECISION` seconds with no rounding. Existing databases are altered idempotently by `db-init`.
+
+The defect surfaced as an intermittent chaos-test failure under load. It was reproduced deterministically by acquiring at the worst-case sub-second offset (`test_lease_ttl_is_not_shortened_by_rounding`), and only then fixed.

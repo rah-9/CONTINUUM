@@ -160,6 +160,10 @@ class Runtime:
               model_alias: str | None = None) -> RunResult:
         self.validate_spec(spec)
         run_id = run_id or self.ids.new("run")
+        with self.store.read() as q:
+            if q.run_exists(run_id):
+                raise SpecValidationError(f"run {run_id} already exists; use resume",
+                                          code="run_exists")
         workspace = Workspace(self.config.workspace_root, run_id)
         workspace.init()
         workspace.snapshot_inputs(spec, self.config.input_root)

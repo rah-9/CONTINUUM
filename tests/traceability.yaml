@@ -1,0 +1,138 @@
+# Requirements traceability matrix (source of truth; enforced by
+# tests/unit/test_traceability.py). Every requirement maps to tests that prove it.
+# IDs: R = docs/01 §4, U = docs/01 §3, I = docs/03 §7, NF = docs/01 §5,
+# G = docs/01 §6 safety release gates.
+
+R1_task_spec_validated_immutable:
+  - tests/unit/test_state.py::test_valid_spec_parses_and_is_frozen
+  - tests/unit/test_state.py::test_invalid_milestone_graphs_rejected
+  - tests/unit/test_state.py::test_non_positive_budget_rejected
+R2_atomic_event_projection:
+  - tests/integration/test_store.py::test_event_and_projection_commit_or_roll_back_together
+  - tests/integration/test_store.py::test_damaged_projection_is_detected_and_rebuilt_exactly
+  - tests/integration/test_schema.py::test_database_rejects_invariant_violations
+R3_single_owner_lease_fencing:
+  - tests/integration/test_leases.py::test_renewal_keeps_epoch_and_takeover_increments_it
+  - tests/integration/test_store.py::test_stale_or_missing_fence_cannot_write
+  - tests/chaos/test_processes.py::test_two_processes_racing_to_resume_cannot_both_own
+  - tests/chaos/test_heartbeat.py::test_heartbeat_keeps_lease_through_slow_tool
+R4_tool_gateway:
+  - tests/integration/test_gateway.py::test_duplicate_proposal_reuses_action_and_never_redispatches
+  - tests/integration/test_gateway.py::test_same_identity_different_args_is_intent_conflict
+  - tests/integration/test_gateway.py::test_model_cannot_use_unlisted_tool_or_bypass_permissions
+  - tests/integration/test_gateway.py::test_tool_schemas_come_only_from_the_task_allowlist
+R5_unknown_recovery:
+  - tests/integration/test_reconciliation.py::test_commit_then_drop_is_confirmed_by_authoritative_query
+  - tests/integration/test_reconciliation.py::test_absent_but_pending_commit_is_not_retried_on_negative_read
+  - tests/integration/test_reconciliation.py::test_opaque_timeout_pauses_for_human_and_never_auto_repeats
+  - tests/property/test_ledger_state_machine.py::test_ledger_invariants_hold_under_random_interleavings
+R6_idempotency:
+  - tests/integration/test_reconciliation.py::test_drop_before_commit_with_valid_key_retries_same_action_and_key
+  - tests/integration/test_reconciliation.py::test_expired_dedupe_key_falls_back_to_query_then_human
+  - tests/integration/test_reconciliation.py::test_deduped_retry_while_original_still_processing_does_not_duplicate
+  - tests/unit/test_ledger.py::test_idempotency_key_is_stable_and_bound_to_identity
+R7_verification:
+  - tests/integration/test_drift.py::test_model_claim_alone_never_verifies
+  - tests/integration/test_drift.py::test_artifact_drift_invalidates_milestone_and_descendants_keeps_history
+  - tests/unit/test_evidence.py::test_fingerprint_changes_with_any_input
+R8_handoff:
+  - tests/integration/test_handoff.py::test_packet_carries_handoff_provenance_and_verified_state
+  - tests/integration/test_handoff.py::test_persistent_failure_hands_off_with_packet_and_preserves_budget
+  - tests/contract/test_model_switching.py::test_vendor_switch_mid_run_openai_to_anthropic
+  - tests/contract/test_model_switching.py::test_version_upgrade_between_chats_gpt_5_6_to_6_1
+R9_budgets:
+  - tests/integration/test_budgets.py::test_model_call_budget_is_enforced_across_handoffs
+  - tests/integration/test_budgets.py::test_recovery_budget_and_no_silent_reset
+  - tests/integration/test_budgets.py::test_downtime_does_not_count_as_active_time
+R10_interfaces:
+  - tests/integration/test_interfaces.py::test_sdk_lifecycle_with_approval
+  - tests/integration/test_interfaces.py::test_http_api_endpoints
+  - tests/integration/test_interfaces.py::test_cli_json_output
+  - tests/integration/test_mcp_stdio.py::test_mcp_plugin_end_to_end_over_stdio
+R11_side_effect_free_replay:
+  - tests/integration/test_replay.py::test_inspect_invokes_no_tool_or_model
+  - tests/integration/test_observability.py::test_timeline_and_trace_export_are_read_only
+R12_test_harness:
+  - tests/integration/test_lab.py::test_report_renders_paired_comparison
+  - tests/chaos/test_crash_boundaries.py::test_crash_at_boundary_then_resume_preserves_invariants
+
+U1_continuity_after_kill_with_other_provider:
+  - tests/integration/test_recovery.py::test_u1_kill_after_milestone_2_resume_with_provider_b_reuses_verified_work
+U2_ambiguous_effect_recovered_once:
+  - tests/integration/test_recovery.py::test_u2_commit_then_crash_before_outcome_recovers_without_duplicate
+  - tests/chaos/test_processes.py::test_hard_process_kill_after_remote_commit_then_resume
+U3_opaque_effect_pauses_for_human:
+  - tests/integration/test_reconciliation.py::test_opaque_timeout_pauses_for_human_and_never_auto_repeats
+  - tests/chaos/test_crash_boundaries.py::test_opaque_service_crash_never_auto_repeats
+U4_portability_and_capabilities:
+  - tests/integration/test_handoff.py::test_incompatible_models_are_skipped_explicitly
+  - tests/unit/test_packet.py::test_reduction_drops_untrusted_data_first_then_fails_rather_than_drop_state
+  - tests/contract/test_model_switching.py::test_every_catalog_tool_name_is_valid_for_every_vendor
+U5_accuracy_only_verifiers:
+  - tests/integration/test_drift.py::test_model_claim_alone_never_verifies
+  - tests/integration/test_drift.py::test_artifact_drift_invalidates_milestone_and_descendants_keeps_history
+U6_racing_resumers:
+  - tests/chaos/test_processes.py::test_two_processes_racing_to_resume_cannot_both_own
+  - tests/chaos/test_processes.py::test_old_owner_returning_after_takeover_cannot_overwrite_state
+U7_lab_comparison:
+  - tests/integration/test_lab.py::test_lagging_negative_read_is_not_treated_as_absence
+  - tests/integration/test_lab.py::test_report_renders_paired_comparison
+
+I1_gapless_atomic_sequence:
+  - tests/integration/test_store.py::test_sequences_are_gapless_and_strictly_increasing
+I2_projection_rebuild_equivalence:
+  - tests/integration/test_store.py::test_damaged_projection_is_detected_and_rebuilt_exactly
+  - tests/property/test_ledger_state_machine.py::test_ledger_invariants_hold_under_random_interleavings
+I3_only_passing_verifier_verifies:
+  - tests/integration/test_drift.py::test_model_claim_alone_never_verifies
+  - tests/integration/test_schema.py::test_database_rejects_invariant_violations
+I4_ambiguous_blocks_writes:
+  - tests/integration/test_gateway.py::test_ambiguous_write_becomes_unknown_and_blocks_new_writes
+  - tests/integration/test_gateway.py::test_existing_retryable_write_is_blocked_while_another_effect_is_unresolved
+I5_one_action_per_operation:
+  - tests/integration/test_gateway.py::test_duplicate_proposal_reuses_action_and_never_redispatches
+  - tests/integration/test_handoff.py::test_replacement_model_repeating_confirmed_operation_is_deduped
+I6_no_competing_owners:
+  - tests/integration/test_leases.py::test_live_lease_cannot_be_stolen
+  - tests/integration/test_gateway.py::test_stale_owner_cannot_dispatch
+I7_drift_invalidates_descendants_keeps_history:
+  - tests/integration/test_drift.py::test_artifact_drift_invalidates_milestone_and_descendants_keeps_history
+I8_replay_never_invokes_tools:
+  - tests/integration/test_replay.py::test_inspect_invokes_no_tool_or_model
+
+NF1_no_db_lock_across_io:
+  - tests/nonfunctional/test_nonfunctional.py::test_nf1_no_db_lock_held_across_tool_or_model_calls
+NF2_secrets_never_persisted:
+  - tests/nonfunctional/test_nonfunctional.py::test_nf2_secrets_never_persisted_or_logged
+  - tests/integration/test_gateway.py::test_secrets_in_arguments_are_rejected
+NF3_reproducibility:
+  - tests/nonfunctional/test_nonfunctional.py::test_nf3_runs_are_reproducible
+  - tests/unit/test_packet.py::test_packet_is_deterministic_and_carries_verified_state
+NF4_concurrency_single_host:
+  - tests/nonfunctional/test_nonfunctional.py::test_nf4_parallel_runs_on_one_database
+NF5_performance_baseline:
+  - tests/nonfunctional/test_nonfunctional.py::test_nf5_performance_baselines
+NF6_structured_json_tracing:
+  - tests/integration/test_observability.py::test_json_trace_lines_cover_events_tools_and_models
+NF7_loopback_only_http:
+  - tests/integration/test_interfaces.py::test_http_rejects_non_loopback_clients_and_binds
+NF8_workspace_path_containment:
+  - tests/unit/test_evidence.py::test_path_traversal_rejected
+  - tests/unit/test_evidence.py::test_symlink_escape_rejected
+NF9_unknown_usage_never_zero:
+  - tests/unit/test_models.py::test_cost_is_estimated_from_profile_price_never_invented
+  - tests/contract/test_model_switching.py::test_zero_registry_price_means_unknown_not_free
+
+G1_no_repeat_commit_on_idempotent_fixture:
+  - tests/integration/test_lab.py::test_gate_no_extra_commit_on_deduped_fixture
+G2_no_auto_repeat_of_opaque_unknown:
+  - tests/integration/test_lab.py::test_gate_no_blind_retry_of_opaque_unknown
+G3_no_permission_bypass:
+  - tests/integration/test_lab.py::test_gate_no_policy_bypass_or_false_completion
+  - tests/integration/test_gateway.py::test_model_cannot_use_unlisted_tool_or_bypass_permissions
+G4_no_double_dispatch_from_competing_owners:
+  - tests/chaos/test_processes.py::test_old_owner_returning_after_takeover_cannot_overwrite_state
+G5_no_false_verification_after_drift:
+  - tests/integration/test_drift.py::test_artifact_drift_invalidates_milestone_and_descendants_keeps_history
+G6_no_tool_call_during_replay:
+  - tests/integration/test_replay.py::test_inspect_invokes_no_tool_or_model
