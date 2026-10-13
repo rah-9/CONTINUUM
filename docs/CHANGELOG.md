@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0 — 2026-10-13
+
+### Fixed
+- **Live runs on OpenAI and Anthropic would have been rejected:** tool names such as `store.put` violate their `^[a-zA-Z0-9_-]{1,64}$` rule. Names are now mapped bijectively and back. Generated tool-call ids are now paired with their results (D-023).
+
+### Added
+- **Model switching across versions, vendors and chats** (D-024):
+  - resume a run on any `provider/model-id` (e.g. `anthropic/claude-opus-5-5`) without editing config
+  - `profile: auto` in `config/models.yaml`
+  - registry profiles accepted only when complete; zero price means unknown
+  - LiteLLM `drop_params` for model-family parameter differences
+- Contract tests against OpenAI and Anthropic request rules:
+  - OpenAI → Anthropic mid-run
+  - GPT-5.6 → 6.1 across chats
+  - Claude Opus 4.8 → 5.5 by id
+  - three-vendor round trip
+- Cross-chat MCP test: separate server processes share and resume the same run.
+- `docs/MODEL-SWITCHING.md`.
+
 ## 0.3.0 — 2026-10-13
 
 Spec 0.4.

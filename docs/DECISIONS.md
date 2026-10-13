@@ -143,3 +143,22 @@ When a provider reports token counts but no cost, cost is computed from the prof
 **Approving, confirming, `retry_at_risk` and `abort` are deliberately not tools.** A model acting through MCP would otherwise approve its own side effects, which breaks the core invariant that only humans resolve uncertain or gated effects. `pending_decisions` returns the exact `continuum resolve` command for the user to run.
 
 Ready-made client configs ship in `integrations/`: a Claude Code plugin with a skill and a marketplace entry, plus configs for Cursor, VS Code, Codex and Claude Desktop. The server is still pre-registered-tasks-only. Remote MCP discovery and native IDE extensions stay out of scope. The spec moves to 0.4.
+
+## D-023 — Provider-safe tool names, and testing against provider rules
+
+**Context.** While checking model switching, a defect surfaced. The LiteLLM adapter sent tool names like `store.put` unchanged, but OpenAI and Anthropic reject any function name outside `^[a-zA-Z0-9_-]{1,64}$`. Every live run would have failed with an HTTP 400. Fake models could not catch this because they do not enforce provider rules.
+
+**Decision.**
+
+- `ToolNames` maps names bijectively (`store.put` ↔ `store_put`), refuses collisions, and maps proposals back before the gateway sees them.
+- Generated tool-call ids are paired with their results.
+- `drop_params=True` lets LiteLLM translate parameters per model family.
+- Switching tests run the real adapter against emulators that enforce OpenAI's and Anthropic's request rules.
+
+## D-024 — Switching to new model versions without code changes
+
+`ModelRouter` accepts an optional resolver. Any `provider/model-id` that is not configured, for example `anthropic/claude-opus-5-5`, resolves on demand. `config/models.yaml` entries may also use `profile: auto`.
+
+Either way, the profile comes from LiteLLM's model registry. It is accepted only when the registry reports a context window, an output limit and native tool calling. A zero registry price is treated as unknown. Every profile is snapshotted in `ModelSessionStarted`, so each session's model and limits stay auditable.
+
+Bare names without a provider prefix are refused, so a typo cannot silently route somewhere else.

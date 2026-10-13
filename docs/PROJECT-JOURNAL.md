@@ -90,6 +90,20 @@ Every feature is judged by one question: *does it keep valid work and prevent un
 
   Human decisions stay off the agent surface on purpose.
 
+### Phase 4: v0.4.0, switching models across versions, vendors and chats
+
+- **Checked what you asked about, and fixed what was broken.** Building provider-faithful tests exposed a real defect: tool names with dots are rejected by OpenAI and Anthropic, so live runs would have failed. Names are now mapped bijectively, and tool-call ids are paired correctly (D-023).
+- **New model versions need no code change.** A run can continue on any `provider/model-id`, such as `anthropic/claude-opus-5-5` or `openai/gpt-6.1`. Profiles come from the model registry only when they are complete; otherwise the run is refused with guidance (D-024).
+- **Proven scenarios:**
+  - OpenAI → Anthropic mid-run
+  - GPT-5.6 → 6.1 across two chats
+  - Claude Opus 4.8 → 5.5 by id
+  - three vendors in one run
+  - two separate MCP chats sharing one run
+
+  In every scenario, each effect happened exactly once and no request was rejected.
+- **Switching your coding agent's own model** (Codex, Claude Code) has no effect on runs. Their state lives in Continuum and is reachable from any chat. See `docs/MODEL-SWITCHING.md`.
+
 ## 4. Evidence so far
 
 Results are from the deterministic fake-model safety matrix: 15 tasks × 6 faults × 3 connector modes × 2 seeds, 912 paired cells. They test **modeled** safety properties only. They are not claims about live providers. The full report is in `lab-reports/`.

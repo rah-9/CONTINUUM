@@ -113,6 +113,8 @@ Rules:
 
 - Trigger when model request fails after bounded same-provider retry/backoff, context overflow, repeated invalid provider tool responses, or **explicit** user selection (`resume(..., model_alias=...)`).
 - Select the next model by capability: skip non-deployable profiles and models whose context cannot hold the packet; after `context_overflow`, try models with a **larger** context window first; otherwise keep the operator's order.
+- Map tool names to provider-safe names (`^[a-zA-Z0-9_-]{1,64}$`) bijectively and back. Refuse colliding names. Pair every generated tool-call id with its result. Let the transport drop or translate parameters a model family does not accept.
+- Profiles for model versions not in config come from the model registry only when it reports a context window, an output limit and native tool calling. A zero registry price means unknown, never free.
 - Size packets with the target provider's tokenizer when the adapter offers one (`count_tokens`), else a conservative character estimate.
 - If a provider reports tokens but no cost, estimate cost from the profile's price snapshot and mark it `estimated`; unknown tokens or prices stay unknown.
 - Evaluate compatibility before committing the switch. Do not change models solely to circumvent a run-wide hard budget.
