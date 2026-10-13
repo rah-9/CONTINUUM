@@ -1,0 +1,10 @@
+# Demonstration: an opaque messaging provider times out after sending.
+# Continuum never re-sends automatically; it pauses for a human decision
+# (`continuum resolve ... confirmed|abort|retry_at_risk`).
+task_id: demo_opaque_needs_human
+description: "Ambiguous opaque send pauses for a human instead of re-sending"
+factory: "continuum_lab.registry:lab_task"
+options:
+  task: notify_opaque
+  fake_models: true
+  script: {"message.send": ["commit_then_drop"]}

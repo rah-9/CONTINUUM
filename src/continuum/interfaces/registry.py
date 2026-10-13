@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -68,7 +68,12 @@ class TaskRegistry:
         if entry is None:
             raise NotFoundError(f"task {task_id!r} is not pre-registered")
         factory = _load_factory(entry["factory"])
-        return factory(self.state_dir / "tasks" / task_id, dict(entry.get("options") or {}))
+        binding = factory(self.state_dir / "tasks" / task_id, dict(entry.get("options") or {}))
+        if binding.spec.task_id != task_id:
+            # The registered id is the run's identity: resume and status look the
+            # binding (and its tool/service state) up by the run's task_id.
+            binding = replace(binding, spec=binding.spec.model_copy(update={"task_id": task_id}))
+        return binding
 
 
 def load_live_router(path: Path) -> ModelRouter:

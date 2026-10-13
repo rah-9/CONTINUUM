@@ -212,6 +212,9 @@ def _score(row: Row, definition: TaskDefinition, env: ServiceEnv, tools: ToolReg
     row.update({
         "reported_complete": reported_complete,
         "verified_completion": verified,
+        # Completed correctly AND without any duplicate or unintended committed effect.
+        "clean_completion": verified and gt.committed_duplicates == 0
+        and gt.detail["unintended_targets"] == 0,
         "false_completion": reported_complete and not verified,
         "final_state_correct": gt.final_state_correct,
         "committed_duplicates": gt.committed_duplicates,

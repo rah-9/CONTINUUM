@@ -35,6 +35,7 @@ from continuum.core.faults import FaultInjector, NoFaults
 from continuum.core.ids import IdGenerator
 from continuum.core.projections import PROJECTION_TABLES, ProjectionState, RowChange, project
 from continuum.core.state import ActionStatus, MilestoneStatus, RunStatus, TaskSpec
+from continuum.core.tracing import trace
 
 JSON_COLUMNS = frozenset({"spec_json", "profile_json", "args_json", "payload_json"})
 LEASE_NOW_SQL = "COALESCE(%(now)s::bigint, extract(epoch from clock_timestamp())::bigint)"
@@ -406,6 +407,9 @@ class Store:
             except BaseException:
                 conn.rollback()
                 raise
+        for e in tx.appended:
+            trace("event_committed", run_id=run_id, seq=e.seq, type=e.type.value,
+                  actor=e.actor)
         self.faults.checkpoint("after_event_commit", run_id=run_id,
                                event_types=[e.type.value for e in tx.appended])
 

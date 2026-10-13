@@ -97,3 +97,27 @@ def test_cli_json_output(settings, monkeypatch, capsys):
     assert run["status"] == "completed"
     assert cli.main(["status", run["run_id"]]) == 0
     assert cli.main(["status", "missing-run"]) == 2
+
+
+def test_demo_tasks_show_recovery_and_human_pause(sdk):
+    done = sdk.start("demo_ack_loss_recovery")
+    assert done.status.value == "completed"
+    status = sdk.status(done.run_id)
+    assert status["task_id"] == "demo_ack_loss_recovery"
+    trace = sdk.trace(done.run_id)
+    assert any(r["type"] == "ActionAttemptAmbiguous" for r in trace)
+    assert any(r["type"] == "ActionReconciled" for r in trace)
+
+    paused = sdk.start("demo_opaque_needs_human")
+    assert paused.status.value == "awaiting_reconciliation"
+    [action_id] = paused.needs_human
+    sdk.resolve_action(paused.run_id, action_id, "confirmed", actor="ops",
+                       reason="provider console shows delivery", evidence_ref="receipt:1")
+    assert sdk.resume(paused.run_id).status.value == "completed"
+
+
+def test_http_trace_endpoint(sdk):
+    client = TestClient(create_app(sdk), client=("127.0.0.1", 50000))
+    run_id = client.post("/runs", json={"task_id": "db_update_selected"}).json()["run_id"]
+    trace = client.get(f"/runs/{run_id}/trace").json()
+    assert trace[0]["type"] == "RunCreated"

@@ -1,0 +1,11 @@
+# Demonstration: the object store commits the upload but the response is lost.
+# Continuum records the attempt as `unknown`, proves the effect with an
+# authoritative query, and completes without uploading twice.
+task_id: demo_ack_loss_recovery
+description: "Upload survives a lost acknowledgement without a duplicate"
+factory: "continuum_lab.registry:lab_task"
+options:
+  task: inventory_upload_v1
+  fake_models: true
+  store_mode: observable
+  script: {"store.put": ["commit_then_drop"]}

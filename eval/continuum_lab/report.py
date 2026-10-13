@@ -45,6 +45,7 @@ def render(rows: list[Row], meta: dict[str, Any]) -> str:
 
     for label, key in [
         ("verified completion", "verified_completion"),
+        ("clean completion (no duplicate/unintended effect)", "clean_completion"),
         ("runs with a committed duplicate", "runs_with_duplicate"),
         ("committed duplicate effects", "committed_duplicates"),
         ("intended write effects", "intended_writes"),
@@ -62,14 +63,17 @@ def render(rows: list[Row], meta: dict[str, Any]) -> str:
         row(label, key)
     lines += ["", "Matched differences (C1 - B0, paired bootstrap 95%):", "",
               f"- verified completion: {_diff(s['paired_completion_diff'])}",
+              f"- clean completion: {_diff(s['paired_clean_completion_diff'])}",
               f"- committed duplicates per cell: {_diff(s['paired_duplicate_diff'])}", "",
-              "## Per fault", "", "| fault | config | completion | duplicates | paused |",
-              "|---|---|---|---|---|"]
+              "## Per fault", "",
+              "| fault | config | completion | clean completion | duplicates | paused |",
+              "|---|---|---|---|---|---|"]
     for fault in sorted(by_fault):
         for c in configs:
             fr = [r for r in rows if r["fault"] == fault and r["config"] == c]
             comp = proportion(fr, lambda r: r["verified_completion"])
-            lines.append(f"| {fault} | {c} | {comp.fmt()} | "
+            clean = proportion(fr, lambda r: r["clean_completion"])
+            lines.append(f"| {fault} | {c} | {comp.fmt()} | {clean.fmt()} | "
                          f"{sum(r['committed_duplicates'] for r in fr)} | "
                          f"{sum(1 for r in fr if r['unresolved'])} |")
     failed = [r for r in rows if not r["verified_completion"]]

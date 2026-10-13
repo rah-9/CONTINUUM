@@ -2,6 +2,7 @@
 
 POST /runs                                     start a pre-registered task
 GET  /runs/{run_id}                            status
+GET  /runs/{run_id}/trace                      read-only JSON trace (extension)
 POST /runs/{run_id}/resume                     resume under lease/ledger safeguards
 POST /runs/{run_id}/actions/{action_id}/resolve  record a human decision
 """
@@ -63,7 +64,7 @@ def _is_loopback(host: str | None) -> bool:
 
 
 def create_app(sdk: Continuum) -> FastAPI:
-    app = FastAPI(title="Continuum (local)", version="0.1.0")
+    app = FastAPI(title="Continuum (local)", version="0.2.0")
 
     @app.middleware("http")
     async def loopback_only(request: Request, call_next: Any) -> Any:
@@ -90,6 +91,10 @@ def create_app(sdk: Continuum) -> FastAPI:
     @app.get("/runs/{run_id}")
     def status(run_id: str) -> dict[str, Any]:
         return sdk.status(run_id)
+
+    @app.get("/runs/{run_id}/trace")
+    def trace(run_id: str) -> list[dict[str, Any]]:
+        return sdk.trace(run_id)
 
     @app.post("/runs/{run_id}/resume")
     def resume(run_id: str, body: ResumeRequest | None = None) -> dict[str, Any]:

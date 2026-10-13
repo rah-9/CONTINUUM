@@ -11,7 +11,7 @@ import asyncio
 import concurrent.futures
 import contextlib
 import socket
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Iterator
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -64,10 +64,11 @@ from continuum.core.evidence import Workspace, input_fingerprint
 from continuum.core.faults import FaultInjector, NoFaults
 from continuum.core.handoff import DataRef, Packet, PacketBuilder, RunSnapshot
 from continuum.core.ids import IdGenerator
-from continuum.core.leases import Lease, LeaseManager
+from continuum.core.leases import Lease, LeaseKeeper, LeaseManager
 from continuum.core.ledger import idempotency_key, mark_interrupted_attempts
 from continuum.core.reconciliation import Reconciler
 from continuum.core.redaction import Redactor
+from continuum.core.replay import export_trace, timeline
 from continuum.core.state import (
     TERMINAL_RUN_STATUSES,
     UNRESOLVED_ACTION_STATUSES,
@@ -80,6 +81,7 @@ from continuum.core.state import (
     focus_milestone,
 )
 from continuum.core.store import MilestoneRow, Store
+from continuum.core.tracing import span
 from continuum.models.base import (
     Message,
     ModelEndpoint,
@@ -134,6 +136,9 @@ class RuntimeConfig:
     stalled_turns_handoff_threshold: int = 3
     active_time_increment_cap_seconds: float = 60.0
     data_refs_limit: int = 5
+    # Background lease renewal during long model/tool calls. None disables it
+    # (deterministic tests drive lease time with a fake clock instead).
+    heartbeat_interval_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -209,9 +214,10 @@ class Runtime:
                                             owner_id=self.config.owner_id), actor="runtime"))
         lease = self.leases.acquire(run_id, self.config.owner_id)
         try:
-            ctx = RunContext(run_id, lease, spec, workspace)
-            self._append(ctx, RunStarted(owner_id=lease.owner_id, epoch=lease.epoch))
-            return self._drive(ctx, model_alias=model_alias, resumed=False)
+            with self._keeper(lease):
+                ctx = RunContext(run_id, lease, spec, workspace)
+                self._append(ctx, RunStarted(owner_id=lease.owner_id, epoch=lease.epoch))
+                return self._drive(ctx, model_alias=model_alias, resumed=False)
         finally:
             self.leases.release(lease)
 
@@ -219,28 +225,32 @@ class Runtime:
         """Real continuation under lease and ledger safeguards (never live replay)."""
         lease = self.leases.acquire(run_id, self.config.owner_id)
         try:
-            with self.store.read() as q:
-                run = q.run(run_id)
-            if run.status in TERMINAL_RUN_STATUSES:
-                return self._result(run_id)
-            ctx = RunContext(run_id, lease, run.spec, Workspace(self.config.workspace_root,
-                                                                run_id))
-            self.validate_spec(ctx.spec)
-            if self.store.projection_diff(run_id):
-                self.store.rebuild_projection(run_id, lease.fence)
-            self._begin_recovery(ctx)
-            if self._check_budgets(ctx, include_recoveries=True):
-                return self._result(run_id)
-            self._check_drift(ctx)
-            if not self._settle_effects(ctx):
-                return self._result(run_id)
-            if self._pending_approvals(ctx):
-                self._set_status(ctx, RunStatus.PAUSED_FOR_APPROVAL, "awaiting approval")
-                return self._result(run_id)
-            self._set_status(ctx, RunStatus.RUNNING, "recovered")
-            return self._drive(ctx, model_alias=model_alias, resumed=True)
+            with self._keeper(lease):
+                return self._resume_owned(run_id, lease, model_alias)
         finally:
             self.leases.release(lease)
+
+    def _resume_owned(self, run_id: str, lease: Lease, model_alias: str | None) -> RunResult:
+        with self.store.read() as q:
+            run = q.run(run_id)
+        if run.status in TERMINAL_RUN_STATUSES:
+            return self._result(run_id)
+        ctx = RunContext(run_id, lease, run.spec, Workspace(self.config.workspace_root, run_id))
+        self.validate_spec(ctx.spec)
+        if self.store.projection_diff(run_id):
+            self.store.rebuild_projection(run_id, lease.fence)
+        self._begin_recovery(ctx)
+        if self._check_budgets(ctx, include_recoveries=True):
+            return self._result(run_id)
+        if self._drift_requires_remediation(ctx, self._check_drift(ctx)):
+            return self._result(run_id)
+        if not self._settle_effects(ctx):
+            return self._result(run_id)
+        if self._pending_approvals(ctx):
+            self._set_status(ctx, RunStatus.PAUSED_FOR_APPROVAL, "awaiting approval")
+            return self._result(run_id)
+        self._set_status(ctx, RunStatus.RUNNING, "recovered")
+        return self._drive(ctx, model_alias=model_alias, resumed=True)
 
     def resolve_action(self, run_id: str, action_id: str, decision: Decision, *,
                        actor: str, reason: str, evidence_ref: str | None = None) -> RunResult:
@@ -364,13 +374,30 @@ class Runtime:
         with self.store.read() as q:
             events = q.events(run_id)
         replayed = self.store.replay_projection(run_id)
+        workspace = Workspace(self.config.workspace_root, run_id)
         return {
             "run_id": run_id,
             "events": [{"seq": e.seq, "type": e.type.value, "actor": e.actor,
                         "occurred_at": e.occurred_at.isoformat()} for e in events],
+            "timeline": timeline(events, workspace),
             "replayed_status": next(iter(replayed.tables["runs"].values()))["status"],
             "projection_diff": self.store.projection_diff(run_id),
         }
+
+    def trace_export(self, run_id: str) -> list[dict[str, Any]]:
+        """Full JSON trace (events + redacted blobs) for Continuum Lab. Read-only."""
+        with self.store.read() as q:
+            events = q.events(run_id)
+        return list(export_trace(events, Workspace(self.config.workspace_root, run_id)))
+
+    @contextlib.contextmanager
+    def _keeper(self, lease: Lease) -> Iterator[None]:
+        interval = self.config.heartbeat_interval_seconds
+        if interval is None:
+            yield
+            return
+        with LeaseKeeper(self.leases, lease, interval):
+            yield
 
     # ===== recovery ======================================================================
 
@@ -437,7 +464,7 @@ class Runtime:
 
     # ===== drift and verification ========================================================
 
-    def _check_drift(self, ctx: RunContext) -> None:
+    def _check_drift(self, ctx: RunContext) -> list[str]:
         """Artifact drift events, then re-verify every verified milestone in spec order."""
         with self.store.read() as q:
             artifacts = q.artifacts(ctx.run_id)
@@ -456,14 +483,14 @@ class Runtime:
                     observed_sha256=observed), actor="runtime"))
         if drift_events:
             self._append_events(ctx, drift_events)
-        self._recheck_verified(ctx)
+        return self._recheck_verified(ctx)
 
-    def _recheck_verified(self, ctx: RunContext) -> bool:
+    def _recheck_verified(self, ctx: RunContext) -> list[str]:
         """Re-run verifiers for verified milestones; invalidate changed ones + descendants.
 
-        Returns True if anything was invalidated.
+        Returns every milestone invalidated by this check (including descendants).
         """
-        invalidated_any = False
+        invalidated: list[str] = []
         for m in ctx.spec.milestones:
             row = self._milestone(ctx, m.id)
             if row.status != MilestoneStatus.VERIFIED:
@@ -473,19 +500,43 @@ class Runtime:
                 continue
             reason = ("verifier no longer passes" if outcome.status != VerifierResult.PASS
                       else "input/dependency fingerprint changed")
-            self._invalidate(ctx, m.id, reason)
-            invalidated_any = True
-        return invalidated_any
+            invalidated.extend(self._invalidate(ctx, m.id, reason))
+        return invalidated
 
-    def _invalidate(self, ctx: RunContext, milestone_id: str, reason: str) -> None:
+    def _invalidate(self, ctx: RunContext, milestone_id: str, reason: str) -> list[str]:
         events = [make_event(MilestoneInvalidated(milestone_id=milestone_id, reason=reason),
                              actor="verifier")]
+        affected = [milestone_id]
         for dep in ctx.spec.descendants(milestone_id):
             if self._milestone(ctx, dep).status == MilestoneStatus.VERIFIED:
                 events.append(make_event(MilestoneInvalidated(
                     milestone_id=dep, reason="upstream milestone invalidated",
                     cause_milestone_id=milestone_id), actor="verifier"))
+                affected.append(dep)
         self._append_events(ctx, events)
+        return affected
+
+    def _drift_requires_remediation(self, ctx: RunContext, invalidated: list[str]) -> bool:
+        """Stop explicitly when redo would need an already-confirmed operation again.
+
+        Confirmed effects are never re-sent (their operation keys dedupe), so a
+        drifted milestone whose writes are confirmed cannot be redone by the
+        model (docs/03 s5): stop and require a new spec version or human
+        remediation instead of looping until models are exhausted.
+        """
+        if not invalidated:
+            return False
+        with self.store.read() as q:
+            confirmed = q.actions(ctx.run_id, [ActionStatus.CONFIRMED.value])
+        blocked = sorted({a.milestone_id for a in confirmed
+                          if a.milestone_id in invalidated and self._is_write(a.tool_name)})
+        if not blocked:
+            return False
+        self._append(ctx, RunFailed(
+            failure_code="drift_requires_remediation",
+            reason=f"milestones {blocked} drifted after their effects were confirmed; "
+                   "redo needs a new task spec version or human remediation"))
+        return True
 
     def _milestone(self, ctx: RunContext, milestone_id: str) -> MilestoneRow:
         with self.store.read() as q:
@@ -656,8 +707,9 @@ class Runtime:
 
     def _finalize(self, ctx: RunContext) -> bool:
         """Complete only if all milestones still verify and nothing is unresolved."""
-        if self._recheck_verified(ctx):
-            return False
+        invalidated = self._recheck_verified(ctx)
+        if invalidated:
+            return self._drift_requires_remediation(ctx, invalidated)
         with self.store.read() as q:
             if q.actions(ctx.run_id, [s.value for s in UNRESOLVED_ACTION_STATUSES]):
                 self._set_status(ctx, RunStatus.AWAITING_RECONCILIATION, "unresolved effects")
@@ -785,11 +837,14 @@ class Runtime:
             self._append(ctx, ModelCallStarted(session_id=session.session_id,
                                                call_no=session.call_no))
             try:
-                response: ModelResponse = run_coro(session.endpoint.adapter.complete(
-                    messages=session.messages, tools=self.gateway.tool_schemas(ctx.spec),
-                    max_output_tokens=min(self.config.max_output_tokens,
-                                          session.endpoint.profile.max_output_tokens),
-                    timeout_seconds=self.config.model_timeout_seconds))
+                with span("model_call", run_id=ctx.run_id, session_id=session.session_id,
+                          alias=session.alias, call_no=session.call_no):
+                    response: ModelResponse = run_coro(session.endpoint.adapter.complete(
+                        messages=session.messages,
+                        tools=self.gateway.tool_schemas(ctx.spec),
+                        max_output_tokens=min(self.config.max_output_tokens,
+                                              session.endpoint.profile.max_output_tokens),
+                        timeout_seconds=self.config.model_timeout_seconds))
                 if not isinstance(response, ModelResponse):
                     raise ModelError("invalid_tool_output", "adapter returned non-response")
             except ModelError as exc:

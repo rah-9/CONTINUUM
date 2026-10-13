@@ -19,6 +19,7 @@ def test_artifact_drift_invalidates_milestone_and_descendants_keeps_history(make
     Workspace(lab.runtime.config.workspace_root, run_id).write_bytes(
         "artifacts/normalized.csv", b"tampered\n")
     lab.clock.advance(31)
+    calls_before = sum(a.calls for a in lab.adapters.values())
     result = lab.new_runtime().resume(run_id)
     with lab.store.read() as q:
         events = q.events(run_id)
@@ -32,8 +33,12 @@ def test_artifact_drift_invalidates_milestone_and_descendants_keeps_history(make
     assert all(a.status == ActionStatus.CONFIRMED for a in actions
                if a.tool_name in ("csv.normalize", "store.put"))
     assert lab.env.store.commits_for("uploads/categories.csv") == 1
-    assert result.status != RunStatus.COMPLETED
     assert statuses["m1"] != MilestoneStatus.VERIFIED
+    # Redo would need already-confirmed operations again: stop explicitly, at once,
+    # instead of spending model calls until every model is exhausted.
+    assert result.status == RunStatus.FAILED
+    assert result.failure_code == "drift_requires_remediation"
+    assert sum(a.calls for a in lab.adapters.values()) == calls_before
 
 
 def test_model_claim_alone_never_verifies(make_lab):
@@ -50,3 +55,4 @@ def test_model_claim_alone_never_verifies(make_lab):
     with lab.store.read() as q:
         assert all(s != MilestoneStatus.VERIFIED
                    for s in q.milestone_statuses(result.run_id).values())
+

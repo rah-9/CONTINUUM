@@ -13,10 +13,12 @@ A lease limits local controllers only; it cannot recall an in-flight request.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 
 from continuum.core.errors import AlreadyOwnedError
 from continuum.core.store import LEASE_NOW_SQL, Fence, Store
+from continuum.core.tracing import trace
 
 
 @dataclass(frozen=True)
@@ -110,3 +112,45 @@ class LeaseManager:
                  "now": self.store.lease_now()},
             )
             conn.commit()
+
+
+class LeaseKeeper:
+    """Background heartbeat that keeps a lease alive during long model/tool calls.
+
+    It only extends expiry for the same ``(owner, epoch)``; it can never take a
+    lease over. If renewal fails, :attr:`lost` is set and the pre-dispatch and
+    fenced-write checks stop this controller as usual.
+    """
+
+    def __init__(self, manager: LeaseManager, lease: Lease, interval_seconds: float) -> None:
+        if interval_seconds <= 0:
+            raise ValueError("interval_seconds must be positive")
+        self.manager = manager
+        self.lease = lease
+        self.interval = interval_seconds
+        self.lost = False
+        self.renewals = 0
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name=f"lease-{lease.run_id}",
+                                        daemon=True)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval):
+            try:
+                self.lease = self.manager.renew(self.lease)
+                self.renewals += 1
+            except AlreadyOwnedError:
+                self.lost = True
+                trace("lease_lost", run_id=self.lease.run_id, owner_id=self.lease.owner_id,
+                      epoch=self.lease.epoch)
+                return
+            except Exception as exc:  # transient DB error: retry on the next tick
+                trace("lease_renew_error", run_id=self.lease.run_id, error=type(exc).__name__)
+
+    def __enter__(self) -> LeaseKeeper:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._stop.set()
+        self._thread.join(timeout=self.interval + 5)
