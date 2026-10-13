@@ -7,6 +7,7 @@ pricing snapshots come from ``config/models.yaml``, never from code.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from continuum.models.base import (
@@ -19,18 +20,71 @@ from continuum.models.base import (
     estimate_tokens,
 )
 
+_UNSAFE = re.compile(r"[^a-zA-Z0-9_-]")
 
-def _to_provider(messages: list[Message]) -> list[dict[str, Any]]:
+
+def provider_tool_name(name: str) -> str:
+    """Provider-safe function name. OpenAI and Anthropic require ``^[a-zA-Z0-9_-]{1,64}$``;
+    Continuum tool names use dots (``store.put``), so they are mapped reversibly."""
+    return _UNSAFE.sub("_", name)[:64]
+
+
+class ToolNames:
+    """Bijective mapping between Continuum tool names and provider-safe names."""
+
+    def __init__(self, names: list[str]) -> None:
+        self.to_provider: dict[str, str] = {}
+        self.from_provider: dict[str, str] = {}
+        for name in names:
+            safe = provider_tool_name(name)
+            if safe in self.from_provider and self.from_provider[safe] != name:
+                raise ModelError("unsupported_capability",
+                                 f"tool names {name!r} and {self.from_provider[safe]!r} "
+                                 "collide after provider-safe mapping")
+            self.to_provider[name] = safe
+            self.from_provider[safe] = name
+
+    @classmethod
+    def from_tools(cls, tools: list[dict[str, Any]]) -> ToolNames:
+        return cls([t["function"]["name"] for t in tools if "function" in t])
+
+    def forward(self, name: str) -> str:
+        return self.to_provider.get(name, provider_tool_name(name))
+
+    def backward(self, name: str) -> str:
+        return self.from_provider.get(name, name)
+
+    def tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [{**t, "function": {**t["function"], "name": self.forward(t["function"]["name"])}}
+                if "function" in t else t for t in tools]
+
+
+def _to_provider(messages: list[Message], names: ToolNames) -> list[dict[str, Any]]:
+    """Provider-format history. Calls without a provider id get generated ids, and the
+    tool results that answer them (in order) reuse exactly those ids, because every
+    provider rejects a result whose id does not match a preceding call."""
     out: list[dict[str, Any]] = []
-    for m in messages:
+    unanswered: list[str] = []  # generated ids awaiting their tool result, in order
+    for i, m in enumerate(messages):
         item: dict[str, Any] = {"role": m.role, "content": m.content}
         if m.role == "tool":
-            item["tool_call_id"] = m.reply_to_call_id
+            call_id = m.reply_to_call_id
+            if call_id is None and unanswered:
+                call_id = unanswered.pop(0)
+            elif call_id in unanswered:
+                unanswered.remove(call_id)
+            item["tool_call_id"] = call_id or f"call_{i}"
+            item["content"] = m.content or ""
         if m.tool_proposals:
-            item["tool_calls"] = [
-                {"id": p.provider_call_id, "type": "function",
-                 "function": {"name": p.tool_name, "arguments": json.dumps(p.arguments)}}
-                for p in m.tool_proposals]
+            calls = []
+            for j, p in enumerate(m.tool_proposals):
+                call_id = p.provider_call_id or f"call_{i}_{j}"
+                if p.provider_call_id is None:
+                    unanswered.append(call_id)
+                calls.append({"id": call_id, "type": "function",
+                              "function": {"name": names.forward(p.tool_name),
+                                           "arguments": json.dumps(p.arguments)}})
+            item["tool_calls"] = calls
         out.append(item)
     return out
 
@@ -53,7 +107,10 @@ def _category(exc: Exception) -> ErrorCategory:
 class LiteLLMAdapter:
     def __init__(self, model_id: str, **completion_kwargs: Any) -> None:
         self.model_id = model_id
-        self.kwargs = completion_kwargs
+        # drop_params: let LiteLLM drop/translate parameters a model family does not
+        # accept (e.g. reasoning models and max_tokens vs max_completion_tokens), so
+        # switching model versions does not need code changes.
+        self.kwargs = {"drop_params": True, **completion_kwargs}
 
     def count_tokens(self, text: str) -> int:
         """Provider tokenizer via LiteLLM; conservative estimate if unavailable."""
@@ -69,15 +126,18 @@ class LiteLLMAdapter:
         import litellm
 
         try:
+            names = ToolNames.from_tools(tools)
             raw = await litellm.acompletion(
-                model=self.model_id, messages=_to_provider(messages), tools=tools or None,
-                max_tokens=max_output_tokens, timeout=timeout_seconds, **self.kwargs)
+                model=self.model_id, messages=_to_provider(messages, names),
+                tools=names.tools(tools) or None, max_tokens=max_output_tokens,
+                timeout=timeout_seconds, **self.kwargs)
         except Exception as exc:  # provider exceptions mapped to the typed taxonomy
             retry_after = getattr(exc, "retry_after", None)
             raise ModelError(_category(exc), str(exc)[:500], retry_after=retry_after) from exc
-        return self._normalize(raw)
+        return self._normalize(raw, names)
 
-    def _normalize(self, raw: Any) -> ModelResponse:
+    def _normalize(self, raw: Any, names: ToolNames | None = None) -> ModelResponse:
+        names = names or ToolNames([])
         choice = raw.choices[0]
         msg = choice.message
         proposals: list[ToolProposal] = []
@@ -89,7 +149,8 @@ class LiteLLMAdapter:
             if not isinstance(args, dict):
                 raise ModelError("invalid_tool_output", "tool arguments must be an object")
             proposals.append(ToolProposal(provider_call_id=call.id,
-                                          tool_name=call.function.name, arguments=args))
+                                          tool_name=names.backward(call.function.name),
+                                          arguments=args))
         usage = Usage()
         raw_usage = getattr(raw, "usage", None)
         if raw_usage is not None:

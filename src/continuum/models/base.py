@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from decimal import Decimal
 from typing import Any, Literal, Protocol
 
@@ -98,6 +98,10 @@ class CapabilityProfile(BaseModel):
     profile_source: str = "provider_docs_and_contract_tests"
 
     def check_deployable(self) -> None:
+        if self.profile_source == "registry_incomplete":
+            raise UnsupportedCapabilityError(
+                f"profile {self.alias} ({self.model_id}): model registry entry is incomplete; "
+                "add a verified profile to config/models.yaml")
         if self.context_window_tokens <= 0 or self.max_output_tokens <= 0:
             raise UnsupportedCapabilityError(
                 f"profile {self.alias} has placeholder limits; fill verified values first")
@@ -117,12 +121,21 @@ class ModelEndpoint(BaseModel):
 
 
 class ModelRouter:
-    def __init__(self, endpoints: dict[str, ModelEndpoint]) -> None:
-        self._endpoints = endpoints
+    """Aliases -> endpoints. An optional resolver adds endpoints on demand for model ids
+    that are not configured (e.g. ``anthropic/claude-opus-5-5`` after an upgrade)."""
+
+    def __init__(self, endpoints: dict[str, ModelEndpoint],
+                 resolver: Callable[[str], ModelEndpoint] | None = None) -> None:
+        self._endpoints = dict(endpoints)
+        self._resolver = resolver
 
     def get(self, alias: str) -> ModelEndpoint:
         if alias not in self._endpoints:
-            raise UnsupportedCapabilityError(f"model alias {alias!r} is not configured")
+            if self._resolver is None or "/" not in alias:
+                raise UnsupportedCapabilityError(
+                    f"model {alias!r} is not configured; use a configured alias or a "
+                    "provider/model-id known to the model registry")
+            self._endpoints[alias] = self._resolver(alias)
         return self._endpoints[alias]
 
     def aliases(self) -> list[str]:

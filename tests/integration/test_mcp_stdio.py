@@ -79,3 +79,39 @@ def test_mcp_plugin_end_to_end_over_stdio(server_env):
     assert out["resumed"]["status"] == "completed"
     assert out["timeline"]["projection_consistent"] is True
     assert "error" in out["unknown"]
+
+
+async def _chat_one(env: dict) -> str:
+    """First chat: delegate a task; it pauses. The chat (and its agent) then ends."""
+    params = StdioServerParameters(command=_continuum(), args=["mcp"], env=env)
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        paused = _payload(await session.call_tool(
+            "run_task", {"task_id": "demo_opaque_needs_human"}))
+        assert paused["status"] == "awaiting_reconciliation"
+        return paused["run_id"]
+
+
+async def _chat_two(env: dict, run_id: str) -> dict:
+    """Second chat, new server process, possibly a different agent model: it finds the run
+    from durable state alone, the human decides, and it resumes on another model."""
+    params = StdioServerParameters(command=_continuum(), args=["mcp"], env=env)
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        runs = _payload(await session.call_tool("list_runs", {"limit": 5}))["runs"]
+        found = next(r for r in runs if r["run_id"] == run_id)
+        pending = _payload(await session.call_tool("pending_decisions", {"run_id": run_id}))
+        subprocess.run([_continuum(), "resolve", run_id,
+                        pending["decisions"][0]["action_id"], "confirmed", "--actor",
+                        "operator", "--reason", "verified", "--evidence", "receipt:7"],
+                       env=env, check=True, capture_output=True)
+        resumed = _payload(await session.call_tool("resume_run",
+                                                   {"run_id": run_id, "model_alias": "C"}))
+        return {"found": found, "resumed": resumed}
+
+
+def test_runs_survive_across_separate_agent_chats(server_env):
+    run_id = asyncio.run(_chat_one(server_env))
+    out = asyncio.run(_chat_two(server_env, run_id))
+    assert out["found"]["status"] == "awaiting_reconciliation"
+    assert out["resumed"]["status"] == "completed"
