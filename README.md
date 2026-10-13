@@ -112,6 +112,15 @@ The pre-registered tasks use the deterministic local fake agent by default. To u
 1. Fill verified profiles in `config/models.yaml`. Placeholder profiles are rejected at session start.
 2. Set `fake_models: false` in the task's YAML.
 
+## Switching models (versions, vendors, chats)
+
+A run can continue on any model: another vendor, a newer version, or the same run picked up from a different chat. Verified work is never redone and effects never repeat. See [`docs/MODEL-SWITCHING.md`](docs/MODEL-SWITCHING.md).
+
+```bash
+continuum resume <run_id> --model anthropic/claude-opus-5-5   # e.g. Opus 4.8 -> 5.5
+continuum resume <run_id> --model openai/gpt-6.1               # e.g. GPT-5.6 -> 6.1
+```
+
 ## Use Continuum from any coding agent (MCP plugin)
 
 `continuum mcp` is a local stdio MCP server, so Claude Code, Cursor, VS Code, Codex, Claude Desktop or any other MCP client can delegate tasks to Continuum. It exposes `list_tasks`, `run_task`, `resume_run` (optionally on another model), `cancel_run`, `get_status`, `inspect_run`, `pending_decisions` and `list_runs`.

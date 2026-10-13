@@ -33,10 +33,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("runs", help="list run ids")
     run = sub.add_parser("run", help="start a pre-registered task")
     run.add_argument("task_id")
-    run.add_argument("--model", dest="model_alias")
+    run.add_argument("--model", dest="model_alias",
+                     help="alias from config/models.yaml or a provider/model-id")
     res = sub.add_parser("resume", help="resume a run (never a live replay)")
     res.add_argument("run_id")
-    res.add_argument("--model", dest="model_alias")
+    res.add_argument("--model", dest="model_alias",
+                     help="continue on this alias or provider/model-id "
+                          "(e.g. anthropic/claude-opus-5-5); verified work carries over")
     st = sub.add_parser("status", help="show durable run status")
     st.add_argument("run_id")
     ins = sub.add_parser("inspect", help="side-effect-free diagnostic replay")
