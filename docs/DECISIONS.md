@@ -105,3 +105,41 @@ Several registry entries can reuse one task definition, for example the demo tas
 ## D-018 — Lab reports "clean completion"
 
 Verified completion counts a run as successful when its final state is correct. A baseline run that uploaded twice can still meet that bar. The lab now also reports **clean completion**: verified completion with zero committed duplicates and zero effects on unintended targets. It is shown next to verified completion and also as a paired difference. Neither metric replaces the other.
+
+## D-019 — The runtime is split into single-responsibility components
+
+`runtime.py` had grown to 960 lines mixing lifecycle, model sessions, verification and budgets. It is now a controller (560 lines) that composes `RunJournal` (fenced appends), `BudgetGuard`, `MilestoneVerification` and `ModelSessions`, alongside the existing gateway and reconciler. Each invariant now has one owner:
+
+- the gateway dispatches
+- verification confers progress
+- the journal fences writes
+- sessions own model I/O
+
+The refactor ran against the unchanged test suite before any new behaviour was added.
+
+## D-020 — Capability-aware model handoff with provenance
+
+Fallback order respects the operator's `model_policy`, adjusted for the failure:
+
+- After `context_overflow`, models with a larger context window go first.
+- Non-deployable profiles are skipped explicitly and traced.
+- Models whose context cannot hold the packet are also skipped explicitly and traced.
+
+The packet carries `handoff = {reason, handoff_count, from_model_id}`. This is runtime fact, not narrative, so the new model knows it is continuing someone else's run. Packet sizing uses the provider's tokenizer when available.
+
+## D-021 — Estimated cost from the pricing snapshot
+
+When a provider reports token counts but no cost, cost is computed from the profile's `price` snapshot and marked `estimated`. Unknown tokens or a missing price keep the cost unknown (`has_unpriced_usage`), never zero (docs/01 §5).
+
+## D-022 — MCP plugin surface for coding agents; human decisions excluded
+
+**Context.** Continuum should plug into any coding agent. MCP is the common protocol.
+
+**Decision.** The local stdio server exposes eight tools:
+
+- delegation: `list_tasks`, `run_task`, `resume_run` (optionally on another model) and `cancel_run`
+- read-only inspection: `get_status`, `inspect_run`, `pending_decisions` and `list_runs`
+
+**Approving, confirming, `retry_at_risk` and `abort` are deliberately not tools.** A model acting through MCP would otherwise approve its own side effects, which breaks the core invariant that only humans resolve uncertain or gated effects. `pending_decisions` returns the exact `continuum resolve` command for the user to run.
+
+Ready-made client configs ship in `integrations/`: a Claude Code plugin with a skill and a marketplace entry, plus configs for Cursor, VS Code, Codex and Claude Desktop. The server is still pre-registered-tasks-only. Remote MCP discovery and native IDE extensions stay out of scope. The spec moves to 0.4.

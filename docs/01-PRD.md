@@ -19,7 +19,7 @@ Secondary correctness issue: an agent's self-report must not substitute for inde
 
 **In v1:** one run at a time per ownership lease; milestone-driven workflow; PostgreSQL append-only events and transactional projections; read/write tool gateway; durable action identity and retries; unknown-action reconciliation; deterministic verifiers; two-provider handoff supported and three independently tested provider configurations as benchmark goal; Python SDK/CLI; minimal localhost HTTP access; a thin local stdio MCP task-delegation facade; local mocks and integrated Continuum Lab.
 
-**Out of v1:** generic planning, multi-agent coordination, arbitrary external MCP servers, hosted multi-tenancy, vector DB, long-term chat memory, dashboard, multi-host/distributed database deployment, distributed orchestration, sandboxed arbitrary code/shell execution, live side-effect replay, VS Code/browser plugins and remote MCP tool **discovery/hosting**. Document their future interface boundaries only; do not implement speculatively.
+**Out of v1:** generic planning, multi-agent coordination, arbitrary external MCP servers, hosted multi-tenancy, vector DB, long-term chat memory, dashboard, multi-host/distributed database deployment, distributed orchestration, sandboxed arbitrary code/shell execution, live side-effect replay, native IDE/browser extensions and remote MCP tool **discovery/hosting**. (Shipping MCP *client configuration* so agents can launch the local stdio server is in scope.) Document their future interface boundaries only; do not implement speculatively.
 
 Tools run as **trusted, explicitly registered Python adapters** with schema validation, allowlists and fixed endpoints. Arbitrary tool code supplied by a model is disallowed.
 
@@ -53,7 +53,7 @@ Tools run as **trusted, explicitly registered Python adapters** with schema vali
 
 **R9 Budgets:** enforce max model calls, tokens, spending, active-execution duration (excluding manual pause and process downtime), and recovery count. A provider switch can avoid provider-specific limits but **cannot bypass the run's aggregate budget**. Exhausted hard budgets stop the run; resume requires a new authorized policy/version, not silent reset.
 
-**R10 Interfaces:** SDK (`start`, `resume`, `status`, `resolve_action`), local CLI, minimal HTTP (`POST /runs`, `GET /runs/{id}`, `POST /runs/{id}/resume`, `POST /runs/{id}/actions/{action_id}/resolve`) and a thin local stdio MCP facade with `run_task` and `get_status` for pre-registered task specs. HTTP must remain bound to loopback in v1. Do not expose an unauthenticated production service.
+**R10 Interfaces:** SDK (`start`, `resume`, `status`, `resolve_action`), local CLI, minimal HTTP (`POST /runs`, `GET /runs/{id}`, `POST /runs/{id}/resume`, `POST /runs/{id}/actions/{action_id}/resolve`) and a local stdio MCP server for pre-registered task specs: delegation and read-only inspection (`list_tasks`, `run_task`, `resume_run`, `cancel_run`, `get_status`, `inspect_run`, `pending_decisions`, `list_runs`). Human decisions (`resolve_action`) are **never** exposed through MCP, because a model must not approve or confirm its own side effects. HTTP must remain bound to loopback in v1. Do not expose an unauthenticated production service.
 
 **R11 Replay:** side-effect-free diagnostic replay from recorded events and tool/model responses only. Resume is a separate controlled operation, never marketed as live replay.
 

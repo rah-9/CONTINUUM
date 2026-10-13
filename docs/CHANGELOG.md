@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.0 — 2026-10-13
+
+Spec 0.4.
+
+### Added
+- **MCP plugin for coding agents.** The stdio server now has 8 tools: `list_tasks`, `run_task`, `resume_run`, `cancel_run`, `get_status`, `inspect_run`, `pending_decisions` and `list_runs`. It also gives agents server instructions and creates its tables automatically on start. Human decisions are never exposed (D-022).
+- `integrations/` covers the following, with an end-to-end stdio test:
+  - a Claude Code plugin with a skill, plus `.claude-plugin/marketplace.json`
+  - configs for Cursor, VS Code, OpenAI Codex CLI and Claude Desktop
+- `continuum doctor` checks the database, schema, registered tasks and live model profiles. `Continuum.pending_decisions` is a new SDK method.
+- **Seamless handoff** (D-020, D-021):
+  - capability-aware fallback; a context overflow prefers a larger window
+  - handoff provenance in the packet
+  - provider-tokenizer packet sizing (`LiteLLMAdapter.count_tokens`)
+  - cost estimated from the price snapshot when the provider doesn't report it
+
+### Changed
+- `runtime.py` is split into `journal`, `budgets`, `verification` and `sessions` components (D-019). Behaviour is unchanged. `run_coro` moves to `continuum.models.base`.
+- Spec 0.4: 00/01/02/05/06 and AGENTS.md describe the MCP surface and the handoff selection rules. The docs/05 packet example adds `handoff`.
+
 ## 0.2.0 — 2026-10-13
 
 ### Added
