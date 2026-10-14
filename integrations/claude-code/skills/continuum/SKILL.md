@@ -12,6 +12,8 @@ description: Keep coding work continuous across model switches and new chats (e.
 - **Read the brief.** `verified_facts` were observed by Continuum; `agent_notes` are claims from
   earlier models. Continue from `next_steps` and open tasks. Never redo verified tasks unless
   `needs_reverification` is true.
+- **Don't re-read the repository.** Start from "Code touched in this session" (the code map)
+  and the next step. Use `coding_brief(detail="full")` only for check output or commands.
 - **While working:**
   - record decisions, context and blockers with `coding_note`
   - call `coding_checkpoint(summary)` after meaningful changes

@@ -14,6 +14,8 @@ chat, does not lose work and never repeats an effect.
 | **The model Continuum runs a task with** | resume a run on another model | `resume_run(run_id, model_alias=…)` or `continuum resume <run> --model …`. The new model receives the packet with `handoff` provenance and continues the first unverified milestone. |
 | **A model's version in config** | alias `A`: `openai/gpt-5.6` → `openai/gpt-6.1` | The next resume or start uses the new version. Old sessions keep their recorded model id and profile for audit. |
 
+To keep **coding work** across a switch of your coding agent's model (what was decided, what is proven, where the code is), use coding continuity: `coding_resume` at the start of every chat. See [CODING-HANDOFF.md](CODING-HANDOFF.md); it is measured with real models in [HANDOFF-TRIALS.md](HANDOFF-TRIALS.md).
+
 ## How to switch
 
 ```bash
