@@ -137,7 +137,17 @@ class LiteLLMAdapter:
         return self._normalize(raw, names)
 
     def _normalize(self, raw: Any, names: ToolNames | None = None) -> ModelResponse:
-        names = names or ToolNames([])
+        """Provider response -> ModelResponse; any unexpected shape is a typed ModelError
+        (e.g. empty ``choices`` after a content filter), never a crash of the step loop."""
+        try:
+            return self._normalize_unchecked(raw, names or ToolNames([]))
+        except ModelError:
+            raise
+        except Exception as exc:
+            raise ModelError("invalid_tool_output",
+                             f"malformed provider response: {type(exc).__name__}") from exc
+
+    def _normalize_unchecked(self, raw: Any, names: ToolNames) -> ModelResponse:
         choice = raw.choices[0]
         msg = choice.message
         proposals: list[ToolProposal] = []
@@ -160,8 +170,10 @@ class LiteLLMAdapter:
             try:
                 import litellm
 
+                cost = litellm.completion_cost(completion_response=raw)
+                # a registry price of 0 means "unknown", never "free" (docs/05)
                 usage = usage.model_copy(update={
-                    "cost_usd": str(litellm.completion_cost(completion_response=raw)),
+                    "cost_usd": str(cost) if cost and cost > 0 else None,
                     "source": "estimated"})
             except Exception:
                 usage = usage.model_copy(update={"cost_usd": None})

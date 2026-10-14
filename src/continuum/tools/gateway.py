@@ -40,7 +40,7 @@ from continuum.core.events import (
     RunStatusChanged,
     make_event,
 )
-from continuum.core.evidence import Workspace
+from continuum.core.evidence import Workspace, is_blob_ref
 from continuum.core.faults import FaultInjector, NoFaults
 from continuum.core.ids import IdGenerator
 from continuum.core.leases import Lease, LeaseManager
@@ -228,6 +228,8 @@ class ToolGateway:
     def _reject(self, run: RunContext, tool_name: str, code: str, message: str, actor: str,
                 action: ActionRow | None = None, existing_action_id: str | None = None
                 ) -> GatewayOutcome:
+        # reasons can quote argument values (schema/path errors): redact before persisting
+        message = self.redactor.text(message)
         with self.store.run_tx(run.run_id, run.lease.fence) as tx:
             tx.append(make_event(ActionRejected(
                 action_id=action.action_id if action else None, tool_name=tool_name,
@@ -343,8 +345,8 @@ class ToolGateway:
         base = {"tool_name": name, "action_id": existing.action_id,
                 "operation_key": existing.operation_key}
         if status == ActionStatus.CONFIRMED:
-            data = run.workspace.get_blob(existing.outcome_ref) if existing.outcome_ref and \
-                existing.outcome_ref.startswith("blob:") else None
+            data = run.workspace.get_blob(existing.outcome_ref) \
+                if is_blob_ref(existing.outcome_ref) else None
             return GatewayOutcome(status="deduped", result_ref=existing.outcome_ref,
                                   data=data, message="operation already confirmed; not re-sent",
                                   **base)

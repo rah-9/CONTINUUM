@@ -24,3 +24,5 @@ class Settings:
         "CONTINUUM_OWNER_ID", f"ctl-{socket.gethostname()}-{os.getpid()}"))
     lease_ttl_seconds: int = field(default_factory=lambda: int(os.environ.get(
         "CONTINUUM_LEASE_TTL_SECONDS", "30")))
+    db_timeout_seconds: float = field(default_factory=lambda: float(os.environ.get(
+        "CONTINUUM_DB_TIMEOUT_SECONDS", "10")))

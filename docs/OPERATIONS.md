@@ -64,7 +64,7 @@ Human decisions never travel over MCP. For those, the agent calls `pending_decis
 
 Run `continuum doctor` to check the database, schema, tasks and model profiles.
 
-`CONTINUUM_CODING_ROOTS` (optional, `:`-separated) restricts which directories coding sessions may observe.
+`CONTINUUM_CODING_ROOTS` (optional, `:`-separated) restricts which directories coding sessions may observe. `CONTINUUM_DB_TIMEOUT_SECONDS` (default 10) bounds how long a command waits for the database before reporting `database_unavailable`.
 
 ## Database schema (designed for invariants)
 

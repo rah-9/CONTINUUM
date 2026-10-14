@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import socket
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,10 +28,12 @@ from continuum.core.budgets import BudgetGuard
 from continuum.core.canonical import canonical_json
 from continuum.core.clock import Clock
 from continuum.core.errors import (
+    AlreadyOwnedError,
     InvalidTransitionError,
     NotFoundError,
     SpecValidationError,
     StaleOwnerError,
+    VerificationUnavailableError,
 )
 from continuum.core.events import (
     ActionAuthorized,
@@ -96,6 +99,12 @@ class RuntimeConfig:
     heartbeat_interval_seconds: float | None = None
 
 
+# Runs claimed by an operation in this process: (dsn, schema, owner_id, run_id).
+# See Runtime._owned.
+_CLAIMS: set[tuple[str, str, str, str]] = set()
+_CLAIMS_LOCK = threading.Lock()
+
+
 @dataclass(frozen=True)
 class RunResult:
     run_id: str
@@ -159,6 +168,8 @@ class Runtime:
     def start(self, spec: TaskSpec, *, run_id: str | None = None,
               model_alias: str | None = None) -> RunResult:
         self.validate_spec(spec)
+        if model_alias is not None:
+            self.models.get(model_alias)  # unknown alias: refuse before any run exists
         run_id = run_id or self.ids.new("run")
         with self.store.read() as q:
             if q.run_exists(run_id):
@@ -170,23 +181,17 @@ class Runtime:
         with self.store.run_tx(run_id, None, create=True) as tx:
             tx.append(make_event(RunCreated(task_id=spec.task_id, spec=spec.canonical(),
                                             owner_id=self.config.owner_id), actor="runtime"))
-        lease = self.leases.acquire(run_id, self.config.owner_id)
-        try:
-            with self._keeper(lease):
-                ctx = RunContext(run_id, lease, spec, workspace)
-                self.journal.append(ctx, RunStarted(owner_id=lease.owner_id, epoch=lease.epoch))
-                return self._drive(ctx, model_alias=model_alias, resumed=False)
-        finally:
-            self.leases.release(lease)
+        with self._owned(run_id) as lease, self._keeper(lease):
+            ctx = RunContext(run_id, lease, spec, workspace)
+            self.journal.append(ctx, RunStarted(owner_id=lease.owner_id, epoch=lease.epoch))
+            return self._drive(ctx, model_alias=model_alias, resumed=False)
 
     def resume(self, run_id: str, *, model_alias: str | None = None) -> RunResult:
         """Real continuation under lease and ledger safeguards (never live replay)."""
-        lease = self.leases.acquire(run_id, self.config.owner_id)
-        try:
-            with self._keeper(lease):
-                return self._resume_owned(run_id, lease, model_alias)
-        finally:
-            self.leases.release(lease)
+        if model_alias is not None:
+            self.models.get(model_alias)  # unknown alias: refuse before taking the lease
+        with self._owned(run_id) as lease, self._keeper(lease):
+            return self._resume_owned(run_id, lease, model_alias)
 
     def _resume_owned(self, run_id: str, lease: Lease, model_alias: str | None) -> RunResult:
         with self.store.read() as q:
@@ -200,8 +205,12 @@ class Runtime:
         self._begin_recovery(ctx)
         if self.budgets.exhausted(ctx, include_recoveries=True):
             return self._result(run_id)
-        if self.verification.drift_requires_remediation(
-                ctx, self.verification.check_drift(ctx)):
+        try:
+            drifted = self.verification.check_drift(ctx)
+        except VerificationUnavailableError as exc:
+            self.journal.set_status(ctx, RunStatus.AWAITING_RECONCILIATION, str(exc)[:500])
+            return self._result(run_id)
+        if self.verification.drift_requires_remediation(ctx, drifted):
             return self._result(run_id)
         if not self._settle_effects(ctx):
             return self._result(run_id)
@@ -216,8 +225,7 @@ class Runtime:
         """Record an explicit human decision (docs/04 section 8). Never implied by model text."""
         if not actor:
             raise SpecValidationError("a human actor id is required")
-        lease = self.leases.acquire(run_id, self.config.owner_id)
-        try:
+        with self._owned(run_id) as lease:
             with self.store.read() as q:
                 run = q.run(run_id)
                 action = q.action(action_id)
@@ -252,6 +260,11 @@ class Runtime:
                 if decision == "confirmed":
                     if not evidence_ref:
                         raise SpecValidationError("confirmed requires an external receipt")
+                    if evidence_ref.startswith("blob:") and not ctx.workspace.has_blob(
+                            evidence_ref):
+                        raise SpecValidationError(
+                            f"evidence {evidence_ref[:80]!r} is not a blob of this run; give "
+                            "an external receipt id (e.g. receipt:123) or an existing blob")
                     events.append(make_event(ActionReconciled(
                         action_id=action_id, to_status="confirmed", method="human_receipt",
                         evidence_ref=evidence_ref, outcome_ref=evidence_ref,
@@ -273,13 +286,10 @@ class Runtime:
             with self.store.run_tx(ctx.run_id, ctx.lease.fence) as tx:
                 tx.append_all(events)
             return self._result(run_id)
-        finally:
-            self.leases.release(lease)
 
     def cancel(self, run_id: str, *, actor: str, reason: str) -> RunResult:
         """Prevent new dispatches. Cannot roll back calls already sent."""
-        lease = self.leases.acquire(run_id, self.config.owner_id)
-        try:
+        with self._owned(run_id) as lease:
             with self.store.read() as q:
                 run = q.run(run_id)
             if run.status not in TERMINAL_RUN_STATUSES:
@@ -287,18 +297,12 @@ class Runtime:
                     tx.append(make_event(RunCancelled(actor=actor, reason=reason),
                                          actor=f"human:{actor}"))
             return self._result(run_id)
-        finally:
-            self.leases.release(lease)
 
     def record_fault(self, run_id: str, boundary: str, detail: dict[str, Any]) -> None:
         """Test-only: record that a fault was injected (Continuum Lab)."""
-        lease = self.leases.acquire(run_id, self.config.owner_id)
-        try:
-            with self.store.run_tx(run_id, lease.fence) as tx:
-                tx.append(make_event(FaultInjected(boundary=boundary, detail=detail),
-                                     actor="lab"))
-        finally:
-            self.leases.release(lease)
+        with self._owned(run_id) as lease, self.store.run_tx(run_id, lease.fence) as tx:
+            tx.append(make_event(FaultInjected(boundary=boundary, detail=detail),
+                                 actor="lab"))
 
     def status(self, run_id: str) -> dict[str, Any]:
         with self.store.read() as q:
@@ -348,6 +352,27 @@ class Runtime:
         with self.store.read() as q:
             events = q.events(run_id)
         return list(export_trace(events, Workspace(self.config.workspace_root, run_id)))
+
+    @contextlib.contextmanager
+    def _owned(self, run_id: str) -> Iterator[Lease]:
+        """Lease the run for one operation. The run is also claimed locally per controller
+        id: the lease is re-entrant for the same id, so two concurrent operations under
+        one id (e.g. two HTTP requests in one server) would otherwise share one lease
+        and epoch, and one's release would expire the other's lease."""
+        key = (self.store.dsn, self.store.schema, self.config.owner_id, run_id)
+        with _CLAIMS_LOCK:
+            if key in _CLAIMS:
+                raise AlreadyOwnedError(f"run {run_id} is busy in this process; retry later")
+            _CLAIMS.add(key)
+        try:
+            lease = self.leases.acquire(run_id, self.config.owner_id)
+            try:
+                yield lease
+            finally:
+                self.leases.release(lease)
+        finally:
+            with _CLAIMS_LOCK:
+                _CLAIMS.discard(key)
 
     @contextlib.contextmanager
     def _keeper(self, lease: Lease) -> Iterator[None]:
@@ -520,7 +545,11 @@ class Runtime:
 
     def _finalize(self, ctx: RunContext) -> bool:
         """Complete only if all milestones still verify and nothing is unresolved."""
-        invalidated = self.verification.recheck_verified(ctx)
+        try:
+            invalidated = self.verification.recheck_verified(ctx)
+        except VerificationUnavailableError as exc:
+            self.journal.set_status(ctx, RunStatus.AWAITING_RECONCILIATION, str(exc)[:500])
+            return True
         if invalidated:
             return self.verification.drift_requires_remediation(ctx, invalidated)
         with self.store.read() as q:
