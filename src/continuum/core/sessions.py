@@ -34,6 +34,7 @@ from continuum.core.events import (
     UsagePayload,
     make_event,
 )
+from continuum.core.evidence import is_blob_ref
 from continuum.core.faults import FaultInjector
 from continuum.core.handoff import DataRef, Packet, PacketBuilder, RunSnapshot
 from continuum.core.ids import IdGenerator
@@ -89,10 +90,13 @@ class SessionSettings:
 def estimate_cost(profile: CapabilityProfile, usage: Usage) -> Usage:
     """Fill a missing cost from the profile's pricing snapshot, marked ``estimated``.
 
-    Unknown tokens or unknown prices stay unknown — never zero.
+    A configured (verified) price snapshot also replaces a generic library estimate
+    (``source="estimated"``); only a provider-*reported* cost is kept as is. Unknown
+    tokens or unknown prices stay unknown — never zero.
     """
     price = profile.price
-    if (usage.cost_usd is not None or usage.input_tokens is None
+    keep = usage.cost_usd is not None and usage.source != "estimated"
+    if (keep or usage.input_tokens is None
             or usage.output_tokens is None or price.input_per_million_usd is None
             or price.output_per_million_usd is None):
         return usage
@@ -150,11 +154,11 @@ class ModelSessions:
             tried.append(candidate)
             if len(tried) > policy.max_handoffs + 1:
                 break
-            endpoint = self.models.get(candidate)
             provenance = None if previous is None and reason == "start" else {
                 "reason": reason, "handoff_count": handoffs,
                 "from_model_id": previous.endpoint.profile.model_id if previous else None}
             try:
+                endpoint = self.models.get(candidate)
                 endpoint.profile.check_deployable()
                 packet = self.packet(ctx, endpoint, provenance)
             except (UnsupportedCapabilityError, PacketTooLargeError) as exc:
@@ -230,7 +234,7 @@ class ModelSessions:
         refs: list[DataRef] = []
         for a in snap.actions:
             if a.status == ActionStatus.CONFIRMED and a.milestone_id == focus and \
-                    a.outcome_ref and a.outcome_ref.startswith("blob:") and \
+                    is_blob_ref(a.outcome_ref) and \
                     not a.operation_key.startswith("read:"):
                 refs.append(DataRef(ref=a.outcome_ref, tool=a.tool_name,
                                     data=ctx.workspace.get_blob(a.outcome_ref)))

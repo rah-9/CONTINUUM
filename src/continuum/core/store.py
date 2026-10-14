@@ -346,7 +346,7 @@ class Store:
 
     def __init__(self, dsn: str, *, schema: str = "public", clock: Clock, ids: IdGenerator,
                  faults: FaultInjector | None = None, lock_timeout_ms: int = 5000,
-                 pool_size: int = 8) -> None:
+                 pool_size: int = 8, pool_timeout_seconds: float = 30.0) -> None:
         self.dsn = dsn
         self.schema = schema
         self.clock = clock
@@ -354,7 +354,7 @@ class Store:
         self.faults: FaultInjector = faults or NoFaults()
         options = f"-c search_path={schema} -c lock_timeout={lock_timeout_ms}"
         self.pool: ConnectionPool[psycopg.Connection[dict[str, Any]]] = ConnectionPool(
-            dsn, min_size=1, max_size=pool_size, open=True,
+            dsn, min_size=1, max_size=pool_size, open=True, timeout=pool_timeout_seconds,
             kwargs={"row_factory": dict_row, "options": options, "autocommit": False})
 
     def close(self) -> None:

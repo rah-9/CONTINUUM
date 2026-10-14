@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from continuum.core.errors import NotFoundError
+from continuum.core.errors import NotFoundError, VerificationUnavailableError
 from continuum.core.events import (
     ArtifactDrift,
     MilestoneFailed,
@@ -178,14 +178,27 @@ class MilestoneVerification:
     def recheck_verified(self, ctx: RunContext) -> list[str]:
         """Re-run verifiers for verified milestones; invalidate changed ones + descendants.
 
-        Returns every milestone invalidated by this check (including descendants).
+        Returns every milestone invalidated by this check (including descendants). Only a
+        verifier FAIL or a changed fingerprint invalidates; a verifier ERROR raises
+        :class:`VerificationUnavailableError` after recording ``VerifierError``.
         """
         invalidated: list[str] = []
         for m in ctx.spec.milestones:
             row = self.milestone(ctx, m.id)
             if row.status != MilestoneStatus.VERIFIED:
                 continue
-            outcome, fingerprint = self.evaluate(ctx, m.id)
+            try:
+                outcome, fingerprint = self.evaluate(ctx, m.id)
+            except Exception as exc:  # a verifier bug is not evidence of drift
+                outcome, fingerprint = VerifierOutcome(VerifierResult.ERROR, str(exc)), ""
+            if outcome.status == VerifierResult.ERROR:
+                # A failed observation (timeout, unreachable service) proves nothing:
+                # record it and stop without invalidating verified work (invariant 7).
+                message = self.redactor.text(outcome.message)[:500]
+                self.journal.append(ctx, VerifierError(milestone_id=m.id, message=message),
+                                    actor="verifier")
+                raise VerificationUnavailableError(
+                    f"could not re-verify {m.id}: {message}; resume again later")
             if outcome.status == VerifierResult.PASS and fingerprint == row.input_fingerprint:
                 continue
             reason = ("verifier no longer passes" if outcome.status != VerifierResult.PASS

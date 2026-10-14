@@ -250,3 +250,17 @@ The defect surfaced as an intermittent chaos-test failure under load. It was rep
 
 **Limitation.** The filesystem is not transactional. An edit between the final observation and the commit is possible, but that window is now microseconds rather than the length of a request. The next brief flags the result as `needs_reverification`.
 
+## D-032 — An observation error is not drift; one operation per run per process
+
+**Context.** The core-runtime audit (v0.6.2) found two high-severity issues.
+
+- `recheck_verified` treated a verifier `ERROR` as `FAIL`. A single transient read timeout on resume could therefore invalidate verified work and terminally fail a run as `drift_requires_remediation`.
+- The lease is keyed by controller id, which is per process. Concurrent HTTP requests in one `continuum serve` re-entered the same live lease and epoch, so fencing could not separate them. One request's `release` also expired the lease under another.
+
+**Decision.**
+- Drift requires evidence. Only `FAIL` or a fingerprint change invalidates. An `ERROR` records `VerifierError` and the run waits in `awaiting_reconciliation`; the next resume re-observes. This keeps invariant 7 (evidence-based progress) and stays conservative: nothing proceeds past the unobservable milestone.
+- `Runtime._owned` claims `(dsn, schema, owner_id, run_id)` in a process-wide set for the duration of each lease-holding operation. A concurrent operation gets `already_owned`. The documented same-owner lease renewal semantics of `LeaseManager` are unchanged.
+- Loopback HTTP also validates `Host` and `Origin`, to defend against DNS rebinding.
+
+**Residual (documented, not changed).** `_settle_effects` dispatches authorized retries without re-checking for *another* unresolved effect between dispatches. Built-in flows cannot have two authorized writes pending at once (one pending approval at a time, and the gateway blocks new writes while an effect is unresolved), so no failing test can be built today. AGENTS.md forbids changing ledger behavior without one. Revisit this when multi-approval flows exist.
+

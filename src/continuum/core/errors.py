@@ -60,3 +60,9 @@ class UnsupportedCapabilityError(ContinuumError):
 
 class BudgetExceededError(ContinuumError):
     code = "budget_exceeded"
+
+
+class VerificationUnavailableError(ContinuumError):
+    """A verifier could not observe (timeout, unreachable service): not evidence of drift."""
+
+    code = "verification_unavailable"
