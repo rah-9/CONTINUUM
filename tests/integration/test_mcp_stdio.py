@@ -179,9 +179,15 @@ def test_coding_work_survives_model_switch_between_chats_over_mcp(server_env, tm
     assert chat1[5]["verified"] is True
 
     # The user switches model: a brand-new chat and server process, knowing only the repo.
-    [brief] = asyncio.run(_coding_chat(server_env, [
+    [small, brief] = asyncio.run(_coding_chat(server_env, [
         ("coding_resume", {"repo_path": str(repo), "agent": "claude-opus-5-5 (Claude Code)"}),
+        ("coding_brief", lambda r: {"session_id": r[0]["session_id"], "detail": "full"}),
     ]))
+    # default: compact (Markdown + ids), so the brief is not sent to the model twice
+    assert set(small) == {"session_id", "status", "goal", "tasks", "markdown", "detail"}
+    assert small["tasks"][0]["verified"] and not small["tasks"][0]["needs_reverification"]
+    assert "integers only for now" in small["markdown"]
+    assert "add div() with zero handling" in small["markdown"]
     assert brief["session_id"] == chat1[0]["session_id"]
     assert brief["tasks"][0]["verified"] and not brief["tasks"][0]["needs_reverification"]
     assert brief["agent_notes"]["decisions"][0]["text"] == "integers only for now"

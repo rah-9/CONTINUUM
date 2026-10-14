@@ -37,7 +37,7 @@ from continuum.coding.models import (
     TaskAdded,
     TaskStatusChanged,
 )
-from continuum.coding.repo import observe, resolve_repo
+from continuum.coding.repo import commits_since, observe, resolve_repo, session_changes
 from continuum.coding.runner import run_check_process
 from continuum.core.canonical import digest, sha256_hex
 from continuum.core.clock import Clock
@@ -168,9 +168,17 @@ class CodingContinuity:
             checks = q._all("SELECT name, argv_json, timeout_seconds, registered_by, "
                             "registered_at FROM coding_checks WHERE repo_root = %s "
                             "ORDER BY name", (session["repo_root"],))
+        root = resolve_repo(session["repo_root"])
         if current is None:
-            current = observe(resolve_repo(session["repo_root"]))
-        return build_view(session, events, current, checks)
+            current = observe(root)
+        view = build_view(session, events, current, checks)
+        if current.vcs == "git":
+            view.session_changes = session_changes(root, view.base_head)
+        last = view.checkpoints[-1] if view.checkpoints else None
+        if last and last["head"] and current.vcs == "git" and current.head:
+            view.commits_since_checkpoint = (
+                [] if last["head"] == current.head else commits_since(root, last["head"]))
+        return view
 
     # ===== agent operations ===========================================================
 

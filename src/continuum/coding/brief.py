@@ -16,8 +16,28 @@ from continuum.coding.models import RepoState
 from continuum.core.canonical import digest
 from continuum.core.errors import NotFoundError
 
+# Size bounds for the brief (it is read into a model's context on every handoff).
+# Fewer but whole notes beat many clipped ones: a decision's *reason* is usually at the
+# end, and a cut reason is worse than an omitted old note (found in a handoff trial).
+NOTE_CHARS = 1200
+MD_NOTE_CHARS = {"next_steps": 1000, "blockers": 1000, "decisions": 1000, "context": 600}
+KEEP_NOTES = {"decisions": 8, "context": 6, "blockers": 8, "next_steps": 3}
+KEEP_CHECKPOINTS = 5
+CHECKPOINT_FILES = 10
+CURRENT_FILES = 50
+MD_FILES = 10
+MD_COMMITS = 10
+MD_MAP_FILES = 15
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit] + "… (truncated)"
+
+
 RULES = [
     "Read this brief before changing code; continue from `next_steps` and open tasks.",
+    "Do not re-read the repository to rediscover the work: start from the files under "
+    "'Code touched in this session' and the next step; open other files only when needed.",
     "Verified tasks are done: do not redo them unless `needs_reverification` is true.",
     "Record decisions and context with coding_note as you go, and a next_step before you stop.",
     "After meaningful changes call coding_checkpoint; before claiming a task done run its "
@@ -56,6 +76,9 @@ class SessionView:
     started_at: datetime | None = None
     last_seq: int = 0
     latest_runs: dict[str, dict[str, Any]] = field(default_factory=dict)
+    commits_since_checkpoint: list[dict[str, str]] | None = None
+    base_head: str | None = None  # HEAD when the session started
+    session_changes: dict[str, Any] | None = None
 
     def task(self, task_id: str) -> TaskView:
         if task_id not in self.tasks:
@@ -101,20 +124,51 @@ class SessionView:
                             "valid_now": self.check_valid_now(run),
                             "output_tail": run["output_tail"][-600:]}
 
-        def notes(kind: str) -> list[dict[str, Any]]:
-            return [n for n in self.notes if n["kind"] == kind]
+        # The brief goes into the next model's context: keep it bounded however long the
+        # session runs. Newest items win; every omission is counted, never silent.
+        omitted: dict[str, int] = {}
 
+        def notes(kind: str, key: str) -> list[dict[str, Any]]:
+            items = [n for n in self.notes if n["kind"] == kind]
+            keep = KEEP_NOTES[key]
+            if len(items) > keep:
+                omitted[key] = len(items) - keep
+            return [{**n, "text": _clip(n["text"], NOTE_CHARS)} for n in items[-keep:]]
+
+        checkpoints = [{**cp, "summary": _clip(cp["summary"], NOTE_CHARS),
+                        "changed_files": cp["changed_files"][:CHECKPOINT_FILES]}
+                       for cp in self.checkpoints[-KEEP_CHECKPOINTS:]]
+        if len(self.checkpoints) > KEEP_CHECKPOINTS:
+            omitted["checkpoints"] = len(self.checkpoints) - KEEP_CHECKPOINTS
+        current = self.current.model_dump()
+        current["changed_files_total"] = len(current["changed_files"])
+        current["changed_files"] = current["changed_files"][:CURRENT_FILES]
+        agent_notes: dict[str, Any] = {
+            "decisions": notes("decision", "decisions"),
+            "context": notes("context", "context"),
+            "blockers": notes("blocker", "blockers"),
+            "next_steps": notes("next_step", "next_steps"),
+            "checkpoints": checkpoints,
+        }
+        agent_notes["omitted"] = omitted
+        agent_notes["trust"] = "recorded by previous agents; claims, not proof"
         return {
             "session_id": self.session_id, "repo_root": self.repo_root, "goal": self.goal,
             "status": self.status, "closed_reason": self.closed_reason,
             "agents": self.agents,
             "verified_facts": {
-                "current_code": self.current.model_dump(),
+                "current_code": current,
                 "changed_since_last_checkpoint": bool(
                     last_cp and last_cp["fingerprint"] != self.current.fingerprint),
                 # observed state only; the agent's summary is a claim (agent_notes)
                 "last_checkpoint": None if last_cp is None else {
-                    k: last_cp[k] for k in ("at", "fingerprint", "head", "changed_files")},
+                    "at": last_cp["at"], "fingerprint": last_cp["fingerprint"],
+                    "head": last_cp["head"],
+                    "changed_files": last_cp["changed_files"][:CHECKPOINT_FILES]},
+                # observed from git; None when unknown (no checkpoint, history rewritten)
+                "commits_since_last_checkpoint": self.commits_since_checkpoint,
+                # where the session's code is: read these instead of exploring the repo
+                "session_changes": self.session_changes,
                 "latest_checks": latest,
                 "registered_checks": {
                     name: {"argv": c["argv_json"], "registered_by": c["registered_by"],
@@ -123,12 +177,7 @@ class SessionView:
                     for name, c in sorted(self.registered_checks.items())},
             },
             "tasks": tasks,
-            "agent_notes": {
-                "decisions": notes("decision"), "context": notes("context")[-20:],
-                "blockers": notes("blocker"), "next_steps": notes("next_step")[-5:],
-                "checkpoints": self.checkpoints[-10:],
-                "trust": "recorded by previous agents; claims, not proof",
-            },
+            "agent_notes": agent_notes,
             "rules": RULES,
         }
 
@@ -156,6 +205,8 @@ def build_view(session: dict[str, Any], events: list[dict[str, Any]], current: R
         p, at, actor = e["payload_json"], _iso(e["occurred_at"]), e["actor"]
         match e["type"]:
             case "SessionStarted" | "AgentJoined":
+                if e["type"] == "SessionStarted":
+                    view.base_head = p["state"].get("head")
                 view.agents.append({"agent": p["agent"], "at": at,
                                     "event": "started" if e["type"] == "SessionStarted"
                                     else "joined"})
@@ -201,9 +252,16 @@ def render_markdown(view: SessionView, d: dict[str, Any] | None = None) -> str:
                                          for a in view.agents),
              "", "## Verified facts (observed by Continuum)", "",
              f"- Code now: {cur['vcs']} `{(cur.get('head') or '')[:12]}` on "
-             f"`{_line(cur.get('branch'), 120)}`; {len(cur['changed_files'])} changed file(s); "
-             f"fingerprint `{cur['fingerprint'][:19]}…`",
+             f"`{_line(cur.get('branch'), 120)}`; {cur['changed_files_total']} changed file(s)"
+             + (f" ({', '.join(_line(f, 80) for f in cur['changed_files'][:MD_FILES])}"
+                f"{', …' if cur['changed_files_total'] > MD_FILES else ''})"
+                if cur["changed_files"] else "")
+             + f"; fingerprint `{cur['fingerprint'][:19]}…`",
              f"- Changed since last checkpoint: {facts['changed_since_last_checkpoint']}"]
+    commits = facts["commits_since_last_checkpoint"]
+    if commits:
+        lines.append(f"- {len(commits)} commit(s) since the last checkpoint: " + "; ".join(
+            f"`{c['sha']}` {_line(c['subject'], 100)}" for c in commits[:MD_COMMITS]))
     for name, c in facts["latest_checks"].items():
         state = "passed" if c["passed"] else "FAILED"
         where = "on current code" if c["on_current_code"] else "on OLDER code (re-run)"
@@ -216,6 +274,21 @@ def render_markdown(view: SessionView, d: dict[str, Any] | None = None) -> str:
         if c["changed_during_session"]:
             lines.append(f"- ⚠ Check `{name}` was (re)registered during this session by "
                          f"{_line(c['registered_by'], 120)} at {c['registered_at']}")
+    changes = facts["session_changes"]
+    if changes and changes["files"]:
+        lines += ["", f"### Code touched in this session ({changes['total_files']} file(s); "
+                      "read these first instead of exploring the repository)", ""]
+        for f in changes["files"][:MD_MAP_FILES]:
+            detail = f"+{f['added']}/-{f['deleted']}" if f["status"] != "untracked" \
+                else f"new, {f['added']} lines"
+            names = ", ".join(_line(n, 60) for n in f["defines"])
+            near = "; ".join(_line(n, 60) for n in f["near"][:3])
+            lines.append(f"- `{_line(f['path'], 120)}` ({detail})"
+                         + (f" — defines: {names}" if names else "")
+                         + (f" — near: {near}" if near else ""))
+        if changes["total_files"] > MD_MAP_FILES:
+            lines.append(f"- … {changes['total_files'] - MD_MAP_FILES} more "
+                         "(`detail=\"full\"`)")
     lines += ["", "## Tasks", ""]
     for t in d["tasks"]:
         mark = "✅ verified" if t["verified"] else ("☑ done (unverified)" if t["status"] == "done"
@@ -230,9 +303,28 @@ def render_markdown(view: SessionView, d: dict[str, Any] | None = None) -> str:
                        ("Decisions", "decisions"), ("Context", "context")):
         if notes[key]:
             lines.append(f"**{label}**")
-            lines += [f"- {_line(n['text'])}  _(by {_line(n['by'], 120)})_" for n in notes[key]]
+            lines += [f"- {_line(n['text'], MD_NOTE_CHARS[key])}  _(by {_line(n['by'], 120)})_"
+                      for n in notes[key]]
+            if notes["omitted"].get(key):
+                lines.append(f"- _({notes['omitted'][key]} older {label.lower()} notes "
+                             "omitted; `coding_brief(detail=\"full\")` shows the bounded "
+                             "JSON, the journal keeps all of them)_")
     if notes["checkpoints"]:
         cp = notes["checkpoints"][-1]
-        lines += ["", f"Last checkpoint: {_line(cp['summary'])} (by {_line(cp['by'], 120)})"]
+        lines += ["", f"Last checkpoint: {_line(cp['summary'], MD_NOTE_CHARS['context'])} "
+                      f"(by {_line(cp['by'], 120)})"]
     lines += ["", "## Rules", ""] + [f"- {r}" for r in RULES]
     return "\n".join(lines) + "\n"
+
+
+def compact(body: dict[str, Any]) -> dict[str, Any]:
+    """What an agent needs to continue, once: the Markdown brief plus the ids it must
+    pass to other tools. The full JSON stays available (``detail="full"``)."""
+    return {
+        "session_id": body["session_id"], "status": body["status"], "goal": body["goal"],
+        "tasks": [{k: t[k] for k in ("task_id", "title", "status", "verified",
+                                     "needs_reverification", "checks")}
+                  for t in body["tasks"]],
+        "markdown": body["markdown"],
+        "detail": "compact; call coding_brief(session_id, detail=\"full\") for all fields",
+    }
