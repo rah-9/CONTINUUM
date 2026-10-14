@@ -264,3 +264,28 @@ The defect surfaced as an intermittent chaos-test failure under load. It was rep
 
 **Residual (documented, not changed).** `_settle_effects` dispatches authorized retries without re-checking for *another* unresolved effect between dispatches. Built-in flows cannot have two authorized writes pending at once (one pending approval at a time, and the gateway blocks new writes while an effect is unresolved), so no failing test can be built today. AGENTS.md forbids changing ledger behavior without one. Revisit this when multi-approval flows exist.
 
+## D-033 — Portable by construction; checks are isolated from Continuum
+
+**Context.** We installed the built wheel into a clean environment and drove `continuum mcp` from an unrelated directory, the way an IDE does, then ran a second full audit. Together they found failures that only appear outside the developer's checkout:
+- a Windows pipe encoding
+- IDE launch directories
+- PEP 668 cloud images
+- `.cmd` shims
+- POSIX-only locks
+
+The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, cost precision, terminal-run rewrites, process trees, colliding owner ids and active-time accounting.
+
+**Decision.**
+- **No working-directory assumptions.** State lives in `~/.continuum`. Config comes from `./config` only when it holds tasks. All text I/O is UTF-8. CLI output is UTF-8.
+- **One install path everywhere.** Use `uv tool install` / `pipx` on any OS. The cloud setup script uses `uv tool --python 3.12` and links `continuum` onto PATH.
+- **Checks are isolated.** Each check:
+  - runs in its own process group, killed as a tree on timeout
+  - writes output to a bounded file
+  - gets an environment without `CONTINUUM_*`, so code under test cannot reach the journal database (and thereby register checks)
+  - has its command resolved like a shell would, but never runs through one
+- **Storage accepts anything a model or a tool can emit.** NUL characters are rejected in tool arguments and replaced in agent text and check output. Costs are quantized to the column's precision, so replay equals the durable projection.
+- **Identity and terminal states.**
+  - Default owner ids carry a per-process nonce.
+  - An ended run's outcome is never rewritten.
+- **Fingerprints stay fail-closed and complete.** Submodules are fingerprinted recursively, and file names are hashed as bytes.
+

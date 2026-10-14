@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from dataclasses import asdict
 from typing import Any
@@ -13,6 +14,7 @@ from psycopg_pool import PoolTimeout
 
 from continuum.core.canonical import canonical_json
 from continuum.core.errors import ContinuumError
+from continuum.core.redaction import Redactor
 from continuum.core.runtime import RunResult
 from continuum.core.tracing import configure_logging
 from continuum.interfaces.sdk import Continuum
@@ -27,7 +29,8 @@ def _print(value: Any) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="continuum", description=__doc__)
-    p.add_argument("--log-level", default="WARNING",
+    p.add_argument("--log-level", default="WARNING", type=str.upper,
+                   choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                    help="JSON trace log level on stderr (e.g. INFO for every event)")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("db-init", help="create the PostgreSQL schema")
@@ -134,7 +137,17 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _utf8_output() -> None:
+    """Agents read our output through pipes. On Windows a pipe defaults to the ANSI code
+    page (e.g. cp1252), which cannot encode the brief's symbols and would crash."""
+    for stream in (sys.stdout, sys.stderr):
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+        if encoding != "utf8" and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_output()
     raw = list(sys.argv[1:] if argv is None else argv)
     command: list[str] = []
     # `coding checks add … -- cmd args`: everything after `--` is the check's argv, never
@@ -204,6 +217,13 @@ def main(argv: list[str] | None = None) -> int:
         _print({"error": f"database unavailable ({type(exc).__name__}); check "
                          "CONTINUUM_DATABASE_URL and that PostgreSQL is running",
                 "code": "database_unavailable"})
+        return 2
+    except Exception as exc:  # anything else: one masked line, never a raw traceback
+        message = Redactor.from_environment().text(str(exc))[:300]
+        _print({"error": f"internal error ({type(exc).__name__}): {message}",
+                "code": "internal",
+                "hint": "re-run with --log-level DEBUG for details"})
+        logging.getLogger(__name__).debug("internal error", exc_info=True)
         return 2
     finally:
         if sdk is not None:

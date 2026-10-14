@@ -130,6 +130,19 @@ Every feature is judged by one question: *does it keep valid work and prevent un
 - **Defects found by the new tests:** `__pycache__` invalidated just-produced evidence; argparse swallowed `--actor`; the CLI didn't migrate older databases. All are fixed with regression tests.
 - **Accepted limit:** shell-capable agents could impersonate the human check-registration CLI. Continuum makes that tamper-evident, not impossible (D-029).
 
+### Phase 7: v0.6.1–0.6.3, three audits and a real-install test
+
+- **v0.6.1** ([PR #7](https://github.com/rah-9/CONTINUUM/pull/7)): 23 coding-layer fixes (D-031).
+- **v0.6.2** ([PR #8](https://github.com/rah-9/CONTINUUM/pull/8)): 9 core-runtime fixes. The two high-severity ones: a transient read error was treated as drift, and in-process lease sharing (D-032).
+- **v0.6.3:**
+  - We installed the built wheel into a clean environment and drove it like an IDE, from an unrelated directory, on a fresh database. This found Windows, IDE-directory, PEP 668 and config-placeholder failures.
+  - A second audit found 17 more defects.
+  - All are fixed with tests that fail without the fix (D-033).
+- Supported surfaces:
+  - any MCP client (Claude Code, Cursor, VS Code, Codex, Windsurf, Gemini CLI, Cline, Claude Desktop, JetBrains, Zed)
+  - shell-only agents through the CLI
+  - local machines (Linux, macOS, Windows) and ephemeral cloud containers with a hosted PostgreSQL
+
 ## 4. Evidence so far
 
 Results are from the deterministic fake-model safety matrix: 15 tasks × 6 faults × 3 connector modes × 2 seeds, 912 paired cells. They test **modeled** safety properties only. They are not claims about live providers. The full report is in `lab-reports/`.

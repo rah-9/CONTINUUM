@@ -109,9 +109,14 @@ def observe(root: Path) -> RepoState:
 _DIFF = ("--binary", "--no-ext-diff", "--no-textconv", "--no-color")
 
 
+def _show(raw: bytes) -> str:
+    """A path for display/storage: valid UTF-8 always (PostgreSQL rejects surrogates)."""
+    return raw.decode("utf-8", errors="replace")
+
+
 def _changed_paths(status: bytes) -> list[str]:
     """Parse ``git status --porcelain=v1 -z``; renames/copies carry an extra source entry."""
-    entries = status.decode(errors="replace").split("\0")
+    entries = status.split(b"\0")
     changed: set[str] = set()
     i = 0
     while i < len(entries):
@@ -119,11 +124,19 @@ def _changed_paths(status: bytes) -> list[str]:
         i += 1
         if len(entry) <= 3:
             continue
-        if entry[0] in "RC" or entry[1] in "RC":
+        if entry[0:1] in (b"R", b"C") or entry[1:2] in (b"R", b"C"):
             i += 1  # skip the original path of a rename/copy
-        if not _is_noise(entry[3:]):
-            changed.add(entry[3:])
+        shown = _show(entry[3:])
+        if not _is_noise(shown):
+            changed.add(shown)
     return sorted(changed)
+
+
+def _submodules(root: Path) -> list[bytes]:
+    """Paths of gitlinks (mode 160000) checked out in this work tree."""
+    out = _must(root, "ls-files", "--stage", "-z")
+    return [line.split(b"\t", 1)[1] for line in out.split(b"\0")
+            if line.startswith(b"160000 ") and b"\t" in line]
 
 
 def _observe_git(root: Path) -> RepoState:
@@ -137,14 +150,20 @@ def _observe_git(root: Path) -> RepoState:
         h.update(b"\nstaged:" + _must(root, "diff", "--cached", *_DIFF))
         h.update(b"\nunstaged:" + _must(root, "diff", *_DIFF))
     status = _must(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    # File names are bytes: decoding them lossily would hash a path that does not exist.
     untracked = [p for p in _must(root, "ls-files", "--others", "--exclude-standard", "-z")
-                 .decode(errors="replace").split("\0") if p and not _is_noise(p)]
+                 .split(b"\0") if p and not _is_noise(_show(p))]
     for rel in sorted(untracked):
-        path = root / rel
+        path = root / os.fsdecode(rel)
         if path.is_symlink():  # hash the link itself, never content outside the repo
-            h.update(f"\nuntracked-link:{rel}:{os.readlink(path)}".encode())
+            h.update(b"\nuntracked-link:" + rel + b":" + os.fsencode(os.readlink(path)))
         elif path.is_file():
-            h.update(f"\nuntracked:{rel}:{_file_sha(path)}".encode())
+            h.update(b"\nuntracked:" + rel + b":" + _file_sha(path).encode())
+    # `git diff` shows a dirty submodule only as "-dirty": fingerprint its content too.
+    for rel in sorted(_submodules(root)):
+        sub = root / os.fsdecode(rel)
+        if (sub / ".git").exists():
+            h.update(b"\nsubmodule:" + rel + b":" + _observe_git(sub).fingerprint.encode())
     changed = _changed_paths(status)
     return RepoState(fingerprint="sha256:" + h.hexdigest(), vcs="git", head=head,
                      branch=branch, dirty=bool(changed),
@@ -165,5 +184,6 @@ def _observe_files(root: Path) -> RepoState:
             count += 1
             if count > MAX_FILES:
                 raise SpecValidationError(f"{root} has more than {MAX_FILES} files; use git")
-            h.update(f"{path.relative_to(root).as_posix()}:{_file_sha(path)}\n".encode())
+            rel = os.fsencode(path.relative_to(root).as_posix())  # names may not be UTF-8
+            h.update(rel + b":" + _file_sha(path).encode() + b"\n")
     return RepoState(fingerprint="sha256:" + h.hexdigest(), vcs="files")

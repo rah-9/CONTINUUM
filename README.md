@@ -89,8 +89,8 @@ Environment variables:
 |---|---|---|
 | `CONTINUUM_DATABASE_URL` | `postgresql://continuum:continuum@localhost:5432/continuum` | runtime database |
 | `CONTINUUM_DB_SCHEMA` | `public` | schema (`search_path`) |
-| `CONTINUUM_HOME` | `.continuum` | workspaces, mock-service state |
-| `CONTINUUM_CONFIG_DIR` | `config` | `models.yaml`, `tasks/*.yaml` |
+| `CONTINUUM_HOME` | `~/.continuum` | workspaces, mock-service state (per user, never the current directory) |
+| `CONTINUUM_CONFIG_DIR` | `./config` if it has `tasks/`, else `~/.continuum/config` | `models.yaml`, `tasks/*.yaml` |
 | `CONTINUUM_TEST_DATABASE_URL` | `…/continuum_test` | disposable test database |
 
 Provider API keys come only from the environment. They are redacted before anything is persisted.

@@ -2,11 +2,11 @@
   "mcpServers": {
     "continuum": {
       "command": "continuum",
-      "args": ["mcp"],
+      "args": [
+        "mcp"
+      ],
       "env": {
-        "CONTINUUM_DATABASE_URL": "postgresql://continuum:continuum@localhost:5432/continuum",
-        "CONTINUUM_CONFIG_DIR": "/absolute/path/to/CONTINUUM/config",
-        "CONTINUUM_HOME": "/absolute/path/to/.continuum"
+        "CONTINUUM_DATABASE_URL": "postgresql://continuum:continuum@localhost:5432/continuum"
       }
     }
   }

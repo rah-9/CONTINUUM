@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from continuum.core.canonical import canonical_json, digest
 from continuum.core.clock import Clock
-from continuum.core.errors import StaleOwnerError
+from continuum.core.errors import PathContainmentError, StaleOwnerError
 from continuum.core.events import (
     ActionAttemptAmbiguous,
     ActionAttemptConfirmed,
@@ -123,6 +123,16 @@ class _Stop(Exception):
         self.outcome = outcome
 
 
+def _has_nul(value: Any) -> bool:
+    if isinstance(value, str):
+        return "\x00" in value
+    if isinstance(value, dict):
+        return any(_has_nul(k) or _has_nul(v) for k, v in value.items())
+    if isinstance(value, list | tuple):
+        return any(_has_nul(v) for v in value)
+    return False
+
+
 class ToolGateway:
     def __init__(self, *, store: Store, leases: LeaseManager, registry: ToolRegistry,
                  clock: Clock, ids: IdGenerator, redactor: Redactor | None = None,
@@ -205,6 +215,9 @@ class ToolGateway:
         if not isinstance(args, dict):
             raise _Stop(self._reject(run, m.name, "invalid_args", "arguments must be an object",
                                      actor))
+        if _has_nul(args):  # PostgreSQL text/JSONB cannot store U+0000
+            raise _Stop(self._reject(run, m.name, "invalid_args",
+                                     "arguments contain a NUL character", actor))
         try:
             m.validate_args(args)
         except jsonschema.ValidationError as exc:
@@ -220,6 +233,9 @@ class ToolGateway:
             bound = tool.bind(args, BindContext(run.run_id, milestone_id, run.workspace))
         except ToolCleanFailure as exc:
             raise _Stop(self._reject(run, m.name, exc.code, str(exc), actor)) from exc
+        except PathContainmentError as exc:  # e.g. a model-chosen `source` escaping
+            raise _Stop(self._reject(run, m.name, "path_not_permitted", str(exc),
+                                     actor)) from exc
         if self.redactor(bound) != bound:
             raise _Stop(self._reject(run, m.name, "secret_in_args",
                                      "arguments contain secret material", actor))
@@ -229,7 +245,7 @@ class ToolGateway:
                 action: ActionRow | None = None, existing_action_id: str | None = None
                 ) -> GatewayOutcome:
         # reasons can quote argument values (schema/path errors): redact before persisting
-        message = self.redactor.text(message)
+        message = self.redactor.text(message).replace("\x00", "�")
         with self.store.run_tx(run.run_id, run.lease.fence) as tx:
             tx.append(make_event(ActionRejected(
                 action_id=action.action_id if action else None, tool_name=tool_name,
