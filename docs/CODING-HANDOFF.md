@@ -12,16 +12,20 @@ Chat history does not survive the switch, and it shouldn't be trusted anyway. Co
 
 | In the brief | Where it comes from | Trust |
 |---|---|---|
-| Current code: git HEAD, branch, changed files, fingerprint | observed by Continuum **at resume time** | fact |
+| Current code: git HEAD, branch, changed files, content fingerprint | observed by Continuum **at resume time** | fact |
+| **Code touched in this session:** files, +/- lines, enclosing functions, names defined | observed from git since the session began | fact |
+| Commits since the last checkpoint | observed from git | fact |
 | Which checks passed, on which code, with which definition | `CheckRan` events, compared with the code now | fact |
 | Tasks, and whether each is **verified** or needs re-verification | evidence fingerprints vs the code now | fact |
 | Checks registered by a human, and whether any changed this session | `coding_checks` | fact |
-| Decisions, context, blockers and next steps | notes recorded by previous agents | claim |
+| Decisions, context, blockers and next steps | notes recorded by previous agents, kept whole | claim |
 | Checkpoints (what was being done, by which model) | agent summary plus the observed state | claim plus fact |
 
-The code itself is already on disk (or in git); Continuum doesn't copy it. What would normally be lost is *why* the code looks like this, what is proven, what is half-done and what comes next. That is what Continuum keeps.
+The code itself is already on disk (or in git); Continuum doesn't copy it. What would normally be lost is *why* the code looks like this, what is proven, what is half-done and what comes next. That is what Continuum keeps. The code map tells the next model **where** the session's work is, so it reads those files instead of exploring the repository.
 
-It works for any kind of coding, not only backend work: a frontend, data pipelines, infrastructure, docs, notebooks, a game or a firmware project. Inside git it fingerprints HEAD plus the diff plus untracked files. Outside git it hashes the files. Checks are any command you would run yourself: `pytest -q`, `npm test`, `cargo test`, `terraform validate`, `make lint`.
+Continuum calls no LLM. The brief is the agent's own notes plus facts observed from git and check runs, assembled by plain code, so a handoff costs only the next model reading about 1–3k tokens.
+
+It works for any kind of coding, not only backend work: a frontend, data pipelines, infrastructure, docs, notebooks, a game or a firmware project. Inside git it fingerprints the **content** of the working copy (tracked files on disk plus untracked, non-ignored files), so a commit of the same content is not a change but any edit is. Outside git it hashes the files. Checks are any command you would run yourself: `pytest -q`, `npm test`, `cargo test`, `terraform validate`, `make lint`.
 
 ## One-time setup (per repository, by a human)
 
@@ -62,7 +66,11 @@ The new model sees that it joined, which tasks are verified, the latest check re
 
 Same protocol. Codex reads `AGENTS.md`, calls `coding_resume` over MCP (or `continuum coding resume --repo . --agent gpt-6.1` from its shell) and continues. The session is found **by repository**, so a new process, a new chat or even a new machine pointing at the same database picks it up.
 
-MCP tools return a **compact** brief: Markdown plus task ids, about 1–3k tokens however long the session is. Pass `detail="full"` to `coding_brief` for every field: check output tails, registered commands, checkpoint file lists. The brief keeps the newest notes and counts the omitted ones. The journal keeps everything. It also lists the commits made since the last checkpoint, observed from git.
+MCP tools return a **compact** brief: Markdown plus task ids, about 1–3k tokens however long the session is. Pass `detail="full"` to `coding_brief` for every field: check output tails, registered commands, checkpoint file lists. The brief keeps the newest notes and counts the omitted ones. The journal keeps everything. It also lists the commits made since the last checkpoint and the code map, both observed from git.
+
+## Measured
+
+In real Sonnet → Opus handoffs on this repository ([`HANDOFF-TRIALS.md`](HANDOFF-TRIALS.md)), the next model with Continuum delivered the correct result 4/4 times in both runs and kept both requirements that existed only in the earlier chat, using ~14–17k work tokens and reading 3–4 files. Without it, the next model scored 1/4 in both runs and never learned about the remaining work, after ~21–29k work tokens and 12+ files.
 
 ## Inspecting it yourself
 
