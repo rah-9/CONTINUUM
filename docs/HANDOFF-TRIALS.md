@@ -121,17 +121,16 @@ The trials found and fixed one of each kind (see below). The current brief costs
   more task types, and repeat.
 - The agents used the CLI, not MCP tools. The protocol is identical, and the MCP path is
   covered by `tests/integration/test_mcp_stdio.py`.
-- Sonnet → Opus within one vendor. Cross-vendor handoffs (e.g. GPT → Claude) use the same
-  brief and are not yet trialled with live models.
+- Sonnet → Opus within one vendor. The GPT → Claude trial is packaged and ready, but not yet run:
+  the cloud environment these trials ran in has no OpenAI access. See
+  [`eval/handoff_trials/README.md`](../eval/handoff_trials/README.md); it uses Codex CLI (GPT)
+  as model A and Claude Code as model B.
 - Token counts include each agent's fixed system prompt and tool definitions, which are the
   same in both conditions. The differences are the work.
 
 ## Reproduce
 
-The harness used for these trials is described above. The acceptance tests were plain
-pytest files registered as human checks:
-
-```bash
-continuum coding checks add <proj> <name> --actor <you> -- \
-    env PYTHONPATH=<proj>/src python -m pytest -q <accept>/<test>.py
-```
+The realistic trial is packaged in [`eval/handoff_trials/`](../eval/handoff_trials/README.md):
+setup script, exact prompts, hidden acceptance tests, chat-requirement judge, and a judging
+script. It reproduces the verdicts above (`judge.sh` gives 4/4 for the Continuum runs and 1/4
+for the baselines).
