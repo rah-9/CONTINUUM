@@ -62,6 +62,8 @@ The new model sees that it joined, which tasks are verified, the latest check re
 
 Same protocol. Codex reads `AGENTS.md`, calls `coding_resume` over MCP (or `continuum coding resume --repo . --agent gpt-6.1` from its shell) and continues. The session is found **by repository**, so a new process, a new chat or even a new machine pointing at the same database picks it up.
 
+MCP tools return a **compact** brief: Markdown plus task ids, about 1–3k tokens however long the session is. Pass `detail="full"` to `coding_brief` for every field: check output tails, registered commands, checkpoint file lists. The brief keeps the newest notes and counts the omitted ones. The journal keeps everything. It also lists the commits made since the last checkpoint, observed from git.
+
 ## Inspecting it yourself
 
 ```bash

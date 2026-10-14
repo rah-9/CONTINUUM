@@ -65,6 +65,20 @@ CONTINUUM_LIVE=1 pytest -m live              # real providers (needs keys + prof
   - clean completion 0.78 vs 0.72, paired +0.057 [+0.011, +0.103]
   - full report: `docs/lab-reports/`
 
+## Measured performance and context size (v0.7.0)
+
+20,000-file git repo, 200 changed/untracked files, a session with 30 notes and 15 checkpoints:
+
+| | v0.6.3 | v0.7.0 |
+|---|---|---|
+| fingerprint (`observe`) | 120–170 ms, 7 git calls | ~70 ms, 5 git calls |
+| `coding_resume` / `coding_brief` | 132 / 145 ms | 83 / 74 ms |
+| `coding_run_check` / `coding_complete_task` | 270 / 235 ms | 168 / 140 ms |
+| brief sent over MCP | ~8.3k tokens (JSON + duplicate Markdown) | ~1.3k tokens (compact) |
+| full JSON brief | grows with the session | ≤ ~8k tokens, bounded |
+
+A full fenced runtime run (`inventory_upload_v1`, fake models) issues 271 SQL statements for 37 events in about 300 ms.
+
 ## Coding continuity (v0.6.0)
 
 `tests/integration/test_coding.py` C1–C11 and `test_mcp_stdio.py` cover:

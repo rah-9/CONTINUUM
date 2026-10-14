@@ -227,3 +227,42 @@ def test_nf5_performance_baselines(store, clock, make_lab):
           f"end-to-end run p50 {durations[2] * 1000:.0f} ms, max {durations[-1] * 1000:.0f} ms")
     assert append_rate > 100  # each append is one fenced transaction with projections
     assert durations[2] < 5.0
+
+
+def test_nf5_coding_observation_cost(tmp_path):
+    """Every coding operation fingerprints the repository: keep it to a fixed, small number
+    of git processes regardless of repository size (and report the time)."""
+    import subprocess
+
+    import continuum.coding.repo as repo
+
+    root = tmp_path / "big"
+    root.mkdir()
+    for d in range(50):
+        (root / f"pkg{d}").mkdir()
+        for f in range(40):
+            (root / f"pkg{d}" / f"m{f}.py").write_text(f"x = {f}\n" * 20)
+    for args in (["init", "-q"], ["config", "user.email", "d@e.x"], ["config", "user.name", "d"],
+                 ["add", "."], ["commit", "-qm", "init"]):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    for d in range(20):
+        (root / f"pkg{d}" / "m0.py").write_text("changed\n")
+        (root / f"pkg{d}" / "new.py").write_text("new\n")
+    calls: list[str] = []
+    real = repo._git
+
+    def counting(r: Path, *args: str) -> bytes | None:
+        calls.append(args[0])
+        return real(r, *args)
+
+    repo._git = counting  # type: ignore[assignment]
+    try:
+        started = time.perf_counter()
+        state = repo.observe(root)
+        elapsed = time.perf_counter() - started
+    finally:
+        repo._git = real  # type: ignore[assignment]
+    print(f"\nNF5 coding observe: 2,000 files, {len(state.changed_files)} changed: "
+          f"{elapsed * 1000:.0f} ms, {len(calls)} git calls")
+    assert len(calls) <= 5 and len(state.changed_files) == 40
+    assert elapsed < 5.0
