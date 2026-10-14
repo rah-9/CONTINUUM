@@ -27,6 +27,7 @@ CHECKPOINT_FILES = 10
 CURRENT_FILES = 50
 MD_FILES = 10
 MD_COMMITS = 10
+MD_MAP_FILES = 15
 
 
 def _clip(text: str, limit: int) -> str:
@@ -35,6 +36,8 @@ def _clip(text: str, limit: int) -> str:
 
 RULES = [
     "Read this brief before changing code; continue from `next_steps` and open tasks.",
+    "Do not re-read the repository to rediscover the work: start from the files under "
+    "'Code touched in this session' and the next step; open other files only when needed.",
     "Verified tasks are done: do not redo them unless `needs_reverification` is true.",
     "Record decisions and context with coding_note as you go, and a next_step before you stop.",
     "After meaningful changes call coding_checkpoint; before claiming a task done run its "
@@ -74,6 +77,8 @@ class SessionView:
     last_seq: int = 0
     latest_runs: dict[str, dict[str, Any]] = field(default_factory=dict)
     commits_since_checkpoint: list[dict[str, str]] | None = None
+    base_head: str | None = None  # HEAD when the session started
+    session_changes: dict[str, Any] | None = None
 
     def task(self, task_id: str) -> TaskView:
         if task_id not in self.tasks:
@@ -162,6 +167,8 @@ class SessionView:
                     "changed_files": last_cp["changed_files"][:CHECKPOINT_FILES]},
                 # observed from git; None when unknown (no checkpoint, history rewritten)
                 "commits_since_last_checkpoint": self.commits_since_checkpoint,
+                # where the session's code is: read these instead of exploring the repo
+                "session_changes": self.session_changes,
                 "latest_checks": latest,
                 "registered_checks": {
                     name: {"argv": c["argv_json"], "registered_by": c["registered_by"],
@@ -198,6 +205,8 @@ def build_view(session: dict[str, Any], events: list[dict[str, Any]], current: R
         p, at, actor = e["payload_json"], _iso(e["occurred_at"]), e["actor"]
         match e["type"]:
             case "SessionStarted" | "AgentJoined":
+                if e["type"] == "SessionStarted":
+                    view.base_head = p["state"].get("head")
                 view.agents.append({"agent": p["agent"], "at": at,
                                     "event": "started" if e["type"] == "SessionStarted"
                                     else "joined"})
@@ -265,6 +274,21 @@ def render_markdown(view: SessionView, d: dict[str, Any] | None = None) -> str:
         if c["changed_during_session"]:
             lines.append(f"- ⚠ Check `{name}` was (re)registered during this session by "
                          f"{_line(c['registered_by'], 120)} at {c['registered_at']}")
+    changes = facts["session_changes"]
+    if changes and changes["files"]:
+        lines += ["", f"### Code touched in this session ({changes['total_files']} file(s); "
+                      "read these first instead of exploring the repository)", ""]
+        for f in changes["files"][:MD_MAP_FILES]:
+            detail = f"+{f['added']}/-{f['deleted']}" if f["status"] != "untracked" \
+                else f"new, {f['added']} lines"
+            names = ", ".join(_line(n, 60) for n in f["defines"])
+            near = "; ".join(_line(n, 60) for n in f["near"][:3])
+            lines.append(f"- `{_line(f['path'], 120)}` ({detail})"
+                         + (f" — defines: {names}" if names else "")
+                         + (f" — near: {near}" if near else ""))
+        if changes["total_files"] > MD_MAP_FILES:
+            lines.append(f"- … {changes['total_files'] - MD_MAP_FILES} more "
+                         "(`detail=\"full\"`)")
     lines += ["", "## Tasks", ""]
     for t in d["tasks"]:
         mark = "✅ verified" if t["verified"] else ("☑ done (unverified)" if t["status"] == "done"

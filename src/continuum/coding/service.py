@@ -37,7 +37,7 @@ from continuum.coding.models import (
     TaskAdded,
     TaskStatusChanged,
 )
-from continuum.coding.repo import commits_since, observe, resolve_repo
+from continuum.coding.repo import commits_since, observe, resolve_repo, session_changes
 from continuum.coding.runner import run_check_process
 from continuum.core.canonical import digest, sha256_hex
 from continuum.core.clock import Clock
@@ -172,6 +172,8 @@ class CodingContinuity:
         if current is None:
             current = observe(root)
         view = build_view(session, events, current, checks)
+        if current.vcs == "git":
+            view.session_changes = session_changes(root, view.base_head)
         last = view.checkpoints[-1] if view.checkpoints else None
         if last and last["head"] and current.vcs == "git" and current.head:
             view.commits_since_checkpoint = (

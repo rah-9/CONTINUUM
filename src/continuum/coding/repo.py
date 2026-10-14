@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from continuum.coding.models import RepoState
 from continuum.core.errors import ContinuumError, PathContainmentError, SpecValidationError
@@ -202,6 +204,73 @@ def _observe_git(root: Path, gitdir: Path) -> RepoState:
     return RepoState(fingerprint="sha256:" + h.hexdigest(), vcs="git", head=head,
                      branch=branch, dirty=bool(changed),
                      changed_files=changed[:MAX_LISTED_CHANGES])
+
+
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # git's well-known empty tree
+MAP_FILES = 40
+MAP_NAMES = 8
+# A definition on an added line, in most languages (def/class/function/fn/struct/...).
+_DEFINITION = re.compile(
+    rb"^\+\s*(?:export\s+|pub(?:\([a-z]+\))?\s+|public\s+|private\s+|static\s+|async\s+)*"
+    rb"(?:def|class|function|func|fn|struct|enum|interface|trait|type|impl|module)\s+"
+    rb"([A-Za-z_$][\w$]*)")
+
+
+def session_changes(root: Path, base: str | None) -> dict[str, Any] | None:
+    """Where this session worked, observed from git (no model involved): every file that
+    differs from the session's starting commit (committed or not, plus untracked files),
+    with line counts, the enclosing context git reports for each hunk, and names defined
+    on added lines. Lets the next model read the session's code instead of exploring the
+    repository. ``None`` when unknown (e.g. the starting commit is gone)."""
+    ref = base or EMPTY_TREE
+    flags = ("--no-ext-diff", "--no-textconv", "--no-color", "--no-renames")
+    numstat = _git(root, "diff", "--numstat", "-z", *flags, ref)
+    patch = _git(root, "-c", "core.quotepath=off", "diff", "-U0", *flags, ref)
+    status = _git(root, "status", "--porcelain=v2", "-z", "--untracked-files=all")
+    if numstat is None or patch is None or status is None:
+        return None
+    files: dict[str, dict[str, Any]] = {}
+    for record in numstat.split(b"\0"):
+        parts = record.split(b"\t", 2)
+        if len(parts) == 3 and parts[2]:
+            path = _show(parts[2])
+            if not _is_noise(path):
+                files[path] = {"path": path, "status": "modified",
+                               "added": int(parts[0]) if parts[0].isdigit() else 0,
+                               "deleted": int(parts[1]) if parts[1].isdigit() else 0,
+                               "near": [], "defines": []}
+    current: dict[str, Any] | None = None
+    for line in patch.split(b"\n"):
+        if line.startswith(b"+++ "):
+            name = line[4:]
+            current = files.get(_show(name[2:] if name.startswith(b"b/") else name))
+        elif current is None:
+            continue
+        elif line.startswith(b"@@"):
+            context = line.split(b"@@", 2)[-1].strip()
+            near = _show(context)[:80]
+            if near and near not in current["near"] and len(current["near"]) < MAP_NAMES:
+                current["near"].append(near)
+        elif line.startswith(b"+") and (m := _DEFINITION.match(line)):
+            defined = _show(m.group(1))
+            if defined not in current["defines"] and len(current["defines"]) < MAP_NAMES:
+                current["defines"].append(defined)
+    _, _, _, untracked = _parse_status(status)
+    for raw in untracked:
+        path = _show(raw)
+        file = root / os.fsdecode(raw)
+        try:
+            data = file.read_bytes() if file.is_file() and not file.is_symlink() else b""
+        except OSError:
+            data = b""
+        files[path] = {"path": path, "status": "untracked", "added": data.count(b"\n"),
+                       "deleted": 0, "near": [],
+                       "defines": list(dict.fromkeys(
+                           _show(m.group(1)) for m in (_DEFINITION.match(b"+" + ln)
+                                                        for ln in data.splitlines()) if m)
+                       )[:MAP_NAMES]}
+    ranked = sorted(files.values(), key=lambda f: (-(f["added"] + f["deleted"]), f["path"]))
+    return {"since": base, "total_files": len(ranked), "files": ranked[:MAP_FILES]}
 
 
 def commits_since(root: Path, base: str, limit: int = 20) -> list[dict[str, str]] | None:
