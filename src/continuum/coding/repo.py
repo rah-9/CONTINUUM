@@ -114,10 +114,14 @@ def _show(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def _changed_paths(status: bytes) -> list[str]:
-    """Parse ``git status --porcelain=v1 -z``; renames/copies carry an extra source entry."""
+def _parse_status(status: bytes) -> tuple[list[str], list[bytes]]:
+    """Parse ``git status --porcelain=v1 -z --untracked-files=all`` once.
+
+    Returns the changed paths (for display) and the untracked paths (raw bytes, already
+    filtered by .gitignore). Renames/copies carry an extra source entry."""
     entries = status.split(b"\0")
     changed: set[str] = set()
+    untracked: list[bytes] = []
     i = 0
     while i < len(entries):
         entry = entries[i]
@@ -126,14 +130,20 @@ def _changed_paths(status: bytes) -> list[str]:
             continue
         if entry[0:1] in (b"R", b"C") or entry[1:2] in (b"R", b"C"):
             i += 1  # skip the original path of a rename/copy
-        shown = _show(entry[3:])
-        if not _is_noise(shown):
-            changed.add(shown)
-    return sorted(changed)
+        raw = entry[3:]
+        shown = _show(raw)
+        if _is_noise(shown):
+            continue
+        changed.add(shown)
+        if entry[:2] == b"??":
+            untracked.append(raw)
+    return sorted(changed), untracked
 
 
 def _submodules(root: Path) -> list[bytes]:
     """Paths of gitlinks (mode 160000) checked out in this work tree."""
+    if not (root / ".gitmodules").exists():  # the common case: skip listing the index
+        return []
     out = _must(root, "ls-files", "--stage", "-z")
     return [line.split(b"\t", 1)[1] for line in out.split(b"\0")
             if line.startswith(b"160000 ") and b"\t" in line]
@@ -151,8 +161,7 @@ def _observe_git(root: Path) -> RepoState:
         h.update(b"\nunstaged:" + _must(root, "diff", *_DIFF))
     status = _must(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
     # File names are bytes: decoding them lossily would hash a path that does not exist.
-    untracked = [p for p in _must(root, "ls-files", "--others", "--exclude-standard", "-z")
-                 .split(b"\0") if p and not _is_noise(_show(p))]
+    changed, untracked = _parse_status(status)
     for rel in sorted(untracked):
         path = root / os.fsdecode(rel)
         if path.is_symlink():  # hash the link itself, never content outside the repo
@@ -164,10 +173,28 @@ def _observe_git(root: Path) -> RepoState:
         sub = root / os.fsdecode(rel)
         if (sub / ".git").exists():
             h.update(b"\nsubmodule:" + rel + b":" + _observe_git(sub).fingerprint.encode())
-    changed = _changed_paths(status)
     return RepoState(fingerprint="sha256:" + h.hexdigest(), vcs="git", head=head,
                      branch=branch, dirty=bool(changed),
                      changed_files=changed[:MAX_LISTED_CHANGES])
+
+
+def commits_since(root: Path, base: str, limit: int = 20) -> list[dict[str, str]] | None:
+    """Commits on HEAD since ``base`` (newest first), observed from git.
+
+    ``None`` when unknown: ``base`` is gone or is no longer an ancestor of HEAD (history
+    was rewritten). Informational only; verification never depends on it."""
+    if _git(root, "merge-base", "--is-ancestor", base, "HEAD") is None:
+        return None
+    out = _git(root, "log", "--no-show-signature", "--format=%h%x1f%s", "-z",
+               f"-n{limit}", f"{base}..HEAD")
+    if out is None:
+        return None
+    commits = []
+    for record in out.split(b"\0"):
+        sha, _, subject = record.partition(b"\x1f")
+        if sha:
+            commits.append({"sha": sha.decode().strip(), "subject": _show(subject)})
+    return commits
 
 
 def _observe_files(root: Path) -> RepoState:

@@ -289,3 +289,15 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
   - An ended run's outcome is never rewritten.
 - **Fingerprints stay fail-closed and complete.** Submodules are fingerprinted recursively, and file names are hashed as bytes.
 
+## D-034 — The handoff brief is a bounded, compact context artifact
+
+**Context.** We measured a 30-note, 15-checkpoint session. The handoff returned about 8.3k tokens, with the same content twice: once as JSON and once as Markdown. The brief grew without bound as the session went on. Each coding operation spent most of its time in 7 git subprocesses.
+
+**Decision.**
+- **MCP briefs are compact by default:** Markdown plus the task ids needed to call other tools. `detail="full"` returns the JSON. The CLI's `--json` and the SDK are unchanged (full).
+- **The brief keeps the newest items within fixed caps.** Omissions are counted and shown ("N older notes omitted"); the journal remains complete. Bounding is by count and length rather than by a token estimate, so it is deterministic.
+- **Commits since the last checkpoint are reported as observed facts.** If the checkpoint commit is no longer an ancestor of HEAD, the field is `None`. This information never affects verification.
+- **Fingerprinting takes untracked files from `git status`** (same `.gitignore` semantics as `ls-files --others`). The index is scanned for submodules only when `.gitmodules` exists.
+
+**Considered and rejected.** Batching the `runs.last_event_seq` update once per transaction would save about 14% of statements in a run. Those updates come from the pure projection shared with replay and rebuild (invariant I2), so the saving does not justify touching that path.
+

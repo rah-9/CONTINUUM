@@ -129,6 +129,7 @@ NF4_concurrency_single_host:
   - tests/nonfunctional/test_nonfunctional.py::test_nf4_parallel_runs_on_one_database
 NF5_performance_baseline:
   - tests/nonfunctional/test_nonfunctional.py::test_nf5_performance_baselines
+  - tests/nonfunctional/test_nonfunctional.py::test_nf5_coding_observation_cost
 NF6_structured_json_tracing:
   - tests/integration/test_observability.py::test_json_trace_lines_cover_events_tools_and_models
 NF7_loopback_only_http:
@@ -186,3 +187,6 @@ U8_coding_handoff_between_models_and_chats:
   - tests/integration/test_coding.py::test_c2_codex_5_6_to_6_1_finds_session_by_repo_in_a_new_process
   - tests/integration/test_coding.py::test_c11_shell_only_agents_use_the_same_protocol_via_cli
   - tests/integration/test_mcp_stdio.py::test_coding_work_survives_model_switch_between_chats_over_mcp
+  - tests/integration/test_brief_quality.py::test_b1_brief_stays_bounded_for_a_long_session
+  - tests/integration/test_brief_quality.py::test_b2_commits_since_last_checkpoint_are_observed_facts
+  - tests/integration/test_brief_quality.py::test_b3_history_is_best_effort_when_the_checkpoint_commit_is_gone

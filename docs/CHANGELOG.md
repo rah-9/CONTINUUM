@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0 — 2026-10-14
+
+Measured, then improved (D-034). All numbers are on a 20,000-file git repository with 200 changed and untracked files.
+
+### Changed
+- **The MCP coding tools return a compact brief by default.** `coding_resume`, `coding_start` and `coding_brief` return the Markdown brief plus the task ids, about 1.3k tokens. `detail="full"` returns every field as JSON. Previously the full JSON *and* the same content as Markdown were sent on every handoff (about 8.3k tokens for a 30-note session).
+- **The brief is bounded however long the session runs.** It keeps the newest 12 decisions, 10 context notes, 10 blockers, 5 next steps and 5 checkpoints. Notes are clipped to 500 characters (300 in Markdown) and file lists are capped. Every omission is counted (`agent_notes.omitted`), and the journal keeps everything. The full JSON stays under about 8k tokens; a test doubles the session length and asserts the brief does not grow.
+
+### Added
+- **`verified_facts.commits_since_last_checkpoint`**, observed from git: the next model sees exactly which commits were made since the last checkpoint. When history was rewritten the value is `None` (unknown), never a guess.
+
+### Performance
+- **Fingerprint:** about 2× faster (120–170 ms → about 70 ms), down from 7 to 5 git processes. Untracked files now come from the single `git status` call, and the index is listed only when `.gitmodules` exists. Coding operations are 35–55% faster end to end; for example `resume` went from 132 to 83 ms and `run_check` from 270 to 168 ms. A non-functional test pins the git-call count.
+
 ## 0.6.3 — 2026-10-14
 
 This release adds a portability pass and a second full-codebase audit. The portability pass ran the built wheel in a clean environment, launched like an IDE does. The audit found 17 new defects, and the portability pass found 4 more. All are fixed, each with a regression test written first (`tests/integration/test_pass2_hardening.py`, `tests/integration/test_portability.py`; D-033).
