@@ -76,7 +76,7 @@ continuum coding close SESSION --reason "merged" --actor alice
 - The journal is append-only (enforced by a database trigger), with one gapless sequence per session, even with two agents writing at once. A closed session rejects writes.
 - Secrets in notes and check output are redacted before they are stored. Check output is kept only as a tail plus a digest.
 - Checks run as argv lists without a shell, in the repository root, under a timeout (default 600 s). A closed session never runs one.
-- Repository paths are contained: never `/` or your home directory itself. Set `CONTINUUM_CODING_ROOTS=/path/to/projects` (`:`-separated) to restrict agents to your project directories.
+- Repository paths are contained: never `/` or your home directory itself. Set `CONTINUUM_CODING_ROOTS=/path/to/projects` (`:`-separated; `;` on Windows) to restrict agents to your project directories.
 - If git can't be read (lock, timeout, broken config), Continuum refuses to fingerprint instead of guessing, so stale evidence never counts.
 - **Notes are claims.** A previous model can be wrong. The brief labels notes as claims, and the rules tell the next model to confirm anything critical against the code.
 - **Tamper evidence, not prevention.** An agent with shell access could run `continuum coding checks add` itself, because Continuum can't tell a person from a process on the same machine. Every registration records who and when, the brief flags checks (re)registered during the session, and changed definitions invalidate verification. Review those flags (D-029).
