@@ -51,7 +51,7 @@ def test_b1_brief_stays_bounded_for_a_long_session(coding, repo):
     coding.note(sid, "next_step", "FINAL: wire the parser into the CLI", agent="m")
     full = coding.brief(sid)
     small = compact(full)
-    assert len(json.dumps(full)) / TOKENS < 8000
+    assert len(json.dumps(full)) / TOKENS < 10000  # opt-in detail="full"; bounded
     for i in range(120):  # twice as long a session: the brief must not grow
         coding.note(sid, "context", f"later {i}: " + "lorem ipsum " * 120, agent="m")
         coding.note(sid, "decision", f"later decision {i}: " + "because " * 80, agent="m")
@@ -59,11 +59,11 @@ def test_b1_brief_stays_bounded_for_a_long_session(coding, repo):
     assert len(json.dumps(coding.brief(sid))) <= len(json.dumps(full)) * 1.02
     full = coding.brief(sid)
     small = compact(full)
-    assert len(json.dumps(small)) / TOKENS < 3000
+    assert len(json.dumps(small)) / TOKENS < 4000  # worst case: every note very long
     md = small["markdown"]
     assert "FINAL: wire the parser into the CLI" in md            # latest next step kept
     assert all(f"task {i}" in md for i in range(8))               # every task kept
-    assert full["agent_notes"]["omitted"]["context"] == 230       # nothing silently dropped
+    assert full["agent_notes"]["omitted"]["context"] == 234       # nothing silently dropped
     assert "older context notes omitted" in md
     assert {"session_id", "status", "goal", "tasks", "markdown"} <= set(small)
 
@@ -91,3 +91,22 @@ def test_b3_history_is_best_effort_when_the_checkpoint_commit_is_gone(coding, re
     brief = coding.brief(sid)
     assert brief["verified_facts"]["commits_since_last_checkpoint"] is None
     assert brief["verified_facts"]["changed_since_last_checkpoint"] is True
+
+
+def test_b4_decision_reasons_and_next_steps_reach_the_next_model_whole(coding, repo):
+    """Found by a real Sonnet -> Opus handoff trial: clipping at 300 chars cut the decision's
+    reason and the context mid-sentence, the very things the next model needs."""
+    reason = ("Pattern-based redactions use a labelled marker [REDACTED:<rule>] so operators can "
+              "see which rule fired, while exact environment secrets keep the plain marker. "
+              "Reason: auditing needs the rule name; existing consumers match the plain "
+              "marker, so changing it would break them. END-OF-REASON")
+    context = ("Rules live in the ordered table _RULES (name, regex, replacement), applied "
+               "after exact env-secret replacement. The bearer rule is case-sensitive on "
+               "purpose: a case-insensitive version rewrote 'the bearer of good news'. "
+               "END-OF-CONTEXT")
+    sid = coding.start(str(repo), "goal", agent="m")["session_id"]
+    coding.note(sid, "decision", reason, agent="m")
+    coding.note(sid, "context", context, agent="m")
+    coding.note(sid, "next_step", "Do task 2 next. " * 30 + "END-OF-NEXT", agent="m")
+    md = compact(coding.brief(sid))["markdown"]
+    assert "END-OF-REASON" in md and "END-OF-CONTEXT" in md and "END-OF-NEXT" in md

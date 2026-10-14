@@ -17,9 +17,11 @@ from continuum.core.canonical import digest
 from continuum.core.errors import NotFoundError
 
 # Size bounds for the brief (it is read into a model's context on every handoff).
-NOTE_CHARS = 500
-MD_NOTE_CHARS = 300
-KEEP_NOTES = {"decisions": 12, "context": 10, "blockers": 10, "next_steps": 5}
+# Fewer but whole notes beat many clipped ones: a decision's *reason* is usually at the
+# end, and a cut reason is worse than an omitted old note (found in a handoff trial).
+NOTE_CHARS = 1200
+MD_NOTE_CHARS = {"next_steps": 1000, "blockers": 1000, "decisions": 1000, "context": 600}
+KEEP_NOTES = {"decisions": 8, "context": 6, "blockers": 8, "next_steps": 3}
 KEEP_CHECKPOINTS = 5
 CHECKPOINT_FILES = 10
 CURRENT_FILES = 50
@@ -277,7 +279,7 @@ def render_markdown(view: SessionView, d: dict[str, Any] | None = None) -> str:
                        ("Decisions", "decisions"), ("Context", "context")):
         if notes[key]:
             lines.append(f"**{label}**")
-            lines += [f"- {_line(n['text'], MD_NOTE_CHARS)}  _(by {_line(n['by'], 120)})_"
+            lines += [f"- {_line(n['text'], MD_NOTE_CHARS[key])}  _(by {_line(n['by'], 120)})_"
                       for n in notes[key]]
             if notes["omitted"].get(key):
                 lines.append(f"- _({notes['omitted'][key]} older {label.lower()} notes "
@@ -285,7 +287,7 @@ def render_markdown(view: SessionView, d: dict[str, Any] | None = None) -> str:
                              "JSON, the journal keeps all of them)_")
     if notes["checkpoints"]:
         cp = notes["checkpoints"][-1]
-        lines += ["", f"Last checkpoint: {_line(cp['summary'], MD_NOTE_CHARS)} "
+        lines += ["", f"Last checkpoint: {_line(cp['summary'], MD_NOTE_CHARS['context'])} "
                       f"(by {_line(cp['by'], 120)})"]
     lines += ["", "## Rules", ""] + [f"- {r}" for r in RULES]
     return "\n".join(lines) + "\n"
