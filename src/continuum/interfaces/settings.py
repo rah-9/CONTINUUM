@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 import socket
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULT_DSN = "postgresql://continuum:continuum@localhost:5432/continuum"
+_PROCESS_NONCE = uuid.uuid4().hex[:8]
 
 
 def _default_home() -> Path:
@@ -33,8 +35,10 @@ class Settings:
                                                                   "public"))
     home: Path = field(default_factory=_default_home)
     config_dir: Path = field(default_factory=_default_config_dir)
+    # Unique per process even when ephemeral containers share a hostname and PID: the
+    # lease treats an equal owner id as the same controller (I6).
     owner_id: str = field(default_factory=lambda: os.environ.get(
-        "CONTINUUM_OWNER_ID", f"ctl-{socket.gethostname()}-{os.getpid()}"))
+        "CONTINUUM_OWNER_ID", f"ctl-{socket.gethostname()}-{os.getpid()}-{_PROCESS_NONCE}"))
     lease_ttl_seconds: int = field(default_factory=lambda: int(os.environ.get(
         "CONTINUUM_LEASE_TTL_SECONDS", "30")))
     db_timeout_seconds: float = field(default_factory=lambda: float(os.environ.get(

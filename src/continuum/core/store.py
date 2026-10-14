@@ -13,6 +13,7 @@ Rules enforced here:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -29,7 +30,12 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
 from continuum.core.clock import Clock
-from continuum.core.errors import ContinuumError, NotFoundError, StaleOwnerError
+from continuum.core.errors import (
+    ContinuumError,
+    NotFoundError,
+    SpecValidationError,
+    StaleOwnerError,
+)
 from continuum.core.events import EVENT_SCHEMA_VERSION, Event, EventType, NewEvent, parse_payload
 from continuum.core.faults import FaultInjector, NoFaults
 from continuum.core.ids import IdGenerator
@@ -341,12 +347,20 @@ def _apply_sql(conn: psycopg.Connection[dict[str, Any]], change: RowChange) -> N
             raise RuntimeError(f"projection update matched {cur.rowcount} rows: {change}")
 
 
+_SCHEMA_NAME = re.compile(r"[a-z_][a-z0-9_]{0,62}")
+
+
 class Store:
     """Connection pool plus fenced, atomic run transactions."""
 
     def __init__(self, dsn: str, *, schema: str = "public", clock: Clock, ids: IdGenerator,
                  faults: FaultInjector | None = None, lock_timeout_ms: int = 5000,
                  pool_size: int = 8, pool_timeout_seconds: float = 30.0) -> None:
+        if not _SCHEMA_NAME.fullmatch(schema):
+            # unquoted in search_path (folds case) but quoted in CREATE SCHEMA: only plain
+            # lower-case identifiers mean the same thing in both places
+            raise SpecValidationError(
+                f"CONTINUUM_DB_SCHEMA {schema!r} must match [a-z_][a-z0-9_]* (max 63 chars)")
         self.dsn = dsn
         self.schema = schema
         self.clock = clock
@@ -388,7 +402,7 @@ class Store:
     def migrate(self) -> None:
         """Idempotent DDL, serialized across processes by an advisory lock so concurrent
         first-use starts (an MCP server and a CLI command) cannot race on CREATE."""
-        ddl = resources.files("continuum.core").joinpath("schema.sql").read_text()
+        ddl = resources.files("continuum.core").joinpath("schema.sql").read_text(encoding="utf-8")
         with self.pool.connection() as conn:
             try:
                 conn.execute(b"SELECT pg_advisory_xact_lock(hashtext('continuum:migrate'))")

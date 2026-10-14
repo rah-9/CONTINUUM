@@ -59,16 +59,17 @@ class TaskRegistry:
         tasks_dir = config_dir / "tasks"
         for path in sorted(tasks_dir.glob("*.yaml")) if tasks_dir.is_dir() else []:
             try:
-                entry = yaml.safe_load(path.read_text())
-            except yaml.YAMLError as exc:
-                self.errors[path] = f"invalid YAML: {type(exc).__name__}"
+                entry = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except (yaml.YAMLError, OSError, UnicodeDecodeError) as exc:
+                self.errors[path] = f"unreadable (YAML must be UTF-8): {type(exc).__name__}"
                 continue
             task_id = entry.get("task_id") if isinstance(entry, dict) else None
             if not isinstance(task_id, str) or not task_id:
                 self.errors[path] = "not a mapping with a task_id"
                 continue
-            if task_id in self._entries:
-                raise SpecValidationError(f"task {task_id} registered twice")
+            if task_id in self._entries:  # the first file (sorted by name) wins
+                self.errors[path] = f"task {task_id} is already registered by another file"
+                continue
             self._entries[task_id] = entry
 
     def task_ids(self) -> list[str]:
@@ -120,7 +121,7 @@ def load_live_router(path: Path) -> ModelRouter:
 
 
 def _load_live_router(path: Path) -> ModelRouter:
-    data = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
+    data = (yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else None) or {}
     if not isinstance(data, dict):
         raise TypeError("models.yaml must be a mapping with a 'models' key")
     endpoints: dict[str, ModelEndpoint] = {}

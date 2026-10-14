@@ -7,6 +7,7 @@ change invalidates the milestone and all its descendants.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 from typing import Any
 
@@ -73,6 +74,9 @@ class MilestoneVerification:
 
     # ---- verification -------------------------------------------------------------------
 
+    def _safe(self, message: str) -> str:
+        return self.redactor.text(message).replace("\x00", "�")[:500]
+
     def evaluate(self, ctx: RunContext, milestone_id: str) -> tuple[VerifierOutcome, str]:
         """Run the verifier read-only and compute the input fingerprint (no events)."""
         spec_m = ctx.spec.milestone(milestone_id)
@@ -113,10 +117,12 @@ class MilestoneVerification:
         try:
             outcome, fingerprint = self.evaluate(ctx, milestone_id)
         except Exception as exc:  # a verifier bug must never verify anything
-            self.journal.append(ctx, VerifierError(
-                milestone_id=milestone_id, message=self.redactor.text(str(exc))[:500]),
-                actor="verifier")
-            return VerifierOutcome(VerifierResult.ERROR, str(exc))
+            message = self._safe(str(exc))
+            self.journal.append(ctx, VerifierError(milestone_id=milestone_id, message=message),
+                                actor="verifier")
+            return VerifierOutcome(VerifierResult.ERROR, message)
+        # the message is persisted and shown to the model as feedback: redact and bound it
+        outcome = dataclasses.replace(outcome, message=self._safe(outcome.message))
         if outcome.status == VerifierResult.ERROR:
             self.journal.append(ctx, VerifierError(milestone_id=milestone_id,
                                                    message=outcome.message), actor="verifier")
@@ -194,7 +200,7 @@ class MilestoneVerification:
             if outcome.status == VerifierResult.ERROR:
                 # A failed observation (timeout, unreachable service) proves nothing:
                 # record it and stop without invalidating verified work (invariant 7).
-                message = self.redactor.text(outcome.message)[:500]
+                message = self._safe(outcome.message)
                 self.journal.append(ctx, VerifierError(milestone_id=m.id, message=message),
                                     actor="verifier")
                 raise VerificationUnavailableError(

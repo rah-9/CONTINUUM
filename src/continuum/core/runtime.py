@@ -29,6 +29,7 @@ from continuum.core.canonical import canonical_json
 from continuum.core.clock import Clock
 from continuum.core.errors import (
     AlreadyOwnedError,
+    ContinuumError,
     InvalidTransitionError,
     NotFoundError,
     SpecValidationError,
@@ -170,6 +171,7 @@ class Runtime:
         self.validate_spec(spec)
         if model_alias is not None:
             self.models.get(model_alias)  # unknown alias: refuse before any run exists
+        self.budgets.start_clock()
         run_id = run_id or self.ids.new("run")
         with self.store.read() as q:
             if q.run_exists(run_id):
@@ -190,6 +192,7 @@ class Runtime:
         """Real continuation under lease and ledger safeguards (never live replay)."""
         if model_alias is not None:
             self.models.get(model_alias)  # unknown alias: refuse before taking the lease
+        self.budgets.start_clock()  # reconciliation and re-verification are active time
         with self._owned(run_id) as lease, self._keeper(lease):
             return self._resume_owned(run_id, lease, model_alias)
 
@@ -199,6 +202,18 @@ class Runtime:
         if run.status in TERMINAL_RUN_STATUSES:
             return self._result(run_id)
         ctx = RunContext(run_id, lease, run.spec, Workspace(self.config.workspace_root, run_id))
+        try:
+            return self._recover_and_drive(ctx, model_alias)
+        finally:
+            self._record_time(ctx)
+
+    def _record_time(self, ctx: RunContext) -> None:
+        with contextlib.suppress(ContinuumError):  # e.g. the lease was lost meanwhile
+            self.budgets.record_active_time(ctx)
+
+    def _recover_and_drive(self, ctx: RunContext, model_alias: str | None) -> RunResult:
+        run_id = ctx.run_id
+        lease = ctx.lease
         self.validate_spec(ctx.spec)
         if self.store.projection_diff(run_id):
             self.store.rebuild_projection(run_id, lease.fence)
@@ -272,10 +287,14 @@ class Runtime:
                 elif decision == "abort":
                     events.append(make_event(ActionSkipped(action_id=action_id, actor=actor,
                                                            reason=reason), actor=who))
-                    events.append(make_event(RunFailed(
-                        failure_code="human_abort",
-                        reason=f"required action {action_id} aborted by {actor}: {reason}"),
-                        actor=who))
+                    if run.status not in TERMINAL_RUN_STATUSES:  # never rewrite how it ended
+                        events.append(make_event(RunFailed(
+                            failure_code="human_abort",
+                            reason=f"required action {action_id} aborted by {actor}: {reason}"),
+                            actor=who))
+                elif run.status in TERMINAL_RUN_STATUSES and decision == "retry_at_risk":
+                    raise InvalidTransitionError(
+                        f"run {run_id} is {run.status}; nothing will retry this action")
                 elif decision == "retry_at_risk":
                     events.append(make_event(ActionAuthorized(
                         action_id=action_id, idempotency_key=action.idempotency_key,
@@ -472,7 +491,7 @@ class Runtime:
     # ===== step loop =======================================================================
 
     def _drive(self, ctx: RunContext, *, model_alias: str | None, resumed: bool) -> RunResult:
-        self.budgets.start_clock()
+        self.budgets.ensure_clock()
         session: Session | None = None
         tried: list[str] = []
         try:
@@ -494,6 +513,7 @@ class Runtime:
                     if session is None:
                         break
                 response = self.sessions.call(ctx, session)
+                self._record_time(ctx)  # a call can take minutes: count it before the cap
                 if response is None:  # the model failed: hand off to the next compatible one
                     session = self.sessions.handoff(ctx, session, tried,
                                                     reason=self.sessions.last_error)
@@ -502,7 +522,9 @@ class Runtime:
                     continue
                 if response.message.tool_proposals:
                     session.stalled_turns = 0
-                    if not self._run_proposals(ctx, session, response, focus):
+                    proceed = self._run_proposals(ctx, session, response, focus)
+                    self._record_time(ctx)
+                    if not proceed:
                         break
                     newly, _ = self.verification.verify_ready(ctx)
                     if newly:
@@ -530,6 +552,7 @@ class Runtime:
         except StaleOwnerError:
             return self._result(ctx.run_id, message="lease lost; another controller owns run")
         finally:
+            self._record_time(ctx)
             if session is not None:
                 self.sessions.end(ctx, session, "stopped")
         return self._result(ctx.run_id)
