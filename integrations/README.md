@@ -17,7 +17,7 @@ verified state.
 | `list_runs(limit?)` | read | recent runs |
 | `coding_resume(repo_path, agent)` | coding | **call first in every chat**: join the repo's session, get the brief |
 | `coding_start(repo_path, goal, agent, tasks?)` | coding | start a session when none exists |
-| `coding_brief(session_id \| repo_path)` | read | verified facts, tasks, notes, rules |
+| `coding_brief(session_id, detail?)` | read | verified facts, tasks, notes, rules; compact Markdown by default, `detail="full"` for all fields |
 | `coding_add_task` / `coding_set_task_status` | coding | plan and track work |
 | `coding_note(kind, text)` | coding | decision, context, blocker or next_step |
 | `coding_checkpoint(summary)` | coding | snapshot; Continuum observes the code itself |

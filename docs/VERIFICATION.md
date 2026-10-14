@@ -65,6 +65,20 @@ CONTINUUM_LIVE=1 pytest -m live              # real providers (needs keys + prof
   - clean completion 0.78 vs 0.72, paired +0.057 [+0.011, +0.103]
   - full report: `docs/lab-reports/`
 
+## Measured performance and context size (v0.7.0)
+
+20,000-file git repo, 200 changed/untracked files, a session with 30 notes and 15 checkpoints:
+
+| | v0.6.3 | v0.7.0 |
+|---|---|---|
+| fingerprint (`observe`) | 120–170 ms, 7 git calls; commit id included (false "changed" after every commit) | ~165 ms, 5 git calls; content tree (commits are not changes) |
+| brief sent over MCP | ~8.3k tokens (JSON + duplicate Markdown) | ~1.3k tokens typical, ≤ ~4k worst case (compact, notes whole) |
+| full JSON brief | grows with the session | ≤ ~8k tokens, bounded |
+
+Transfer quality with real models (the goal) is measured in [`HANDOFF-TRIALS.md`](HANDOFF-TRIALS.md).
+
+A full fenced runtime run (`inventory_upload_v1`, fake models) issues 271 SQL statements for 37 events in about 300 ms.
+
 ## Coding continuity (v0.6.0)
 
 `tests/integration/test_coding.py` C1–C11 and `test_mcp_stdio.py` cover:

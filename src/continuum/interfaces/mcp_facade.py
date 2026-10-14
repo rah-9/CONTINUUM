@@ -26,6 +26,7 @@ from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
 
+from continuum.coding.brief import compact
 from continuum.core.errors import ContinuumError
 from continuum.core.runtime import RunResult
 from continuum.interfaces.sdk import Continuum
@@ -122,18 +123,25 @@ class McpFacade:
 
     # ---- coding-session continuity (agent operations only) -----------------------------
 
+    # Briefs go into the agent's context: compact (Markdown + ids) unless asked for the
+    # full JSON, so the same content is never sent twice.
+    @staticmethod
+    def _detail(body: dict[str, Any], detail: str) -> dict[str, Any]:
+        return body if detail == "full" else compact(body)
+
     def coding_start(self, repo_path: str, goal: str, agent: str,
-                     tasks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        return self._guard(lambda: self.sdk.coding.start(repo_path, goal, agent=agent,
-                                                         tasks=tasks))
+                     tasks: list[dict[str, Any]] | None = None,
+                     detail: str = "compact") -> dict[str, Any]:
+        return self._guard(lambda: self._detail(self.sdk.coding.start(
+            repo_path, goal, agent=agent, tasks=tasks), detail))
 
     def coding_resume(self, agent: str, repo_path: str | None = None,
-                      session_id: str | None = None) -> dict[str, Any]:
-        return self._guard(lambda: self.sdk.coding.resume(agent=agent, repo_path=repo_path,
-                                                          session_id=session_id))
+                      session_id: str | None = None, detail: str = "compact") -> dict[str, Any]:
+        return self._guard(lambda: self._detail(self.sdk.coding.resume(
+            agent=agent, repo_path=repo_path, session_id=session_id), detail))
 
-    def coding_brief(self, session_id: str) -> dict[str, Any]:
-        return self._guard(lambda: self.sdk.coding.brief(session_id))
+    def coding_brief(self, session_id: str, detail: str = "compact") -> dict[str, Any]:
+        return self._guard(lambda: self._detail(self.sdk.coding.brief(session_id), detail))
 
     def coding_add_task(self, session_id: str, title: str, agent: str,
                         checks: list[str] | None = None) -> dict[str, Any]:
@@ -236,22 +244,25 @@ def run_stdio(sdk: Continuum) -> None:
 
     @server.tool()
     def coding_resume(agent: str, repo_path: str | None = None,
-                      session_id: str | None = None) -> dict[str, Any]:
+                      session_id: str | None = None, detail: str = "compact") -> dict[str, Any]:
         """CALL FIRST in every new chat or after switching model. Joins the repo's active
         coding session as `agent` (your exact model id) and returns the handoff brief:
-        verified facts, tasks, decisions, next steps and rules."""
-        return facade.coding_resume(agent, repo_path, session_id)
+        verified facts, tasks, decisions, next steps and rules (as Markdown, plus task
+        ids). detail="full" returns every field as JSON instead."""
+        return facade.coding_resume(agent, repo_path, session_id, detail)
 
     @server.tool()
     def coding_start(repo_path: str, goal: str, agent: str,
-                     tasks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+                     tasks: list[dict[str, Any]] | None = None,
+                     detail: str = "compact") -> dict[str, Any]:
         """Start a coding session for a repository. tasks: [{"title", "checks": [names]}]."""
-        return facade.coding_start(repo_path, goal, agent, tasks)
+        return facade.coding_start(repo_path, goal, agent, tasks, detail)
 
     @server.tool()
-    def coding_brief(session_id: str) -> dict[str, Any]:
-        """Read-only handoff brief for a coding session (also as markdown)."""
-        return facade.coding_brief(session_id)
+    def coding_brief(session_id: str, detail: str = "compact") -> dict[str, Any]:
+        """Read-only handoff brief (Markdown + task ids). detail="full": all fields as JSON
+        (check output tails, registered check commands, checkpoint file lists)."""
+        return facade.coding_brief(session_id, detail)
 
     @server.tool()
     def coding_add_task(session_id: str, title: str, agent: str,

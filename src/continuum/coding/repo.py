@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
+from typing import Any
 
 from continuum.coding.models import RepoState
 from continuum.core.errors import ContinuumError, PathContainmentError, SpecValidationError
@@ -57,20 +60,23 @@ def resolve_repo(path: str) -> Path:
 GIT = shutil.which("git")
 
 
-def _git(root: Path, *args: str) -> bytes | None:
+def _git(root: Path, *args: str, env: dict[str, str] | None = None,
+         stdin: bytes | None = None) -> bytes | None:
     if GIT is None:
         return None
     try:
-        # Constant read-only git subcommands; arguments never come from a model.
+        # Constant git subcommands; arguments never come from a model.
         out = subprocess.run([GIT, "-C", str(root), *args],  # noqa: S603
-                             capture_output=True, timeout=60, check=False)
+                             capture_output=True, timeout=60, check=False, input=stdin,
+                             env={**os.environ, **env} if env else None)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return out.stdout if out.returncode == 0 else None
 
 
-def _must(root: Path, *args: str) -> bytes:
-    out = _git(root, *args)
+def _must(root: Path, *args: str, env: dict[str, str] | None = None,
+          stdin: bytes | None = None) -> bytes:
+    out = _git(root, *args, env=env, stdin=stdin)
     if out is None:
         raise ObservationError(f"`git {' '.join(args[:2])}` failed in {root}; "
                                "cannot fingerprint the code")
@@ -99,14 +105,11 @@ def _is_noise(rel: str) -> bool:
 
 
 def observe(root: Path) -> RepoState:
-    inside = _git(root, "rev-parse", "--is-inside-work-tree")
-    if inside is not None and inside.strip() == b"true":
-        return _observe_git(root)
+    probe = _git(root, "rev-parse", "--is-inside-work-tree", "--absolute-git-dir")
+    lines = probe.splitlines() if probe else []
+    if len(lines) == 2 and lines[0].strip() == b"true":
+        return _observe_git(root, Path(os.fsdecode(lines[1].strip())))
     return _observe_files(root)
-
-
-# Raw content diffs: no external diff drivers, textconv filters or colour from config.
-_DIFF = ("--binary", "--no-ext-diff", "--no-textconv", "--no-color")
 
 
 def _show(raw: bytes) -> str:
@@ -114,60 +117,179 @@ def _show(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def _changed_paths(status: bytes) -> list[str]:
-    """Parse ``git status --porcelain=v1 -z``; renames/copies carry an extra source entry."""
-    entries = status.split(b"\0")
+# Fields before the path in `git status --porcelain=v2` records (1: ordinary change,
+# 2: rename/copy, followed by the original path as its own NUL-terminated record,
+# u: unmerged).
+_V2_PATH_FIELD = {b"1": 8, b"2": 9, b"u": 10}
+
+
+def _parse_status(status: bytes) -> tuple[str | None, str | None, list[str], list[bytes]]:
+    """Parse ``git status --porcelain=v2 --branch -z --untracked-files=all`` once.
+
+    Returns HEAD's commit (None before the first commit), the branch, the changed paths
+    (for display) and the untracked paths (raw bytes; .gitignore already applied)."""
+    head: str | None = None
+    branch: str | None = None
     changed: set[str] = set()
+    untracked: list[bytes] = []
+    records = status.split(b"\0")
     i = 0
-    while i < len(entries):
-        entry = entries[i]
+    while i < len(records):
+        record = records[i]
         i += 1
-        if len(entry) <= 3:
-            continue
-        if entry[0:1] in (b"R", b"C") or entry[1:2] in (b"R", b"C"):
-            i += 1  # skip the original path of a rename/copy
-        shown = _show(entry[3:])
-        if not _is_noise(shown):
+        if record.startswith(b"# branch.oid "):
+            oid = record.split(b" ", 2)[2].decode()
+            head = None if oid == "(initial)" else oid
+        elif record.startswith(b"# branch.head "):
+            branch = record.split(b" ", 2)[2].decode(errors="replace")
+        elif record[:2] in (b"? ",) or record[:1] in _V2_PATH_FIELD:
+            if record[:2] == b"? ":
+                raw = record[2:]
+            else:
+                raw = record.split(b" ", _V2_PATH_FIELD[record[:1]])[-1]
+                if record[:1] == b"2":
+                    i += 1  # the original path of a rename/copy
+            shown = _show(raw)
+            if _is_noise(shown):
+                continue
             changed.add(shown)
-    return sorted(changed)
+            if record[:2] == b"? ":
+                untracked.append(raw)
+    return head, branch, sorted(changed), untracked
 
 
 def _submodules(root: Path) -> list[bytes]:
     """Paths of gitlinks (mode 160000) checked out in this work tree."""
+    if not (root / ".gitmodules").exists():  # the common case: skip listing the index
+        return []
     out = _must(root, "ls-files", "--stage", "-z")
     return [line.split(b"\t", 1)[1] for line in out.split(b"\0")
             if line.startswith(b"160000 ") and b"\t" in line]
 
 
-def _observe_git(root: Path) -> RepoState:
-    head = (_git(root, "rev-parse", "--verify", "-q", "HEAD") or b"").decode().strip() or None
-    branch = (_git(root, "rev-parse", "--abbrev-ref", "HEAD") or b"").decode().strip() or None
+def _content_tree(root: Path, gitdir: Path, untracked: list[bytes]) -> bytes:
+    """Git tree id of the working tree's *content*: tracked files as they are on disk plus
+    the given untracked files (non-ignored, cache noise already removed).
+
+    Built in a private copy of the index, so the user's index is never touched and
+    git's stat cache keeps it cheap. Staging, committing or amending identical content
+    yields the same tree; any content change (edit, add, delete, mode, symlink target)
+    yields a different one. Names are bytes to git, so any file name works."""
+    with tempfile.TemporaryDirectory(prefix="continuum-index-") as tmp:
+        index = Path(tmp) / "index"
+        env = {"GIT_INDEX_FILE": str(index), "GIT_LITERAL_PATHSPECS": "1"}
+        if (gitdir / "index").is_file():  # no index yet: nothing is tracked
+            shutil.copyfile(gitdir / "index", index)
+            # tracked edits and deletions, whole tree; no pathspec, so newer gits cannot
+            # fail with "pathspec did not match" (git 2.55 does in an empty repository)
+            _must(root, "add", "--update", env=env)
+        if untracked:  # exact names from `git status`, as bytes (any encoding)
+            _must(root, "add", "--pathspec-from-file=-", "--pathspec-file-nul", env=env,
+                  stdin=b"\0".join(untracked))
+        return _must(root, "write-tree", env=env).strip()
+
+
+def _observe_git(root: Path, gitdir: Path) -> RepoState:
+    status = _must(root, "status", "--porcelain=v2", "--branch", "-z",
+                   "--untracked-files=all")
+    head, branch, changed, untracked = _parse_status(status)
+    # The fingerprint is the code's content, not its history: a commit is not a change.
     h = hashlib.sha256()
-    h.update(b"head:" + (head or "none").encode())
-    if head:
-        h.update(b"\ndiff:" + _must(root, "diff", "HEAD", *_DIFF))
-    else:  # no commits yet: the index (staged) and the worktree against it
-        h.update(b"\nstaged:" + _must(root, "diff", "--cached", *_DIFF))
-        h.update(b"\nunstaged:" + _must(root, "diff", *_DIFF))
-    status = _must(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
-    # File names are bytes: decoding them lossily would hash a path that does not exist.
-    untracked = [p for p in _must(root, "ls-files", "--others", "--exclude-standard", "-z")
-                 .split(b"\0") if p and not _is_noise(_show(p))]
-    for rel in sorted(untracked):
-        path = root / os.fsdecode(rel)
-        if path.is_symlink():  # hash the link itself, never content outside the repo
-            h.update(b"\nuntracked-link:" + rel + b":" + os.fsencode(os.readlink(path)))
-        elif path.is_file():
-            h.update(b"\nuntracked:" + rel + b":" + _file_sha(path).encode())
-    # `git diff` shows a dirty submodule only as "-dirty": fingerprint its content too.
+    h.update(b"tree:" + _content_tree(root, gitdir, untracked))
+    # A gitlink records only the submodule's commit: fingerprint its content too.
     for rel in sorted(_submodules(root)):
         sub = root / os.fsdecode(rel)
         if (sub / ".git").exists():
-            h.update(b"\nsubmodule:" + rel + b":" + _observe_git(sub).fingerprint.encode())
-    changed = _changed_paths(status)
+            h.update(b"\nsubmodule:" + rel + b":" + observe(sub).fingerprint.encode())
     return RepoState(fingerprint="sha256:" + h.hexdigest(), vcs="git", head=head,
                      branch=branch, dirty=bool(changed),
                      changed_files=changed[:MAX_LISTED_CHANGES])
+
+
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # git's well-known empty tree
+MAP_FILES = 40
+MAP_NAMES = 8
+# A definition on an added line, in most languages (def/class/function/fn/struct/...).
+_DEFINITION = re.compile(
+    rb"^\+\s*(?:export\s+|pub(?:\([a-z]+\))?\s+|public\s+|private\s+|static\s+|async\s+)*"
+    rb"(?:def|class|function|func|fn|struct|enum|interface|trait|type|impl|module)\s+"
+    rb"([A-Za-z_$][\w$]*)")
+
+
+def session_changes(root: Path, base: str | None) -> dict[str, Any] | None:
+    """Where this session worked, observed from git (no model involved): every file that
+    differs from the session's starting commit (committed or not, plus untracked files),
+    with line counts, the enclosing context git reports for each hunk, and names defined
+    on added lines. Lets the next model read the session's code instead of exploring the
+    repository. ``None`` when unknown (e.g. the starting commit is gone)."""
+    ref = base or EMPTY_TREE
+    flags = ("--no-ext-diff", "--no-textconv", "--no-color", "--no-renames")
+    numstat = _git(root, "diff", "--numstat", "-z", *flags, ref)
+    patch = _git(root, "-c", "core.quotepath=off", "diff", "-U0", *flags, ref)
+    status = _git(root, "status", "--porcelain=v2", "-z", "--untracked-files=all")
+    if numstat is None or patch is None or status is None:
+        return None
+    files: dict[str, dict[str, Any]] = {}
+    for record in numstat.split(b"\0"):
+        parts = record.split(b"\t", 2)
+        if len(parts) == 3 and parts[2]:
+            path = _show(parts[2])
+            if not _is_noise(path):
+                files[path] = {"path": path, "status": "modified",
+                               "added": int(parts[0]) if parts[0].isdigit() else 0,
+                               "deleted": int(parts[1]) if parts[1].isdigit() else 0,
+                               "near": [], "defines": []}
+    current: dict[str, Any] | None = None
+    for line in patch.split(b"\n"):
+        if line.startswith(b"+++ "):
+            name = line[4:]
+            current = files.get(_show(name[2:] if name.startswith(b"b/") else name))
+        elif current is None:
+            continue
+        elif line.startswith(b"@@"):
+            context = line.split(b"@@", 2)[-1].strip()
+            near = _show(context)[:80]
+            if near and near not in current["near"] and len(current["near"]) < MAP_NAMES:
+                current["near"].append(near)
+        elif line.startswith(b"+") and (m := _DEFINITION.match(line)):
+            defined = _show(m.group(1))
+            if defined not in current["defines"] and len(current["defines"]) < MAP_NAMES:
+                current["defines"].append(defined)
+    _, _, _, untracked = _parse_status(status)
+    for raw in untracked:
+        path = _show(raw)
+        file = root / os.fsdecode(raw)
+        try:
+            data = file.read_bytes() if file.is_file() and not file.is_symlink() else b""
+        except OSError:
+            data = b""
+        files[path] = {"path": path, "status": "untracked", "added": data.count(b"\n"),
+                       "deleted": 0, "near": [],
+                       "defines": list(dict.fromkeys(
+                           _show(m.group(1)) for m in (_DEFINITION.match(b"+" + ln)
+                                                        for ln in data.splitlines()) if m)
+                       )[:MAP_NAMES]}
+    ranked = sorted(files.values(), key=lambda f: (-(f["added"] + f["deleted"]), f["path"]))
+    return {"since": base, "total_files": len(ranked), "files": ranked[:MAP_FILES]}
+
+
+def commits_since(root: Path, base: str, limit: int = 20) -> list[dict[str, str]] | None:
+    """Commits on HEAD since ``base`` (newest first), observed from git.
+
+    ``None`` when unknown: ``base`` is gone or is no longer an ancestor of HEAD (history
+    was rewritten). Informational only; verification never depends on it."""
+    if _git(root, "merge-base", "--is-ancestor", base, "HEAD") is None:
+        return None
+    out = _git(root, "log", "--no-show-signature", "--format=%h%x1f%s", "-z",
+               f"-n{limit}", f"{base}..HEAD")
+    if out is None:
+        return None
+    commits = []
+    for record in out.split(b"\0"):
+        sha, _, subject = record.partition(b"\x1f")
+        if sha:
+            commits.append({"sha": sha.decode().strip(), "subject": _show(subject)})
+    return commits
 
 
 def _observe_files(root: Path) -> RepoState:
