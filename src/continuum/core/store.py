@@ -360,6 +360,22 @@ class Store:
     def close(self) -> None:
         self.pool.close()
 
+    SCHEMA_VERSION = "3"
+
+    def ensure_schema(self) -> bool:
+        """Migrate only if the schema is missing or older than this code. True if it ran."""
+        try:
+            with self.pool.connection() as conn:
+                row = conn.execute(
+                    b"SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
+                conn.rollback()
+            if row is not None and row["value"] == self.SCHEMA_VERSION:
+                return False
+        except psycopg.errors.UndefinedTable:
+            pass
+        self.migrate()
+        return True
+
     def migrate(self) -> None:
         ddl = resources.files("continuum.core").joinpath("schema.sql").read_text()
         with self.pool.connection() as conn:

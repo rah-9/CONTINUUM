@@ -62,15 +62,88 @@ def build_parser() -> argparse.ArgumentParser:
     sv = sub.add_parser("serve", help="minimal loopback HTTP API")
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8765)
-    sub.add_parser("mcp", help="local stdio MCP facade (run_task, get_status)")
+    sub.add_parser("mcp", help="local stdio MCP server for coding agents")
+
+    coding = sub.add_parser("coding", help="coding-session continuity across models and chats")
+    csub = coding.add_subparsers(dest="coding_cmd", required=True)
+    checks = csub.add_parser("checks", help="human-only: register or list repository checks")
+    chsub = checks.add_subparsers(dest="checks_cmd", required=True)
+    add = chsub.add_parser("add", help="register a check: continuum coding checks add REPO "
+                                       "NAME --actor ME -- pytest -q")
+    add.add_argument("repo")
+    add.add_argument("name")
+    add.add_argument("--actor", required=True, help="your (human) id")
+    add.add_argument("--timeout", type=int, default=600)
+    # The check's own command follows `--`; it is split off before parsing (main()).
+    ls = chsub.add_parser("list")
+    ls.add_argument("repo")
+    st2 = csub.add_parser("start", help="start a coding session for a repository")
+    st2.add_argument("repo")
+    st2.add_argument("--goal", required=True)
+    st2.add_argument("--agent", default="human")
+    br = csub.add_parser("brief", help="print the handoff brief")
+    br.add_argument("--session")
+    br.add_argument("--repo")
+    br.add_argument("--json", action="store_true", help="JSON instead of markdown")
+    ss = csub.add_parser("sessions")
+    ss.add_argument("--repo")
+    cl = csub.add_parser("close")
+    cl.add_argument("session")
+    cl.add_argument("--reason", required=True)
+    cl.add_argument("--actor", required=True)
+    # Agent operations for shell-only agents (same protocol as the MCP coding_* tools).
+    rs = csub.add_parser("resume", help="join the repo's session as AGENT and print the brief")
+    rs.add_argument("--repo", default=".")
+    rs.add_argument("--session")
+    rs.add_argument("--agent", required=True, help="your exact model id")
+    rs.add_argument("--json", action="store_true")
+    nt = csub.add_parser("note", help="record decision|context|next_step|blocker")
+    nt.add_argument("session")
+    nt.add_argument("kind", choices=["decision", "context", "next_step", "blocker"])
+    nt.add_argument("text")
+    nt.add_argument("--agent", required=True)
+    cp = csub.add_parser("checkpoint", help="record what changed (state observed by Continuum)")
+    cp.add_argument("session")
+    cp.add_argument("--summary", required=True)
+    cp.add_argument("--agent", required=True)
+    rc = csub.add_parser("check", help="run a human-registered check and record the result")
+    rc.add_argument("session")
+    rc.add_argument("name")
+    rc.add_argument("--agent", required=True)
+    tk = csub.add_parser("task", help="add, complete or update tasks")
+    tsub = tk.add_subparsers(dest="task_cmd", required=True)
+    ta = tsub.add_parser("add")
+    ta.add_argument("session")
+    ta.add_argument("title")
+    ta.add_argument("--check", action="append", default=[], dest="checks")
+    ta.add_argument("--agent", required=True)
+    td = tsub.add_parser("done", help="complete (refused unless checks pass on current code)")
+    td.add_argument("session")
+    td.add_argument("task_id")
+    td.add_argument("--agent", required=True)
+    td.add_argument("--note", default="")
+    tst = tsub.add_parser("status")
+    tst.add_argument("session")
+    tst.add_argument("task_id")
+    tst.add_argument("status", choices=["open", "in_progress", "blocked", "dropped"])
+    tst.add_argument("--agent", required=True)
+    tst.add_argument("--note", default="")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    command: list[str] = []
+    if "--" in raw:  # everything after `--` is a check's argv, never Continuum options
+        cut = raw.index("--")
+        raw, command = raw[:cut], raw[cut + 1:]
+    args = build_parser().parse_args(raw)
+    args.argv = command
     configure_logging(args.log_level)
     sdk = Continuum()
     try:
+        if args.cmd not in ("db-init", "doctor"):
+            sdk.ensure_schema()  # first use on a fresh database just works
         match args.cmd:
             case "db-init":
                 sdk.init_db()
@@ -114,11 +187,64 @@ def main(argv: list[str] | None = None) -> int:
                 from continuum.interfaces.mcp_facade import run_stdio
 
                 run_stdio(sdk)
+            case "coding":
+                return _coding(sdk, args)
     except ContinuumError as exc:
         _print({"error": str(exc), "code": exc.code})
         return 2
     finally:
         sdk.close()
+    return 0
+
+
+def _coding(sdk: Continuum, args: argparse.Namespace) -> int:
+    coding = sdk.coding
+    match args.coding_cmd:
+        case "checks" if args.checks_cmd == "add":
+            _print(coding.register_check(args.repo, args.name, args.argv, actor=args.actor,
+                                         timeout_seconds=args.timeout))
+        case "checks":
+            _print(coding.checks(args.repo))
+        case "start":
+            _print({"session_id": coding.start(args.repo, args.goal,
+                                               agent=args.agent)["session_id"]})
+        case "brief":
+            session = args.session or coding.latest_active(args.repo)
+            brief = coding.brief(session)
+            if args.json:
+                _print({k: v for k, v in brief.items() if k != "markdown"})
+            else:
+                sys.stdout.write(brief["markdown"])
+        case "sessions":
+            _print(coding.sessions(args.repo))
+        case "close":
+            _print(coding.close(args.session, args.reason, agent=f"human:{args.actor}"))
+        case "resume":
+            brief = coding.resume(agent=args.agent, session_id=args.session,
+                                  repo_path=None if args.session else args.repo)
+            if args.json:
+                _print({k: v for k, v in brief.items() if k != "markdown"})
+            else:
+                sys.stdout.write(brief["markdown"])
+        case "note":
+            _print(coding.note(args.session, args.kind, args.text, agent=args.agent))
+        case "checkpoint":
+            _print(coding.checkpoint(args.session, args.summary, agent=args.agent))
+        case "check":
+            result = coding.run_check(args.session, args.name, agent=args.agent)
+            _print(result)
+            return 0 if result["passed"] else 1
+        case "task" if args.task_cmd == "add":
+            _print(coding.add_task(args.session, args.title, checks=args.checks,
+                                   agent=args.agent))
+        case "task" if args.task_cmd == "done":
+            result = coding.complete_task(args.session, args.task_id, agent=args.agent,
+                                          note=args.note)
+            _print(result)
+            return 0 if result["status"] == "done" else 1
+        case "task":
+            _print(coding.set_task_status(args.session, args.task_id, args.status,
+                                          agent=args.agent, note=args.note))
     return 0
 
 

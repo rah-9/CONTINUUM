@@ -29,6 +29,7 @@ Every feature is judged by one question: *does it keep valid work and prevent un
 | 8 | **Traces contain identifiers, not payloads** | Logs are safe to ship. Full diagnostics stay in the event log and redacted blobs (D-016). |
 | 9 | **The lab is an honest experiment, not a demo** | Same tools, permissions, budgets and scorer for the baseline. Pauses count as non-completion. We report clean completion alongside verified completion (D-012, D-018). |
 | 10 | **Deterministic fakes first, live providers opt-in** | Safety properties are proven cheaply and reproducibly. Live calls cost money and need verified profiles. |
+| 11 | **Coding handoff is judged by observation and human-registered checks** | A model can't mark its own coding work done. The next model gets facts, plus claims that are clearly labelled as claims (D-028, D-029). |
 
 ## 3. What we have done
 
@@ -115,6 +116,20 @@ Every feature is judged by one question: *does it keep valid work and prevent un
   - chaos and contract layers
 - **One more defect found and fixed:** starting an existing run id leaked a raw database error.
 
+### Phase 6: v0.6.0, coding work survives a model switch
+
+- **The ask.** While coding, switching Opus 4.8 → 5.5 in Claude Code, or GPT-5.6 → 6.1 in the Codex shell, must carry the *coding* over, not just conversation text. It should work for any kind of coding, with rules every agent follows.
+- **What we built** (D-028–D-030, docs/02 §10, `docs/CODING-HANDOFF.md`):
+  - an append-only coding journal per repository
+  - Continuum fingerprints the code itself (git or file hashes)
+  - "done" means a human-registered check passed on the code as it is now, with an unchanged definition
+  - a resume brief that separates verified facts from agent claims
+  - 11 `coding_*` MCP tools plus a CLI for shell-only agents
+  - drop-in agent rules (`integrations/AGENT_RULES.md`)
+  - cloud and Codex setup with a persistent PostgreSQL
+- **Defects found by the new tests:** `__pycache__` invalidated just-produced evidence; argparse swallowed `--actor`; the CLI didn't migrate older databases. All are fixed with regression tests.
+- **Accepted limit:** shell-capable agents could impersonate the human check-registration CLI. Continuum makes that tamper-evident, not impossible (D-029).
+
 ## 4. Evidence so far
 
 Results are from the deterministic fake-model safety matrix: 15 tasks × 6 faults × 3 connector modes × 2 seeds, 912 paired cells. They test **modeled** safety properties only. They are not claims about live providers. The full report is in `lab-reports/`.
@@ -158,7 +173,8 @@ These are ordered by value to the core idea. Each item should become its own bra
 5. ~~Packet token accounting with each provider's own tokenizer~~: done in v0.3.0 for LiteLLM-backed providers. Remaining: validate the counts against real provider usage reports.
 6. **MCP progress notifications** so agents can stream long runs instead of waiting for `run_task` to return; an async `run_task` + `get_status` polling mode.
 7. **Optional OpenTelemetry export** from the JSON trace (post-MVP per the PRD).
-8. **Out of scope until evidence justifies it:** multi-host deployment, a dashboard and remote MCP tool discovery.
+8. **Coding sessions keyed by git remote** as well as absolute path, so cloud checkouts at different paths share a session. Plus an optional `coding_diff_since(checkpoint)` read tool.
+9. **Out of scope until evidence justifies it:** multi-host deployment, a dashboard and remote MCP tool discovery.
 
 ## 6. How we work
 
