@@ -64,6 +64,8 @@ Human decisions never travel over MCP. For those, the agent calls `pending_decis
 
 Run `continuum doctor` to check the database, schema, tasks and model profiles.
 
+`CONTINUUM_CODING_ROOTS` (optional, `:`-separated) restricts which directories coding sessions may observe.
+
 ## Database schema (designed for invariants)
 
 All durable state lives in PostgreSQL. The schema is executable in `src/continuum/core/schema.sql` and mirrored in docs/03.

@@ -29,7 +29,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
 from continuum.core.clock import Clock
-from continuum.core.errors import NotFoundError, StaleOwnerError
+from continuum.core.errors import ContinuumError, NotFoundError, StaleOwnerError
 from continuum.core.events import EVENT_SCHEMA_VERSION, Event, EventType, NewEvent, parse_payload
 from continuum.core.faults import FaultInjector, NoFaults
 from continuum.core.ids import IdGenerator
@@ -363,25 +363,42 @@ class Store:
     SCHEMA_VERSION = "3"
 
     def ensure_schema(self) -> bool:
-        """Migrate only if the schema is missing or older than this code. True if it ran."""
+        """Migrate only if the schema is missing or older than this code. True if it ran.
+
+        A database written by a *newer* Continuum is never downgraded: that is a typed
+        ``schema_too_new`` error telling the operator to upgrade this installation."""
         try:
             with self.pool.connection() as conn:
                 row = conn.execute(
                     b"SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
                 conn.rollback()
-            if row is not None and row["value"] == self.SCHEMA_VERSION:
-                return False
         except psycopg.errors.UndefinedTable:
-            pass
+            row = None
+        if row is not None:
+            stored, ours = int(row["value"]), int(self.SCHEMA_VERSION)
+            if stored == ours:
+                return False
+            if stored > ours:
+                raise ContinuumError(
+                    f"database schema v{stored} is newer than this Continuum (v{ours}); "
+                    "upgrade continuum", code="schema_too_new")
         self.migrate()
         return True
 
     def migrate(self) -> None:
+        """Idempotent DDL, serialized across processes by an advisory lock so concurrent
+        first-use starts (an MCP server and a CLI command) cannot race on CREATE."""
         ddl = resources.files("continuum.core").joinpath("schema.sql").read_text()
         with self.pool.connection() as conn:
-            conn.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(
-                sql.Identifier(self.schema)))
-            conn.execute(ddl.encode())
+            try:
+                conn.execute(b"SELECT pg_advisory_xact_lock(hashtext('continuum:migrate'))")
+                conn.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(
+                    sql.Identifier(self.schema)))
+                conn.execute(ddl.encode())
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
 
     @contextmanager
     def read(self) -> Iterator[Queries]:

@@ -53,7 +53,9 @@ class SessionView:
     checkpoints: list[dict[str, Any]] = field(default_factory=list)
     check_runs: list[dict[str, Any]] = field(default_factory=list)
     closed_reason: str | None = None
-    started_at: str = ""
+    started_at: datetime | None = None
+    last_seq: int = 0
+    latest_runs: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def task(self, task_id: str) -> TaskView:
         if task_id not in self.tasks:
@@ -61,8 +63,7 @@ class SessionView:
         return self.tasks[task_id]
 
     def latest_check(self, name: str) -> dict[str, Any] | None:
-        runs = [r for r in self.check_runs if r["name"] == name]
-        return runs[-1] if runs else None
+        return self.latest_runs.get(name)
 
     def definition_digest(self, name: str) -> str | None:
         check = self.registered_checks.get(name)
@@ -91,10 +92,9 @@ class SessionView:
                 "needs_reverification": self.needs_reverification(t),
                 "note": t.note})
         latest = {}
-        for name in sorted({r["name"] for r in self.check_runs}):
-            run = self.latest_check(name)
-            assert run is not None
+        for name, run in sorted(self.latest_runs.items()):
             latest[name] = {"passed": run["passed"], "at": run["at"],
+                            "modified_tree": run.get("modified_tree", False),
                             "on_current_code": run["fingerprint"] == self.current.fingerprint,
                             "definition_unchanged":
                                 run["argv_sha256"] == self.definition_digest(name),
@@ -112,23 +112,32 @@ class SessionView:
                 "current_code": self.current.model_dump(),
                 "changed_since_last_checkpoint": bool(
                     last_cp and last_cp["fingerprint"] != self.current.fingerprint),
-                "last_checkpoint": last_cp,
+                # observed state only; the agent's summary is a claim (agent_notes)
+                "last_checkpoint": None if last_cp is None else {
+                    k: last_cp[k] for k in ("at", "fingerprint", "head", "changed_files")},
                 "latest_checks": latest,
                 "registered_checks": {
                     name: {"argv": c["argv_json"], "registered_by": c["registered_by"],
                            "registered_at": _iso(c["registered_at"]),
-                           "changed_during_session": _iso(c["registered_at"]) > self.started_at}
+                           "changed_during_session": self._registered_after_start(c)}
                     for name, c in sorted(self.registered_checks.items())},
             },
             "tasks": tasks,
             "agent_notes": {
                 "decisions": notes("decision"), "context": notes("context")[-20:],
                 "blockers": notes("blocker"), "next_steps": notes("next_step")[-5:],
+                "checkpoints": self.checkpoints[-10:],
                 "trust": "recorded by previous agents; claims, not proof",
             },
-            "checkpoints": self.checkpoints[-10:],
             "rules": RULES,
         }
+
+
+    def _registered_after_start(self, check: dict[str, Any]) -> bool:
+        at = check["registered_at"]
+        if not isinstance(at, datetime) or self.started_at is None:
+            return False
+        return at > self.started_at
 
 
 def _iso(value: Any) -> str:
@@ -140,7 +149,9 @@ def build_view(session: dict[str, Any], events: list[dict[str, Any]], current: R
     view = SessionView(session_id=session["session_id"], repo_root=session["repo_root"],
                        goal=session["goal"], status=session["status"], current=current,
                        registered_checks={c["name"]: c for c in checks},
-                       started_at=_iso(session["created_at"]))
+                       started_at=session["created_at"]
+                       if isinstance(session["created_at"], datetime) else None,
+                       last_seq=int(session["last_seq"]))
     for e in events:
         p, at, actor = e["payload_json"], _iso(e["occurred_at"]), e["actor"]
         match e["type"]:
@@ -165,22 +176,32 @@ def build_view(session: dict[str, Any], events: list[dict[str, Any]], current: R
                                          "head": state.get("head"),
                                          "changed_files": state.get("changed_files", [])[:50]})
             case "CheckRan":
-                view.check_runs.append({**p, "seq": e["seq"], "at": at, "by": actor})
+                run = {**p, "seq": e["seq"], "at": at, "by": actor}
+                view.check_runs.append(run)
+                view.latest_runs[p["name"]] = run
             case "SessionClosed":
                 view.closed_reason = p["reason"]
     return view
 
 
-def render_markdown(view: SessionView) -> str:
-    d = view.to_dict()
+def _line(text: Any, limit: int = 500) -> str:
+    """Agent-written text on one line, so it can never forge headings or list items."""
+    flat = " ".join(str(text).split())
+    return flat if len(flat) <= limit else flat[:limit] + "…"
+
+
+def render_markdown(view: SessionView, d: dict[str, Any] | None = None) -> str:
+    d = view.to_dict() if d is None else d
     facts = d["verified_facts"]
     cur = facts["current_code"]
-    lines = [f"# Continuum coding brief: {view.goal}", "",
+    lines = ["# Continuum coding brief", "",
+             f"Goal (from the agent that started it): {_line(view.goal)}", "",
              f"Session `{view.session_id}` in `{view.repo_root}` ({view.status}).",
-             "Agents so far: " + ", ".join(f"{a['agent']} ({a['event']})" for a in view.agents),
+             "Agents so far: " + ", ".join(f"{_line(a['agent'], 120)} ({a['event']})"
+                                         for a in view.agents),
              "", "## Verified facts (observed by Continuum)", "",
              f"- Code now: {cur['vcs']} `{(cur.get('head') or '')[:12]}` on "
-             f"`{cur.get('branch')}`; {len(cur['changed_files'])} changed file(s); "
+             f"`{_line(cur.get('branch'), 120)}`; {len(cur['changed_files'])} changed file(s); "
              f"fingerprint `{cur['fingerprint'][:19]}…`",
              f"- Changed since last checkpoint: {facts['changed_since_last_checkpoint']}"]
     for name, c in facts["latest_checks"].items():
@@ -188,11 +209,13 @@ def render_markdown(view: SessionView) -> str:
         where = "on current code" if c["on_current_code"] else "on OLDER code (re-run)"
         if not c["definition_unchanged"]:
             where += "; check definition CHANGED since (re-run)"
+        if c["modified_tree"]:
+            where += "; ⚠ the check modified the working tree"
         lines.append(f"- Check `{name}`: {state} {where}")
     for name, c in facts["registered_checks"].items():
         if c["changed_during_session"]:
             lines.append(f"- ⚠ Check `{name}` was (re)registered during this session by "
-                         f"{c['registered_by']} at {c['registered_at']}")
+                         f"{_line(c['registered_by'], 120)} at {c['registered_at']}")
     lines += ["", "## Tasks", ""]
     for t in d["tasks"]:
         mark = "✅ verified" if t["verified"] else ("☑ done (unverified)" if t["status"] == "done"
@@ -200,16 +223,16 @@ def render_markdown(view: SessionView) -> str:
         if t["needs_reverification"]:
             mark += " ⚠ needs re-verification (code changed)"
         checks = f" — checks: {', '.join(t['checks'])}" if t["checks"] else ""
-        lines.append(f"- [{mark}] {t['title']} (`{t['task_id']}`){checks}")
+        lines.append(f"- [{mark}] `{t['task_id']}`: {_line(t['title'])}{checks}")
     notes = d["agent_notes"]
     lines += ["", "## Agent notes (claims from previous agents)", ""]
     for label, key in (("Next steps", "next_steps"), ("Blockers", "blockers"),
                        ("Decisions", "decisions"), ("Context", "context")):
         if notes[key]:
             lines.append(f"**{label}**")
-            lines += [f"- {n['text']}  _(by {n['by']})_" for n in notes[key]]
-    if facts["last_checkpoint"]:
-        cp = facts["last_checkpoint"]
-        lines += ["", f"Last checkpoint: {cp['summary']} (by {cp['by']})"]
+            lines += [f"- {_line(n['text'])}  _(by {_line(n['by'], 120)})_" for n in notes[key]]
+    if notes["checkpoints"]:
+        cp = notes["checkpoints"][-1]
+        lines += ["", f"Last checkpoint: {_line(cp['summary'])} (by {_line(cp['by'], 120)})"]
     lines += ["", "## Rules", ""] + [f"- {r}" for r in RULES]
     return "\n".join(lines) + "\n"

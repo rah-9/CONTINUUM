@@ -32,6 +32,7 @@ from continuum.coding.models import (
     CheckRan,
     NoteKind,
     NoteRecorded,
+    RepoState,
     SessionClosed,
     SessionStarted,
     TaskAdded,
@@ -40,19 +41,49 @@ from continuum.coding.models import (
 from continuum.coding.repo import observe, resolve_repo
 from continuum.core.canonical import digest, sha256_hex
 from continuum.core.clock import Clock
-from continuum.core.errors import InvalidTransitionError, NotFoundError, SpecValidationError
+from continuum.core.errors import (
+    ContinuumError,
+    InvalidTransitionError,
+    NotFoundError,
+    SpecValidationError,
+)
 from continuum.core.ids import IdGenerator
 from continuum.core.redaction import Redactor
 from continuum.core.store import Store
+
+
+class StaleViewError(ContinuumError):
+    code = "stale_view"
+
 
 MAX_TEXT = 4000
 MAX_OUTPUT_TAIL = 4000
 _NAME = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
 
 
-def _clean_agent(agent: str) -> str:
-    agent = " ".join(agent.split())[:120]
-    return agent or "unknown-agent"
+HUMAN_PREFIX = "human:"
+
+
+def _validated_tasks(tasks: list[Any] | None) -> list[tuple[str, list[str]]]:
+    """Validate every initial task before anything is written."""
+    out: list[tuple[str, list[str]]] = []
+    for task in tasks or []:
+        if not isinstance(task, dict) or set(task) - {"title", "checks"}:
+            raise SpecValidationError("each task is {title: str, checks?: [str]}")
+        title, checks = task.get("title"), task.get("checks", [])
+        if not isinstance(title, str) or not title.strip():
+            raise SpecValidationError("each task needs a non-empty title")
+        if not isinstance(checks, list) or not all(isinstance(c, str) for c in checks):
+            raise SpecValidationError("task checks must be a list of check names")
+        out.append((title, _check_names(checks)))
+    return out
+
+
+def _check_names(checks: list[str]) -> list[str]:
+    for name in checks:
+        if not _NAME.match(name):
+            raise SpecValidationError(f"invalid check name {name!r}")
+    return sorted(set(checks))
 
 
 class CodingContinuity:
@@ -65,6 +96,13 @@ class CodingContinuity:
 
     # ===== journal =====================================================================
 
+    def _actor(self, agent: str, *, human: bool = False) -> str:
+        """Agent labels are free text from a model: redacted, bounded, never 'human:'."""
+        label = " ".join(self.redactor.text(agent).split())[:120] or "unknown-agent"
+        if label.lower().startswith(HUMAN_PREFIX):
+            raise SpecValidationError("agent labels may not start with 'human:'")
+        return HUMAN_PREFIX + label if human else label
+
     def _text(self, value: str, field: str) -> str:
         value = self.redactor.text(value.strip())
         if not value:
@@ -72,9 +110,8 @@ class CodingContinuity:
         return value[:MAX_TEXT]
 
     def _append(self, session_id: str, payload: _P, actor: str, *,
-                status: str | None = None) -> int:
-        etype = TYPE_OF[type(payload)]
-        now = self.clock.now()
+                status: str | None = None, expect_seq: int | None = None) -> int:
+        """One event, one transaction. ``expect_seq`` rejects a journal that moved on."""
         with self.store.connection() as conn:
             try:
                 row = conn.execute(
@@ -84,21 +121,31 @@ class CodingContinuity:
                     raise NotFoundError(f"coding session {session_id} not found")
                 if row["status"] == "closed":
                     raise InvalidTransitionError(f"coding session {session_id} is closed")
-                seq = row["last_seq"] + 1
-                conn.execute(
-                    b"INSERT INTO coding_events (session_id, seq, type, actor, payload_json, "
-                    b"occurred_at) VALUES (%s, %s, %s, %s, %s, %s)",
-                    (session_id, seq, etype.value, actor, Jsonb(payload.model_dump(mode="json")),
-                     now))
+                if expect_seq is not None and row["last_seq"] != expect_seq:
+                    raise StaleViewError(f"coding session {session_id} changed while this "
+                                         "request was being evaluated; retry")
+                seq = self._insert(conn, session_id, row["last_seq"] + 1, payload, actor)
                 conn.execute(
                     b"UPDATE coding_sessions SET last_seq = %s, updated_at = %s, "
                     b"status = COALESCE(%s, status) WHERE session_id = %s",
-                    (seq, now, status, session_id))
+                    (seq, self.clock.now(), status, session_id))
                 conn.commit()
             except BaseException:
                 conn.rollback()
                 raise
-        return int(seq)
+        return seq
+
+    def _insert(self, conn: Any, session_id: str, seq: int, payload: _P, actor: str) -> int:
+        conn.execute(
+            b"INSERT INTO coding_events (session_id, seq, type, actor, payload_json, "
+            b"occurred_at) VALUES (%s, %s, %s, %s, %s, %s)",
+            (session_id, seq, TYPE_OF[type(payload)].value, actor,
+             Jsonb(payload.model_dump(mode="json")), self.clock.now()))
+        return seq
+
+    def _require_open(self, session: dict[str, Any]) -> None:
+        if session["status"] == "closed":
+            raise InvalidTransitionError(f"coding session {session['session_id']} is closed")
 
     def _events(self, session_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         with self.store.read() as q:
@@ -110,45 +157,55 @@ class CodingContinuity:
                             (session_id,))
         return session, events
 
-    def _view(self, session_id: str) -> SessionView:
+    def _view(self, session_id: str, current: RepoState | None = None) -> SessionView:
         session, events = self._events(session_id)
         with self.store.read() as q:
             checks = q._all("SELECT name, argv_json, timeout_seconds, registered_by, "
                             "registered_at FROM coding_checks WHERE repo_root = %s "
                             "ORDER BY name", (session["repo_root"],))
-        current = observe(resolve_repo(session["repo_root"]))
+        if current is None:
+            current = observe(resolve_repo(session["repo_root"]))
         return build_view(session, events, current, checks)
 
     # ===== agent operations ===========================================================
 
     def start(self, repo_path: str, goal: str, *, agent: str,
               tasks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """Session row, SessionStarted and initial tasks commit together or not at all."""
+        planned = _validated_tasks(tasks)
+        actor = self._actor(agent)
+        clean_goal = self._text(goal, "goal")
         root = resolve_repo(repo_path)
         state = observe(root)
+        events: list[_P] = [SessionStarted(repo_root=str(root), goal=clean_goal, agent=actor,
+                                           state=state)]
+        events += [TaskAdded(task_id=self.ids.new("task"), title=self._text(title, "title"),
+                             checks=checks) for title, checks in planned]
         session_id = self.ids.new("cs")
         now = self.clock.now()
         with self.store.connection() as conn:
-            conn.execute(
-                b"INSERT INTO coding_sessions (session_id, repo_root, goal, status, last_seq, "
-                b"created_at, updated_at) VALUES (%s, %s, %s, 'active', 0, %s, %s)",
-                (session_id, str(root), self._text(goal, "goal"), now, now))
-            conn.commit()
-        self._append(session_id, SessionStarted(repo_root=str(root), goal=self._text(goal, "goal"),
-                                                agent=_clean_agent(agent), state=state),
-                     _clean_agent(agent))
-        for task in tasks or []:
-            self.add_task(session_id, task["title"], checks=list(task.get("checks", [])),
-                          agent=agent)
-        return self.brief(session_id)
+            try:
+                conn.execute(
+                    b"INSERT INTO coding_sessions (session_id, repo_root, goal, status, "
+                    b"last_seq, created_at, updated_at) "
+                    b"VALUES (%s, %s, %s, 'active', %s, %s, %s)",
+                    (session_id, str(root), clean_goal, len(events), now, now))
+                for seq, payload in enumerate(events, start=1):
+                    self._insert(conn, session_id, seq, payload, actor)
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+        return self.brief(session_id, current=state)
 
     def resume(self, *, agent: str, session_id: str | None = None,
                repo_path: str | None = None) -> dict[str, Any]:
         """Join a session as a (possibly different) model or chat and get the brief."""
+        actor = self._actor(agent)
         sid = session_id or self.latest_active(repo_path)
         state = observe(resolve_repo(self._events(sid)[0]["repo_root"]))
-        self._append(sid, AgentJoined(agent=_clean_agent(agent), state=state),
-                     _clean_agent(agent))
-        return self.brief(sid)
+        self._append(sid, AgentJoined(agent=actor, state=state), actor)
+        return self.brief(sid, current=state)
 
     def latest_active(self, repo_path: str | None) -> str:
         if repo_path is None:
@@ -163,30 +220,37 @@ class CodingContinuity:
 
     def add_task(self, session_id: str, title: str, *, checks: list[str],
                  agent: str) -> dict[str, Any]:
-        for name in checks:
-            if not _NAME.match(name):
-                raise SpecValidationError(f"invalid check name {name!r}")
+        names = _check_names(checks)
+        actor = self._actor(agent)
         task_id = self.ids.new("task")
         self._append(session_id, TaskAdded(task_id=task_id, title=self._text(title, "title"),
-                                           checks=sorted(set(checks))), _clean_agent(agent))
-        return {"task_id": task_id, "checks": sorted(set(checks))}
+                                           checks=names), actor)
+        return {"task_id": task_id, "checks": names}
 
     def set_task_status(self, session_id: str, task_id: str, status: str, *, agent: str,
                         note: str = "") -> dict[str, Any]:
         if status not in ("open", "in_progress", "blocked", "dropped"):
             raise SpecValidationError("use complete_task to mark a task done")
+        actor = self._actor(agent)
         view = self._view(session_id)
         task = view.task(task_id)
         self._append(session_id, TaskStatusChanged(
             task_id=task.task_id, status=status,
             verified=False, fingerprint=view.current.fingerprint,
-            note=self.redactor.text(note)[:MAX_TEXT]), _clean_agent(agent))
+            note=self.redactor.text(note)[:MAX_TEXT]), actor)
         return {"task_id": task_id, "status": status}
 
     def complete_task(self, session_id: str, task_id: str, *, agent: str,
                       note: str = "") -> dict[str, Any]:
-        """Mark done. Verified only with passing checks on the current code."""
+        """Mark done. Verified only with passing checks on the current code.
+
+        The evidence is evaluated on a snapshot; the append is rejected if the journal
+        moved on meanwhile (e.g. another agent recorded a failing run), and the code is
+        re-observed right before committing so an edit in between is not certified."""
+        actor = self._actor(agent)
         view = self._view(session_id)
+        if view.status == "closed":
+            raise InvalidTransitionError(f"coding session {session_id} is closed")
         task = view.task(task_id)
         missing = [c for c in task.checks if c not in view.registered_checks]
         if missing:
@@ -206,29 +270,41 @@ class CodingContinuity:
             return {"status": "refused", "task_id": task_id,
                     "reason": f"run these checks on the current code first: {stale}"}
         verified = bool(task.checks)
-        self._append(session_id, TaskStatusChanged(
-            task_id=task_id, status="done", verified=verified,
-            fingerprint=view.current.fingerprint, evidence=evidence,
-            note=self.redactor.text(note)[:MAX_TEXT]), _clean_agent(agent))
+        if verified and observe(resolve_repo(view.repo_root)).fingerprint != \
+                view.current.fingerprint:
+            return {"status": "refused", "task_id": task_id,
+                    "reason": "the code changed while completing; re-run the checks"}
+        try:
+            self._append(session_id, TaskStatusChanged(
+                task_id=task_id, status="done", verified=verified,
+                fingerprint=view.current.fingerprint, evidence=evidence,
+                note=self.redactor.text(note)[:MAX_TEXT]), actor, expect_seq=view.last_seq)
+        except StaleViewError:
+            return {"status": "refused", "task_id": task_id,
+                    "reason": "the session changed while completing (another agent wrote "
+                              "to it); call coding_brief and retry"}
         return {"status": "done", "task_id": task_id, "verified": verified,
                 "warning": None if verified else
                 "no checks named for this task: recorded as an unverified claim"}
 
     def note(self, session_id: str, kind: NoteKind, text: str, *, agent: str) -> dict[str, Any]:
         seq = self._append(session_id, NoteRecorded(kind=kind, text=self._text(text, "text")),
-                           _clean_agent(agent))
+                           self._actor(agent))
         return {"seq": seq, "kind": kind}
 
     def checkpoint(self, session_id: str, summary: str, *, agent: str) -> dict[str, Any]:
+        actor = self._actor(agent)
         root = resolve_repo(self._events(session_id)[0]["repo_root"])
         state = observe(root)
         seq = self._append(session_id, CheckpointCaptured(
-            summary=self._text(summary, "summary"), state=state), _clean_agent(agent))
+            summary=self._text(summary, "summary"), state=state), actor)
         return {"seq": seq, "fingerprint": state.fingerprint, "head": state.head,
                 "changed_files": state.changed_files}
 
     def run_check(self, session_id: str, name: str, *, agent: str) -> dict[str, Any]:
+        actor = self._actor(agent)
         session, _ = self._events(session_id)
+        self._require_open(session)  # a closed session never runs a command
         root = resolve_repo(session["repo_root"])
         with self.store.read() as q:
             check = q._one("SELECT argv_json, timeout_seconds FROM coding_checks "
@@ -250,33 +326,35 @@ class CodingContinuity:
             exit_code = None
         except FileNotFoundError as exc:
             output, exit_code = str(exc).encode(), 127
+        except OSError as exc:  # not executable, a directory, argv too long, ...
+            output, exit_code = f"{type(exc).__name__}: {exc}".encode(), 126
         duration_ms = int((time.monotonic() - started) * 1000)
         text = self.redactor.text(output.decode("utf-8", errors="replace"))
         passed = exit_code == 0 and not timed_out
-        after = observe(root)
-        if after.fingerprint != before.fingerprint:
-            text += "\n[continuum] note: this check modified the working tree."
+        modified = observe(root).fingerprint != before.fingerprint
         payload = CheckRan(name=name, argv_sha256=digest(argv), exit_code=exit_code,
                            passed=passed, timed_out=timed_out, duration_ms=duration_ms,
                            output_tail=text[-MAX_OUTPUT_TAIL:],
                            output_sha256="sha256:" + sha256_hex(text),
-                           fingerprint=before.fingerprint)
-        seq = self._append(session_id, payload, _clean_agent(agent))
+                           fingerprint=before.fingerprint, modified_tree=modified)
+        seq = self._append(session_id, payload, actor)
         return {"seq": seq, "name": name, "passed": passed, "exit_code": exit_code,
-                "timed_out": timed_out, "duration_ms": duration_ms,
+                "timed_out": timed_out, "duration_ms": duration_ms, "modified_tree": modified,
                 "output_tail": payload.output_tail[-1500:]}
 
-    def close(self, session_id: str, reason: str, *, agent: str) -> dict[str, Any]:
+    def close(self, session_id: str, reason: str, *, agent: str,
+              human: bool = False) -> dict[str, Any]:
+        """``human=True`` only from the human CLI; agents can never record 'human:'."""
         self._append(session_id, SessionClosed(reason=self._text(reason, "reason")),
-                     _clean_agent(agent), status="closed")
+                     self._actor(agent, human=human), status="closed")
         return {"session_id": session_id, "status": "closed"}
 
     # ===== read-only ==================================================================
 
-    def brief(self, session_id: str) -> dict[str, Any]:
-        view = self._view(session_id)
+    def brief(self, session_id: str, *, current: RepoState | None = None) -> dict[str, Any]:
+        view = self._view(session_id, current)
         body = view.to_dict()
-        body["markdown"] = render_markdown(view)
+        body["markdown"] = render_markdown(view, body)
         return body
 
     def sessions(self, repo_path: str | None = None) -> list[dict[str, Any]]:
@@ -307,8 +385,10 @@ class CodingContinuity:
             raise SpecValidationError(f"invalid check name {name!r}")
         if not argv or not all(isinstance(a, str) and a for a in argv):
             raise SpecValidationError("argv must be a non-empty list of strings")
-        if not actor:
+        if not actor.strip():
             raise SpecValidationError("a human actor id is required")
+        if not 1 <= timeout_seconds <= 3600:
+            raise SpecValidationError("timeout_seconds must be between 1 and 3600")
         root = resolve_repo(repo_path)
         with self.store.connection() as conn:
             conn.execute(
@@ -318,7 +398,8 @@ class CodingContinuity:
                 b"timeout_seconds = EXCLUDED.timeout_seconds, "
                 b"registered_by = EXCLUDED.registered_by, "
                 b"registered_at = EXCLUDED.registered_at",
-                (str(root), name, Jsonb(argv), timeout_seconds, f"human:{actor}",
+                (str(root), name, Jsonb(argv), timeout_seconds,
+                 HUMAN_PREFIX + " ".join(actor.split())[:120],
                  self.clock.now()))
             conn.commit()
         return {"repo_root": str(root), "name": name, "argv": argv}

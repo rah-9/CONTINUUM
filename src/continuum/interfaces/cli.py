@@ -134,9 +134,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     command: list[str] = []
-    if "--" in raw:  # everything after `--` is a check's argv, never Continuum options
+    # `coding checks add … -- cmd args`: everything after `--` is the check's argv, never
+    # Continuum options. Other commands keep argparse's normal `--` escape.
+    if "--" in raw:
         cut = raw.index("--")
-        raw, command = raw[:cut], raw[cut + 1:]
+        head = raw[:cut]
+        if any(head[i:i + 3] == ["coding", "checks", "add"] for i in range(len(head))):
+            raw, command = head, raw[cut + 1:]
     args = build_parser().parse_args(raw)
     args.argv = command
     configure_logging(args.log_level)
@@ -218,7 +222,7 @@ def _coding(sdk: Continuum, args: argparse.Namespace) -> int:
         case "sessions":
             _print(coding.sessions(args.repo))
         case "close":
-            _print(coding.close(args.session, args.reason, agent=f"human:{args.actor}"))
+            _print(coding.close(args.session, args.reason, agent=args.actor, human=True))
         case "resume":
             brief = coding.resume(agent=args.agent, session_id=args.session,
                                   repo_path=None if args.session else args.repo)
