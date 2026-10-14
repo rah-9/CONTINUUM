@@ -20,6 +20,8 @@ Measured, then improved (D-034). All numbers are on a 20,000-file git repository
   - every commit falsely flagged verified work as changed. The fingerprint is now the content tree, not the commit; this costs about 165 ms on a 20k-file repo
   - in a fresh repo, newer git (2.55) failed `git add --update -- .`
 
+- **The realistic trial is packaged in `eval/handoff_trials/`:** setup, prompts, hidden tests, judge, and a GPT → Claude runbook (Codex CLI → Claude Code). The cross-vendor run awaits OpenAI access.
+
 ### Performance
 - **Fingerprint:** 7 → 5 git processes. It was about 2× faster before the content-tree change above, which trades that speed back for accuracy. Untracked files now come from the single `git status` call, and the index is listed only when `.gitmodules` exists. A non-functional test pins the git-call count. Measured on the 20k-file repo: a fingerprint takes about 165 ms with the content tree. Accuracy over speed: we chose the content tree over a 70 ms commit-based fingerprint that raised false alarms.
 
