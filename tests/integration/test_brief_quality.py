@@ -110,3 +110,27 @@ def test_b4_decision_reasons_and_next_steps_reach_the_next_model_whole(coding, r
     coding.note(sid, "next_step", "Do task 2 next. " * 30 + "END-OF-NEXT", agent="m")
     md = compact(coding.brief(sid))["markdown"]
     assert "END-OF-REASON" in md and "END-OF-CONTEXT" in md and "END-OF-NEXT" in md
+
+
+def test_b5_code_map_shows_where_the_session_worked(coding, repo):
+    """The next model should read the session's code, not explore the repository."""
+    (repo / "lib").mkdir()
+    (repo / "lib" / "export.py").write_text("import json\n\n\ndef old():\n    return 1\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "before the session")
+    coding.start(str(repo), "export feature", agent="claude-opus-4-8")
+    (repo / "lib" / "export.py").write_text(
+        "import json\n\n\ndef old():\n    return 1\n\n\ndef export_session(rows):\n"
+        "    return [json.dumps(r, sort_keys=True) for r in rows]\n")
+    _git(repo, "commit", "-qam", "add export_session")      # committed work counts
+    (repo / "lib" / "cli.py").write_text("def main():\n    pass\n")  # untracked work counts
+    brief = coding.resume(agent="claude-opus-5-5", repo_path=str(repo))
+    files = {f["path"]: f for f in brief["verified_facts"]["session_changes"]["files"]}
+    assert set(files) == {"lib/export.py", "lib/cli.py"}
+    assert files["lib/export.py"]["added"] >= 3 and files["lib/cli.py"]["status"] == "untracked"
+    assert "old" in " ".join(files["lib/export.py"]["near"])  # git's enclosing context
+    assert "export_session" in files["lib/export.py"]["defines"]
+    assert "main" in files["lib/cli.py"]["defines"]
+    md = brief["markdown"]
+    assert "Code touched in this session" in md and "lib/export.py" in md
+    assert "app.py" not in md.split("Code touched in this session")[1].split("##")[0]
