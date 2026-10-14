@@ -71,11 +71,11 @@ CONTINUUM_LIVE=1 pytest -m live              # real providers (needs keys + prof
 
 | | v0.6.3 | v0.7.0 |
 |---|---|---|
-| fingerprint (`observe`) | 120–170 ms, 7 git calls | ~70 ms, 5 git calls |
-| `coding_resume` / `coding_brief` | 132 / 145 ms | 83 / 74 ms |
-| `coding_run_check` / `coding_complete_task` | 270 / 235 ms | 168 / 140 ms |
-| brief sent over MCP | ~8.3k tokens (JSON + duplicate Markdown) | ~1.3k tokens (compact) |
+| fingerprint (`observe`) | 120–170 ms, 7 git calls; commit id included (false "changed" after every commit) | ~165 ms, 5 git calls; content tree (commits are not changes) |
+| brief sent over MCP | ~8.3k tokens (JSON + duplicate Markdown) | ~1.3k tokens typical, ≤ ~4k worst case (compact, notes whole) |
 | full JSON brief | grows with the session | ≤ ~8k tokens, bounded |
+
+Transfer quality with real models (the goal) is measured in [`HANDOFF-TRIALS.md`](HANDOFF-TRIALS.md).
 
 A full fenced runtime run (`inventory_upload_v1`, fake models) issues 271 SQL statements for 37 events in about 300 ms.
 
