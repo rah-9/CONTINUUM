@@ -11,6 +11,10 @@ work exactly where the last one stopped. Follow these rules in every session:
    - If it reports no active session, call `coding_start` with the goal and the planned tasks,
      each naming the checks that prove it (`checks: ["unit"]`).
    - Read the returned brief before touching code.
+   - **Do not re-read the repository.** Start from the files under "Code touched in this session"
+     (the code map) and the next step; open other files only when the work needs them.
+   - The brief is compact Markdown. Call `coding_brief(detail="full")` only if you need check
+     output tails or registered commands.
 2. **Trust facts, verify claims.**
    - The brief's `verified_facts` were observed by Continuum: code fingerprint, check results.
    - `agent_notes` are what earlier models said. Confirm critical claims against the code.

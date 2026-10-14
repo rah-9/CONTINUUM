@@ -143,6 +143,15 @@ Every feature is judged by one question: *does it keep valid work and prevent un
   - shell-only agents through the CLI
   - local machines (Linux, macOS, Windows) and ephemeral cloud containers with a hosted PostgreSQL
 
+### Phase 8: v0.7.0, judged by real model switches
+
+- **The measure changed** from micro-benchmarks to transfer quality: does the next model finish the work correctly, keep what was said only in the earlier chat, avoid redoing work, and at what token cost (D-035).
+- **Real Sonnet → Opus trials** with hidden acceptance tests ([HANDOFF-TRIALS.md](HANDOFF-TRIALS.md)): with Continuum 4/4 in both realistic runs, without it 1/4 in both. The trials found three defects no unit test had caught; all are fixed.
+- **Content fingerprint:** committing is no longer a change, editing is.
+- **Compact, bounded brief** (about 1.3k tokens, under 4k worst case) and a **code map** of the session's files, which cut the next model's work tokens by about 20% (D-034, D-035).
+- **No LLM inside Continuum.** Memory is the agent's own notes plus observed facts, so there is no extra model cost.
+- The trial harness is packaged in `eval/handoff_trials/` with a GPT → Claude runbook.
+
 ## 4. Evidence so far
 
 Results are from the deterministic fake-model safety matrix: 15 tasks × 6 faults × 3 connector modes × 2 seeds, 912 paired cells. They test **modeled** safety properties only. They are not claims about live providers. The full report is in `lab-reports/`.
@@ -186,8 +195,9 @@ These are ordered by value to the core idea. Each item should become its own bra
 5. ~~Packet token accounting with each provider's own tokenizer~~: done in v0.3.0 for LiteLLM-backed providers. Remaining: validate the counts against real provider usage reports.
 6. **MCP progress notifications** so agents can stream long runs instead of waiting for `run_task` to return; an async `run_task` + `get_status` polling mode.
 7. **Optional OpenTelemetry export** from the JSON trace (post-MVP per the PRD).
-8. **Coding sessions keyed by git remote** as well as absolute path, so cloud checkouts at different paths share a session. Plus an optional `coding_diff_since(checkpoint)` read tool.
-9. **Out of scope until evidence justifies it:** multi-host deployment, a dashboard and remote MCP tool discovery.
+8. **GPT → Claude handoff trial** (Codex CLI → Claude Code) with the packaged harness, plus more trial types (bug fix, refactor, frontend) and more runs per arm, so transfer quality has a sample size, not an anecdote.
+9. **Coding sessions keyed by git remote** as well as absolute path, so cloud checkouts at different paths share a session. Plus an optional `coding_diff_since(checkpoint)` read tool.
+10. **Out of scope until evidence justifies it:** multi-host deployment, a dashboard and remote MCP tool discovery.
 
 ## 6. How we work
 
