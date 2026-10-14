@@ -134,7 +134,17 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _utf8_output() -> None:
+    """Agents read our output through pipes. On Windows a pipe defaults to the ANSI code
+    page (e.g. cp1252), which cannot encode the brief's symbols and would crash."""
+    for stream in (sys.stdout, sys.stderr):
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+        if encoding != "utf8" and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_output()
     raw = list(sys.argv[1:] if argv is None else argv)
     command: list[str] = []
     # `coding checks add … -- cmd args`: everything after `--` is the check's argv, never

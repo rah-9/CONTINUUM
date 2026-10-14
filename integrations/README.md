@@ -34,31 +34,46 @@ protocol. Checks are registered only by a person: `continuum coding checks add .
 uncertain effect, `retry_at_risk` and `abort`. A model must not approve its own side effects. The
 agent shows the user the exact `continuum resolve …` command instead.
 
-## 1. Install once
+## 1. Install once (Linux, macOS, Windows)
+
+You need **PostgreSQL 14+** (local install, Docker, or hosted) and the `continuum` command on
+your PATH. The same command works on every OS:
 
 ```bash
-git clone https://github.com/rah-9/CONTINUUM && cd CONTINUUM
-uv venv -p 3.12 .venv && uv pip install -p .venv -e ".[mcp]"
-export PATH="$PWD/.venv/bin:$PATH"            # or use the absolute path to .venv/bin/continuum
+uv tool install "continuum[mcp] @ git+https://github.com/rah-9/CONTINUUM"   # or: pipx install …
 export CONTINUUM_DATABASE_URL=postgresql://continuum:continuum@localhost:5432/continuum
 continuum doctor                               # checks DB, schema, tasks and model profiles
 ```
 
-The server creates its tables on start. Set `CONTINUUM_CONFIG_DIR` to this repo's `config/`
-directory when the agent launches the server from a different working directory.
+On Windows (PowerShell), set the variable with `setx CONTINUUM_DATABASE_URL "postgresql://…"`.
+Developing Continuum itself? Clone the repo and run `make install` instead.
+
+The server creates its tables on start. State outside PostgreSQL goes in `~/.continuum`
+(`CONTINUUM_HOME`), never in the directory the agent happens to start the server in.
+Pre-registered tasks are read from `./config` when it exists, else `~/.continuum/config`
+(`CONTINUUM_CONFIG_DIR`). Coding continuity needs no task configuration.
 
 ## 2. Connect your agent
 
-- **Claude Code (plugin + skill):**
-  `/plugin marketplace add rah-9/CONTINUUM`, then `/plugin install continuum@continuum`.
-  For the MCP server alone, run `claude mcp add continuum -- continuum mcp`.
-- **Cursor:** copy `cursor/mcp.json` to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json`.
-- **VS Code (Copilot agent mode):** copy `vscode/mcp.json` to `.vscode/mcp.json`.
-- **OpenAI Codex CLI:** append `codex/config.toml` to `~/.codex/config.toml`.
-- **Claude Desktop:** merge `claude-desktop/claude_desktop_config.json` into its config.
-- **Any other MCP client:** run the stdio command `continuum mcp` with the env vars above.
+Every client launches the same stdio command, `continuum mcp`:
 
-Replace the `/absolute/path/...` placeholders with your paths.
+| Agent / IDE | Config in this folder | Where it goes |
+|---|---|---|
+| Claude Code (plugin + skill) | `claude-code/` (marketplace: `../.claude-plugin/`) | `/plugin marketplace add rah-9/CONTINUUM`, then `/plugin install continuum@continuum` |
+| Claude Code (server only) | `claude-code/project.mcp.json` | `.mcp.json` at the repo root, or `claude mcp add continuum -- continuum mcp` |
+| Cursor | `cursor/mcp.json` | `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` |
+| VS Code (Copilot agent mode) | `vscode/mcp.json` | `.vscode/mcp.json` |
+| OpenAI Codex CLI / IDE extension | `codex/config.toml` | append to `~/.codex/config.toml` |
+| Windsurf | `windsurf/mcp_config.json` | `~/.codeium/windsurf/mcp_config.json` |
+| Gemini CLI | `gemini-cli/settings.json` | merge into `~/.gemini/settings.json` or `.gemini/settings.json` |
+| Cline | `cline/cline_mcp_settings.json` | Cline → MCP Servers → Configure (merge) |
+| Claude Desktop | `claude-desktop/claude_desktop_config.json` | merge into its config |
+| JetBrains AI Assistant, Zed, any other MCP client | — | add a stdio server: command `continuum`, args `mcp` |
+| Agents without MCP | — | the CLI: `continuum coding resume --repo . --agent <model>` (see `AGENT_RULES.md`) |
+
+Only `CONTINUUM_DATABASE_URL` needs to be set, either in the config's `env` or in your environment.
+If the IDE can't find `continuum`, use its absolute path (`uv tool dir --bin` shows it; on
+Windows it is `continuum.exe`).
 
 ## 3. Try it
 
