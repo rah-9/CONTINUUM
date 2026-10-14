@@ -233,3 +233,20 @@ The defect surfaced as an intermittent chaos-test failure under load. It was rep
 - `ensure_schema()` compares `schema_meta.version` with the code's version and migrates only when they differ (or on a fresh database). The CLI (except `db-init`/`doctor`) and the MCP server call it, so upgrading Continuum never leaves an agent facing a missing table.
 - `continuum coding checks add … -- cmd args` splits raw argv at `--` before argparse. argparse `REMAINDER` swallowed options such as `--actor` when they appeared after the positionals.
 
+## D-031 — Coding fingerprints fail closed; claims never render as facts
+
+**Context.** A full audit of v0.6.0 found paths where evidence could look valid without being valid: a failed `git` call hashed as empty, diff drivers rewriting the hashed bytes, staged changes ignored before the first commit, and agent text rendered among the facts.
+
+**Decision.**
+- Observation **fails closed**. Any required git call that fails raises `observation_failed`, and nothing is hashed from partial data.
+- Diffs are raw (`--no-ext-diff --no-textconv --no-color`), so repository config cannot change what is fingerprinted.
+- Untracked symlinks are hashed as links.
+- Only caches are excluded at any depth; build directories are excluded only at the root.
+- The brief keeps every agent-written string (goal, titles, notes, checkpoint summaries, agent labels) out of `verified_facts`. In Markdown these strings are flattened to single lines.
+- `human:` actor labels are produced only by the human CLI.
+- `complete_task` uses optimistic concurrency on the session's `last_seq` and re-observes the code before committing.
+- Repository paths are contained (`CONTINUUM_CODING_ROOTS`).
+- Schemas never downgrade, and migrations are serialized with an advisory lock.
+
+**Limitation.** The filesystem is not transactional. An edit between the final observation and the commit is possible, but that window is now microseconds rather than the length of a request. The next brief flags the result as `needs_reverification`.
+
