@@ -16,7 +16,6 @@ Rules (enforced here, not by convention):
 from __future__ import annotations
 
 import re
-import subprocess
 import time
 from datetime import datetime
 from typing import Any
@@ -39,6 +38,7 @@ from continuum.coding.models import (
     TaskStatusChanged,
 )
 from continuum.coding.repo import observe, resolve_repo
+from continuum.coding.runner import run_check_process
 from continuum.core.canonical import digest, sha256_hex
 from continuum.core.clock import Clock
 from continuum.core.errors import (
@@ -62,6 +62,11 @@ _NAME = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
 
 
 HUMAN_PREFIX = "human:"
+
+
+def _clean(text: str) -> str:
+    """PostgreSQL text/JSONB cannot hold U+0000 (binary output, pasted bytes)."""
+    return text.replace("\x00", "\ufffd")
 
 
 def _validated_tasks(tasks: list[Any] | None) -> list[tuple[str, list[str]]]:
@@ -98,13 +103,13 @@ class CodingContinuity:
 
     def _actor(self, agent: str, *, human: bool = False) -> str:
         """Agent labels are free text from a model: redacted, bounded, never 'human:'."""
-        label = " ".join(self.redactor.text(agent).split())[:120] or "unknown-agent"
+        label = " ".join(_clean(self.redactor.text(agent)).split())[:120] or "unknown-agent"
         if label.lower().startswith(HUMAN_PREFIX):
             raise SpecValidationError("agent labels may not start with 'human:'")
         return HUMAN_PREFIX + label if human else label
 
     def _text(self, value: str, field: str) -> str:
-        value = self.redactor.text(value.strip())
+        value = _clean(self.redactor.text(value.strip()))
         if not value:
             raise SpecValidationError(f"{field} must not be empty")
         return value[:MAX_TEXT]
@@ -237,7 +242,7 @@ class CodingContinuity:
         self._append(session_id, TaskStatusChanged(
             task_id=task.task_id, status=status,
             verified=False, fingerprint=view.current.fingerprint,
-            note=self.redactor.text(note)[:MAX_TEXT]), actor)
+            note=_clean(self.redactor.text(note))[:MAX_TEXT]), actor)
         return {"task_id": task_id, "status": status}
 
     def complete_task(self, session_id: str, task_id: str, *, agent: str,
@@ -278,7 +283,7 @@ class CodingContinuity:
             self._append(session_id, TaskStatusChanged(
                 task_id=task_id, status="done", verified=verified,
                 fingerprint=view.current.fingerprint, evidence=evidence,
-                note=self.redactor.text(note)[:MAX_TEXT]), actor, expect_seq=view.last_seq)
+                note=_clean(self.redactor.text(note))[:MAX_TEXT]), actor, expect_seq=view.last_seq)
         except StaleViewError:
             return {"status": "refused", "task_id": task_id,
                     "reason": "the session changed while completing (another agent wrote "
@@ -315,21 +320,11 @@ class CodingContinuity:
         argv: list[str] = list(check["argv_json"])
         before = observe(root)
         started = time.monotonic()
-        timed_out = False
-        try:
-            proc = subprocess.run(argv, cwd=root, capture_output=True,  # noqa: S603 - human-registered argv, no shell
-                                  timeout=check["timeout_seconds"], check=False)
-            output, exit_code = proc.stdout + proc.stderr, proc.returncode
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            output = (exc.stdout or b"") + (exc.stderr or b"")
-            exit_code = None
-        except FileNotFoundError as exc:
-            output, exit_code = str(exc).encode(), 127
-        except OSError as exc:  # not executable, a directory, argv too long, ...
-            output, exit_code = f"{type(exc).__name__}: {exc}".encode(), 126
+        result = run_check_process(argv, root, check["timeout_seconds"])
+        timed_out, exit_code = result.timed_out, result.exit_code
         duration_ms = int((time.monotonic() - started) * 1000)
-        text = self.redactor.text(output.decode("utf-8", errors="replace"))
+        # binary output (NUL bytes) cannot be stored in PostgreSQL text: replace it
+        text = _clean(self.redactor.text(result.output.decode("utf-8", errors="replace")))
         passed = exit_code == 0 and not timed_out
         modified = observe(root).fingerprint != before.fingerprint
         payload = CheckRan(name=name, argv_sha256=digest(argv), exit_code=exit_code,
@@ -383,7 +378,7 @@ class CodingContinuity:
         """Human operators only (CLI). Never exposed to agents over MCP."""
         if not _NAME.match(name):
             raise SpecValidationError(f"invalid check name {name!r}")
-        if not argv or not all(isinstance(a, str) and a for a in argv):
+        if not argv or not all(isinstance(a, str) and a and "\x00" not in a for a in argv):
             raise SpecValidationError("argv must be a non-empty list of strings")
         if not actor.strip():
             raise SpecValidationError("a human actor id is required")

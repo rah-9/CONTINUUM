@@ -58,7 +58,7 @@ Human decisions never travel over MCP. For those, the agent calls `pending_decis
 | `CONTINUUM_DB_SCHEMA` | `public` | one schema per environment or test |
 | `CONTINUUM_HOME` | `~/.continuum` | run workspaces, blobs, mock-service state (per user, so an IDE can start the server from any directory) |
 | `CONTINUUM_CONFIG_DIR` | `./config` if it has `tasks/`, else `~/.continuum/config` | pre-registered tasks and `models.yaml` |
-| `CONTINUUM_OWNER_ID` | `ctl-<host>-<pid>` | lease owner identity |
+| `CONTINUUM_OWNER_ID` | `ctl-<host>-<pid>-<random>` | lease owner identity; if you set it, it must be unique per process, because an equal id is treated as the same controller |
 | `CONTINUUM_LEASE_TTL_SECONDS` | `30` | heartbeat renews every TTL/3 |
 | Provider keys | none | e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`; redacted everywhere |
 

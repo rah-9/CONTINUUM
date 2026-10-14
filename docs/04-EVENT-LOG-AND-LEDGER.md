@@ -138,7 +138,7 @@ timeout_seconds: 20
 `resolve_action(run_id, action_id, decision, evidence_ref, actor, reason)` accepts:
 
 - `confirmed`: requires an external receipt/reference; action becomes confirmed with provenance `human_assisted`, milestone still independently verifies.
-- `abort`: marks skipped and halts required work; not a successful verified completion.
+- `abort`: marks skipped and halts required work; not a successful verified completion. On a run that already ended (cancelled, failed, completed) it only marks the action skipped: a terminal run's outcome is never rewritten. `retry_at_risk` on an ended run is refused.
 - `retry_at_risk`: explicitly opts into an action attempt that may duplicate, with warning recorded; never counted as automatically safe recovery.
 
 No implicit decision from model text. Protect local HTTP decision endpoint from arbitrary remote access; v1 is loopback only. On resume, process unresolved decisions **before** any new side-effecting action.

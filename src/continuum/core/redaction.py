@@ -16,6 +16,7 @@ REDACTED = "[REDACTED]"
 _SECRET_KEY = re.compile(r"(api[_-]?key|secret|token|password|passwd|authorization|"
                          r"cookie|credential|private[_-]?key)", re.IGNORECASE)
 _SECRET_ENV = re.compile(r"(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)", re.IGNORECASE)
+_URL_PASSWORD = re.compile(r"[a-z][a-z0-9+.-]*://[^:/@\s]*:([^@\s]+)@", re.IGNORECASE)
 
 
 class Redactor:
@@ -26,6 +27,8 @@ class Redactor:
     @classmethod
     def from_environment(cls, extra: Iterable[str] = ()) -> Redactor:
         values = [v for k, v in os.environ.items() if _SECRET_ENV.search(k)]
+        # passwords embedded in connection URLs (CONTINUUM_DATABASE_URL, *_DSN, ...)
+        values += [m.group(1) for v in os.environ.values() for m in _URL_PASSWORD.finditer(v)]
         return cls([*values, *extra])
 
     def text(self, value: str) -> str:

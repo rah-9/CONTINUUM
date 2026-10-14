@@ -11,17 +11,21 @@ R2_atomic_event_projection:
   - tests/integration/test_store.py::test_event_and_projection_commit_or_roll_back_together
   - tests/integration/test_store.py::test_damaged_projection_is_detected_and_rebuilt_exactly
   - tests/integration/test_schema.py::test_database_rejects_invariant_violations
+  - tests/integration/test_pass2_hardening.py::test_q5_float_costs_do_not_break_projection_equivalence
 R3_single_owner_lease_fencing:
   - tests/integration/test_leases.py::test_renewal_keeps_epoch_and_takeover_increments_it
   - tests/integration/test_store.py::test_stale_or_missing_fence_cannot_write
   - tests/chaos/test_processes.py::test_two_processes_racing_to_resume_cannot_both_own
   - tests/chaos/test_heartbeat.py::test_heartbeat_keeps_lease_through_slow_tool
   - tests/integration/test_core_hardening.py::test_k2_same_process_cannot_operate_twice_on_one_run
+  - tests/integration/test_pass2_hardening.py::test_q14_default_owner_ids_are_unique_even_with_same_host_and_pid
 R4_tool_gateway:
   - tests/integration/test_gateway.py::test_duplicate_proposal_reuses_action_and_never_redispatches
   - tests/integration/test_gateway.py::test_same_identity_different_args_is_intent_conflict
   - tests/integration/test_gateway.py::test_model_cannot_use_unlisted_tool_or_bypass_permissions
   - tests/integration/test_gateway.py::test_tool_schemas_come_only_from_the_task_allowlist
+  - tests/integration/test_pass2_hardening.py::test_q1_model_path_escape_in_bound_fields_is_rejected
+  - tests/integration/test_pass2_hardening.py::test_q2_nul_in_model_tool_args_is_rejected
 R5_unknown_recovery:
   - tests/integration/test_reconciliation.py::test_commit_then_drop_is_confirmed_by_authoritative_query
   - tests/integration/test_reconciliation.py::test_absent_but_pending_commit_is_not_retried_on_negative_read
@@ -48,6 +52,7 @@ R9_budgets:
   - tests/integration/test_budgets.py::test_model_call_budget_is_enforced_across_handoffs
   - tests/integration/test_budgets.py::test_recovery_budget_and_no_silent_reset
   - tests/integration/test_budgets.py::test_downtime_does_not_count_as_active_time
+  - tests/integration/test_pass2_hardening.py::test_q15_recovery_work_counts_as_active_time
 R10_interfaces:
   - tests/integration/test_interfaces.py::test_sdk_lifecycle_with_approval
   - tests/integration/test_interfaces.py::test_http_api_endpoints
@@ -57,6 +62,8 @@ R10_interfaces:
   - tests/integration/test_core_hardening.py::test_k4_unknown_model_alias_is_rejected_before_any_run_is_created
   - tests/integration/test_core_hardening.py::test_k5_bad_task_files_are_reported_not_fatal
   - tests/integration/test_core_hardening.py::test_k5_mcp_masks_unexpected_errors_and_list_runs_tolerates_bad_runs
+  - tests/integration/test_portability.py::test_p1_cli_output_survives_a_non_utf8_pipe
+  - tests/integration/test_portability.py::test_p2_state_never_lands_in_the_launch_directory
 R11_side_effect_free_replay:
   - tests/integration/test_replay.py::test_inspect_invokes_no_tool_or_model
   - tests/integration/test_observability.py::test_timeline_and_trace_export_are_read_only
@@ -114,6 +121,7 @@ NF2_secrets_never_persisted:
   - tests/nonfunctional/test_nonfunctional.py::test_nf2_secrets_never_persisted_or_logged
   - tests/integration/test_gateway.py::test_secrets_in_arguments_are_rejected
   - tests/integration/test_core_hardening.py::test_k7_rejection_reasons_are_redacted
+  - tests/integration/test_pass2_hardening.py::test_q17_verifier_failures_are_redacted_and_bounded
 NF3_reproducibility:
   - tests/nonfunctional/test_nonfunctional.py::test_nf3_runs_are_reproducible
   - tests/unit/test_packet.py::test_packet_is_deterministic_and_carries_verified_state
@@ -129,6 +137,7 @@ NF7_loopback_only_http:
 NF8_workspace_path_containment:
   - tests/unit/test_evidence.py::test_path_traversal_rejected
   - tests/unit/test_evidence.py::test_symlink_escape_rejected
+  - tests/integration/test_pass2_hardening.py::test_q1_model_path_escape_in_bound_fields_is_rejected
 NF9_unknown_usage_never_zero:
   - tests/unit/test_models.py::test_cost_is_estimated_from_profile_price_never_invented
   - tests/contract/test_model_switching.py::test_zero_registry_price_means_unknown_not_free
@@ -168,6 +177,10 @@ R13_coding_session_continuity:
   - tests/integration/test_coding_hardening.py::test_h14_checkpoint_summary_is_not_a_verified_fact
   - tests/integration/test_coding_hardening.py::test_h15_agent_text_cannot_forge_brief_structure
   - tests/integration/test_coding_hardening.py::test_h16_complete_task_rejects_a_journal_that_moved_on
+  - tests/integration/test_pass2_hardening.py::test_q3_edits_inside_a_dirty_submodule_change_the_fingerprint
+  - tests/integration/test_pass2_hardening.py::test_q4_non_utf8_file_names_are_fingerprinted_and_never_crash
+  - tests/integration/test_pass2_hardening.py::test_q8_check_timeout_kills_the_whole_process_tree
+  - tests/integration/test_pass2_hardening.py::test_q7_checks_get_no_continuum_credentials_and_dsn_passwords_are_redacted
 U8_coding_handoff_between_models_and_chats:
   - tests/integration/test_coding.py::test_c1_switch_claude_opus_4_8_to_5_5_keeps_verified_coding_work
   - tests/integration/test_coding.py::test_c2_codex_5_6_to_6_1_finds_session_by_repo_in_a_new_process

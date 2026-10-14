@@ -71,8 +71,8 @@ class BaselineRunner:
 
     def _load(self) -> tuple[list[Message], dict[str, Any]]:
         if self.transcript_path.exists():
-            raw = json.loads(self.transcript_path.read_text())
-            state = json.loads(self.state_path.read_text())
+            raw = json.loads(self.transcript_path.read_text(encoding="utf-8"))
+            state = json.loads(self.state_path.read_text(encoding="utf-8"))
             return [Message.model_validate(m) for m in raw], state
         goal = (f"Task: {self.spec.goal}\nInstructions: {self.spec.instructions}\n"
                 "Milestones:\n" + "\n".join(f"- {m.id}: {m.description}"
@@ -84,8 +84,9 @@ class BaselineRunner:
 
     def _save(self, messages: list[Message], state: dict[str, Any]) -> None:
         self.transcript_path.parent.mkdir(parents=True, exist_ok=True)
-        self.transcript_path.write_text(canonical_json([m.model_dump() for m in messages]))
-        self.state_path.write_text(canonical_json(state))
+        self.transcript_path.write_text(canonical_json([m.model_dump() for m in messages]),
+                                        encoding="utf-8")
+        self.state_path.write_text(canonical_json(state), encoding="utf-8")
 
     # ---- loop -------------------------------------------------------------------------------
 
