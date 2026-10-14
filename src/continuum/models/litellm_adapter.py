@@ -123,8 +123,11 @@ class LiteLLMAdapter:
 
     async def complete(self, *, messages: list[Message], tools: list[dict[str, Any]],
                        max_output_tokens: int, timeout_seconds: float) -> ModelResponse:
-        import litellm
-
+        try:
+            import litellm
+        except ImportError as exc:  # the [live] extra is not installed
+            raise ModelError("unsupported_capability",
+                             "live models need `pip install continuum[live]`") from exc
         try:
             names = ToolNames.from_tools(tools)
             raw = await litellm.acompletion(

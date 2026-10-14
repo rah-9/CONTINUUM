@@ -4,10 +4,27 @@ from __future__ import annotations
 
 import os
 import socket
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULT_DSN = "postgresql://continuum:continuum@localhost:5432/continuum"
+_PROCESS_NONCE = uuid.uuid4().hex[:8]
+
+
+def _default_home() -> Path:
+    """Per-user, not per-cwd: IDEs launch `continuum mcp` from arbitrary (sometimes
+    read-only, e.g. ``/``) working directories."""
+    return Path(os.environ.get("CONTINUUM_HOME") or Path.home() / ".continuum").expanduser()
+
+
+def _default_config_dir() -> Path:
+    """``CONTINUUM_CONFIG_DIR``, else ``./config`` when it holds tasks (running from a
+    checkout), else ``<home>/config``."""
+    if os.environ.get("CONTINUUM_CONFIG_DIR"):
+        return Path(os.environ["CONTINUUM_CONFIG_DIR"]).expanduser()
+    local = Path("config")
+    return local if (local / "tasks").is_dir() else _default_home() / "config"
 
 
 @dataclass(frozen=True)
@@ -16,12 +33,12 @@ class Settings:
         default_factory=lambda: os.environ.get("CONTINUUM_DATABASE_URL", DEFAULT_DSN))
     db_schema: str = field(default_factory=lambda: os.environ.get("CONTINUUM_DB_SCHEMA",
                                                                   "public"))
-    home: Path = field(default_factory=lambda: Path(os.environ.get("CONTINUUM_HOME",
-                                                                   ".continuum")))
-    config_dir: Path = field(default_factory=lambda: Path(os.environ.get(
-        "CONTINUUM_CONFIG_DIR", "config")))
+    home: Path = field(default_factory=_default_home)
+    config_dir: Path = field(default_factory=_default_config_dir)
+    # Unique per process even when ephemeral containers share a hostname and PID: the
+    # lease treats an equal owner id as the same controller (I6).
     owner_id: str = field(default_factory=lambda: os.environ.get(
-        "CONTINUUM_OWNER_ID", f"ctl-{socket.gethostname()}-{os.getpid()}"))
+        "CONTINUUM_OWNER_ID", f"ctl-{socket.gethostname()}-{os.getpid()}-{_PROCESS_NONCE}"))
     lease_ttl_seconds: int = field(default_factory=lambda: int(os.environ.get(
         "CONTINUUM_LEASE_TTL_SECONDS", "30")))
     db_timeout_seconds: float = field(default_factory=lambda: float(os.environ.get(

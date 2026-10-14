@@ -16,7 +16,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any
 
 from continuum.core.canonical import canonical_json
@@ -39,6 +39,7 @@ from continuum.core.faults import FaultInjector
 from continuum.core.handoff import DataRef, Packet, PacketBuilder, RunSnapshot
 from continuum.core.ids import IdGenerator
 from continuum.core.journal import RunJournal, RunStopped
+from continuum.core.projections import COST_QUANTUM
 from continuum.core.redaction import Redactor
 from continuum.core.state import ActionStatus, focus_milestone
 from continuum.core.store import Store
@@ -106,8 +107,11 @@ def estimate_cost(profile: CapabilityProfile, usage: Usage) -> Usage:
 
 
 def usage_payload(usage: Usage) -> UsagePayload:
+    cost = usage.cost_usd
+    if cost is not None:  # float noise ("3.0000000000000004e-06") -> the column's precision
+        cost = str(Decimal(cost).quantize(COST_QUANTUM, ROUND_HALF_EVEN))
     return UsagePayload(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
-                        cost_usd=usage.cost_usd, source=usage.source)
+                        cost_usd=cost, source=usage.source)
 
 
 class ModelSessions:

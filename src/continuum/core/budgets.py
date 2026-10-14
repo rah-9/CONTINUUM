@@ -27,7 +27,12 @@ class BudgetGuard:
         self._tick: float | None = None
 
     def start_clock(self) -> None:
+        """Start counting for a new operation (start/resume): recovery work counts too."""
         self._tick = self.clock.monotonic()
+
+    def ensure_clock(self) -> None:
+        if self._tick is None:
+            self.start_clock()
 
     def record_active_time(self, ctx: RunContext) -> None:
         now = self.clock.monotonic()

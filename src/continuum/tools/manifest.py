@@ -101,7 +101,7 @@ class ToolManifest(_M):
 
 def load_manifest(path: Path) -> ToolManifest:
     try:
-        return ToolManifest.model_validate(yaml.safe_load(path.read_text()))
+        return ToolManifest.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
     except ValueError as exc:
         raise ManifestError(f"{path}: {exc}") from exc
 

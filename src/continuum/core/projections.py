@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any, Literal
 
 from continuum.core.events import EventType
@@ -36,6 +36,8 @@ PROJECTION_TABLES: dict[str, tuple[str, ...]] = {
     "usage_totals": ("run_id",),
 }
 
+COST_QUANTUM = Decimal("1e-10")  # matches NUMERIC(20,10) in schema.sql
+
 
 @dataclass(frozen=True)
 class RowChange:
@@ -54,7 +56,9 @@ def _usage_changes(run_id: str, usage: dict[str, Any]) -> list[RowChange]:
         increments["tokens_reported"] = tokens
     cost = usage.get("cost_usd")
     if cost is not None:
-        increments["cost_known_usd"] = Decimal(cost)
+        # the column is NUMERIC(20,10): round here too, or replay (full precision) and
+        # the durable row (rounded by PostgreSQL) never agree (I2)
+        increments["cost_known_usd"] = Decimal(cost).quantize(COST_QUANTUM, ROUND_HALF_EVEN)
     if cost is None or usage.get("input_tokens") is None:
         # Unknown usage is flagged, never represented as zero.
         values["has_unpriced_usage"] = True

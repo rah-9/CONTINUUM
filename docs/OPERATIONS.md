@@ -56,15 +56,15 @@ Human decisions never travel over MCP. For those, the agent calls `pending_decis
 |---|---|---|
 | `CONTINUUM_DATABASE_URL` | `postgresql://continuum:continuum@localhost:5432/continuum` | |
 | `CONTINUUM_DB_SCHEMA` | `public` | one schema per environment or test |
-| `CONTINUUM_HOME` | `.continuum` | run workspaces, blobs, mock-service state |
-| `CONTINUUM_CONFIG_DIR` | `config` | set an absolute path for MCP clients |
-| `CONTINUUM_OWNER_ID` | `ctl-<host>-<pid>` | lease owner identity |
+| `CONTINUUM_HOME` | `~/.continuum` | run workspaces, blobs, mock-service state (per user, so an IDE can start the server from any directory) |
+| `CONTINUUM_CONFIG_DIR` | `./config` if it has `tasks/`, else `~/.continuum/config` | pre-registered tasks and `models.yaml` |
+| `CONTINUUM_OWNER_ID` | `ctl-<host>-<pid>-<random>` | lease owner identity; if you set it, it must be unique per process, because an equal id is treated as the same controller |
 | `CONTINUUM_LEASE_TTL_SECONDS` | `30` | heartbeat renews every TTL/3 |
 | Provider keys | none | e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`; redacted everywhere |
 
 Run `continuum doctor` to check the database, schema, tasks and model profiles.
 
-`CONTINUUM_CODING_ROOTS` (optional, `:`-separated) restricts which directories coding sessions may observe. `CONTINUUM_DB_TIMEOUT_SECONDS` (default 10) bounds how long a command waits for the database before reporting `database_unavailable`.
+`CONTINUUM_CODING_ROOTS` (optional, `:`-separated; `;` on Windows) restricts which directories coding sessions may observe. `CONTINUUM_DB_TIMEOUT_SECONDS` (default 10) bounds how long a command waits for the database before reporting `database_unavailable`.
 
 ## Database schema (designed for invariants)
 

@@ -406,8 +406,9 @@ def main(argv: list[str] | None = None) -> int:
             "seeds": args.seeds or suite["seeds"],
             "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "command": "continuum-lab " + " ".join(argv or sys.argv[1:])}
-    (args.out / "results.json").write_text(canonical_json({"meta": meta, "rows": rows}))
-    (args.out / "report.md").write_text(render(rows, meta))
+    (args.out / "results.json").write_text(canonical_json({"meta": meta, "rows": rows}),
+                                           encoding="utf-8")
+    (args.out / "report.md").write_text(render(rows, meta), encoding="utf-8")
     print(json.dumps({"cells": len(rows), "out": str(args.out)}))
     return 0
 

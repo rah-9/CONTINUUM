@@ -1,6 +1,6 @@
 """File-backed mock service core.
 
-State lives in one JSON file guarded by an ``fcntl`` lock so ground truth
+State lives in one JSON file guarded by a file lock (flock, or msvcrt on Windows) so ground truth
 survives simulated and real process kills. Write behaviours are scripted per
 operation and consumed in order:
 
@@ -17,7 +17,7 @@ within retention, or one still processing, does not commit again.
 
 from __future__ import annotations
 
-import fcntl
+import importlib
 import json
 import time
 from collections.abc import Callable, Iterator
@@ -27,6 +27,35 @@ from typing import Any, Literal
 
 from continuum.core.canonical import canonical_json
 from continuum.tools.trusted.services import ServiceMode, ServiceRejected, ServiceTimeout
+
+
+def _optional(module: str) -> Any:
+    try:
+        return importlib.import_module(module)
+    except ImportError:
+        return None
+
+
+_fcntl = _optional("fcntl")  # POSIX
+_msvcrt = _optional("msvcrt")  # Windows
+
+
+def _lock(fh: Any) -> None:
+    """Exclusive inter-process lock on an open file (POSIX flock, Windows locking)."""
+    if _fcntl is not None:
+        _fcntl.flock(fh, _fcntl.LOCK_EX)
+    elif _msvcrt is not None:
+        fh.seek(0)
+        _msvcrt.locking(fh.fileno(), _msvcrt.LK_LOCK, 1)
+
+
+def _unlock(fh: Any) -> None:
+    if _fcntl is not None:
+        _fcntl.flock(fh, _fcntl.LOCK_UN)
+    elif _msvcrt is not None:
+        fh.seek(0)
+        _msvcrt.locking(fh.fileno(), _msvcrt.LK_UNLCK, 1)
+
 
 Behaviour = Literal["ok", "commit_then_drop", "drop_before_commit", "commit_late", "reject"]
 State = dict[str, Any]
@@ -57,17 +86,17 @@ class MockService:
     @contextmanager
     def _txn(self) -> Iterator[State]:
         lock_path = self.state_path.with_suffix(".lock")
-        with lock_path.open("a+") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with lock_path.open("a+", encoding="utf-8") as lock:
+            _lock(lock)
             try:
-                state = (json.loads(self.state_path.read_text())
+                state = (json.loads(self.state_path.read_text(encoding="utf-8"))
                          if self.state_path.exists() else self._empty())
                 yield state
                 tmp = self.state_path.with_suffix(".tmp")
-                tmp.write_text(canonical_json(state))
+                tmp.write_text(canonical_json(state), encoding="utf-8")
                 tmp.replace(self.state_path)
             finally:
-                fcntl.flock(lock, fcntl.LOCK_UN)
+                _unlock(lock)
 
     # ---- scripting / ground truth -------------------------------------------------------
 

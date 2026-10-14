@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.6.3 — 2026-10-14
+
+This release adds a portability pass and a second full-codebase audit. The portability pass ran the built wheel in a clean environment, launched like an IDE does. The audit found 17 new defects, and the portability pass found 4 more. All are fixed, each with a regression test written first (`tests/integration/test_pass2_hardening.py`, `tests/integration/test_portability.py`; D-033).
+
+### Fixed: any agent, any IDE, any OS, local and cloud
+- **Windows.**
+  - The CLI crashed with `UnicodeEncodeError` when an agent read it through a pipe (cp1252). Output is now always UTF-8.
+  - Checks like `npm test` failed (`npm.cmd` cannot start without a shell); commands are now resolved via PATH/PATHEXT.
+  - The lab's mock services imported POSIX-only `fcntl`.
+  - Config was read with the ANSI code page; it is now UTF-8 everywhere.
+- **IDE launch directory.** State and config defaulted to the server's working directory (Claude Desktop uses `/`). They now default to `~/.continuum`.
+- **Cloud.** `setup.sh` used system `pip`, which PEP 668 images refuse and which needs Python 3.12. It now uses `uv tool --python 3.12` and links `continuum` onto PATH.
+- **Configs.**
+  - Shipped IDE configs had `/absolute/path` placeholders.
+  - The Claude Code project config now falls back to the local DSN.
+  - Configs added for Windsurf, Gemini CLI and Cline.
+
+### Fixed: correctness and safety
+- **Model-controlled input crashed the step loop instead of being rejected.**
+  - A path escape in `csv.normalize` `source` or `store.put` `artifact_ref`.
+  - NUL characters in tool arguments.
+
+  Both are now `ActionRejected` (`path_not_permitted`, `invalid_args`).
+- **NUL characters** in coding notes, goals or binary check output made every journal write fail. They are stored as U+FFFD.
+- **Fingerprint blind spots** (fail-open):
+  - edits inside a dirty git submodule (now fingerprinted recursively)
+  - untracked files with non-UTF-8 names (hashed as raw bytes; such names, or a symlink target, also crashed observation)
+- **Projection/replay equivalence (I2).** Float-noise costs (`3.0000000000000004e-06`) never matched the `NUMERIC(20,10)` row, so every resume rebuilt the projection and `inspect` reported it inconsistent. Costs are now quantized to the column's precision.
+- **A human `abort` on an ended run** rewrote it from cancelled to failed. Terminal runs are never rewritten.
+- **Checks.**
+  - Checks received `CONTINUUM_*` credentials. Agent-written test code could reach the journal's database and register checks.
+  - Database URL passwords were not redacted from check output.
+  - On timeout only the direct child was killed, so grandchildren kept changing the tree. On Windows, captured pipes could hang. Each check now runs in its own process group, with output written to a bounded file.
+- **Lease identity.** Default owner ids could collide between containers with the same hostname and pid, which defeated fencing. They now include a per-process random nonce.
+- **Budgets.** Active time skipped recovery work and truncated long iterations to the 60 s cap. It is now recorded around every model call and dispatch batch, and at the end of each operation.
+- **Crashes.**
+  - Undecodable or duplicate task files took down every command; they are now reported by `doctor`.
+  - A mixed-case `CONTINUUM_DB_SCHEMA` broke `db-init`; schema names are validated.
+  - Bad `--log-level` values and unexpected errors produced raw CLI tracebacks; they are now masked.
+  - A missing `[live]` extra crashed runs; it is now a `ModelError`.
+- **Verifier messages** were stored unredacted and unbounded, and shown to the model. They are now redacted and limited to 500 characters.
+
 ## 0.6.2 — 2026-10-14
 
 The full-codebase audit, continued into the core runtime and interfaces, found 9 issues. All are fixed, each with a regression test written first (`tests/integration/test_core_hardening.py`, D-032).
