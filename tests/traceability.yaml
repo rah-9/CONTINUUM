@@ -148,6 +148,15 @@ R13_coding_session_continuity:
   - tests/unit/test_repo_observer.py::test_git_fingerprint_tracks_edits_untracked_and_respects_gitignore
   - tests/unit/test_repo_observer.py::test_running_tests_does_not_change_the_fingerprint
   - tests/integration/test_schema.py::test_ensure_schema_migrates_only_when_needed
+  - tests/integration/test_coding_hardening.py::test_h2_start_writes_session_first_event_and_tasks_atomically
+  - tests/integration/test_coding_hardening.py::test_h3_closed_session_never_runs_the_check
+  - tests/integration/test_coding_hardening.py::test_h6_git_failure_raises_instead_of_hashing_nothing
+  - tests/integration/test_coding_hardening.py::test_h7_external_diff_and_textconv_do_not_hide_changes
+  - tests/integration/test_coding_hardening.py::test_h12_repo_path_containment
+  - tests/integration/test_coding_hardening.py::test_h13_agents_cannot_pose_as_humans_and_labels_are_redacted
+  - tests/integration/test_coding_hardening.py::test_h14_checkpoint_summary_is_not_a_verified_fact
+  - tests/integration/test_coding_hardening.py::test_h15_agent_text_cannot_forge_brief_structure
+  - tests/integration/test_coding_hardening.py::test_h16_complete_task_rejects_a_journal_that_moved_on
 U8_coding_handoff_between_models_and_chats:
   - tests/integration/test_coding.py::test_c1_switch_claude_opus_4_8_to_5_5_keeps_verified_coding_work
   - tests/integration/test_coding.py::test_c2_codex_5_6_to_6_1_finds_session_by_repo_in_a_new_process
