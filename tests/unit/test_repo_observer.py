@@ -38,3 +38,36 @@ def test_running_tests_does_not_change_the_fingerprint(tmp_path):
     after = observe(tmp_path)
     assert after.fingerprint == before.fingerprint
     assert after.changed_files == before.changed_files
+
+
+def test_committing_or_staging_identical_content_keeps_the_fingerprint(tmp_path):
+    """Found by a real handoff trial: an agent ran its check, then committed; the commit id
+    changed the fingerprint and the next model was told to re-verify untouched work."""
+    import subprocess
+
+    from continuum.coding.repo import observe
+
+    root = tmp_path / "r"
+    root.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    git("config", "user.email", "d@e.x")
+    git("config", "user.name", "d")
+    (root / "a.py").write_text("x = 1\n")
+    git("add", ".")
+    git("commit", "-qm", "init")
+    (root / "a.py").write_text("x = 2\n")
+    (root / "new.py").write_text("y = 1\n")
+    dirty = observe(root).fingerprint
+    git("add", "a.py")
+    assert observe(root).fingerprint == dirty  # staging is not a code change
+    git("add", "new.py")
+    git("commit", "-qm", "work")
+    assert observe(root).fingerprint == dirty  # committing is not a code change
+    git("commit", "-q", "--amend", "-m", "work, reworded")
+    assert observe(root).fingerprint == dirty
+    (root / "a.py").write_text("x = 3\n")
+    assert observe(root).fingerprint != dirty  # a real change still is

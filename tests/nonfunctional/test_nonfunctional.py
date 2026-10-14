@@ -251,9 +251,9 @@ def test_nf5_coding_observation_cost(tmp_path):
     calls: list[str] = []
     real = repo._git
 
-    def counting(r: Path, *args: str) -> bytes | None:
+    def counting(r: Path, *args: str, **kwargs: object) -> bytes | None:
         calls.append(args[0])
-        return real(r, *args)
+        return real(r, *args, **kwargs)  # type: ignore[arg-type]
 
     repo._git = counting  # type: ignore[assignment]
     try:
