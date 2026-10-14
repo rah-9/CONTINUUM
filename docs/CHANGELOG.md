@@ -6,9 +6,10 @@ Measured, then improved (D-034). All numbers are on a 20,000-file git repository
 
 ### Changed
 - **The MCP coding tools return a compact brief by default.** `coding_resume`, `coding_start` and `coding_brief` return the Markdown brief plus the task ids, about 1.3k tokens. `detail="full"` returns every field as JSON. Previously the full JSON *and* the same content as Markdown were sent on every handoff (about 8.3k tokens for a 30-note session).
-- **The brief is bounded however long the session runs.** It keeps the newest 12 decisions, 10 context notes, 10 blockers, 5 next steps and 5 checkpoints. Notes are clipped to 500 characters (300 in Markdown) and file lists are capped. Every omission is counted (`agent_notes.omitted`), and the journal keeps everything. The full JSON stays under about 8k tokens; a test doubles the session length and asserts the brief does not grow.
+- **The brief is bounded however long the session runs.** It keeps the newest 8 decisions, 6 context notes, 8 blockers, 3 next steps and 5 checkpoints. Notes reach the next model whole (up to 1,000 characters in Markdown, 600 for context), so the *why* of a decision is never cut mid-sentence. File lists are capped. Every omission is counted (`agent_notes.omitted`), and the journal keeps everything. The compact brief stays under 4k tokens and the full JSON under 10k in the worst case; a test doubles the session length and asserts the brief does not grow.
 
 ### Added
+- **Code map: `verified_facts.session_changes`.** The files changed since the session began (committed, staged, unstaged or untracked), each with +/- lines, git's enclosing-function context and the names defined in added lines. The Markdown brief shows it under "Code touched in this session", and the rules tell the next model to start there instead of re-reading the repository. In the realistic trial it cut the next model's work tokens by about 20% (17.3k → 13.8k) with the same 4/4 result.
 - **`verified_facts.commits_since_last_checkpoint`**, observed from git: the next model sees exactly which commits were made since the last checkpoint. When history was rewritten the value is `None` (unknown), never a guess.
 
 ### Validated with real model switches

@@ -1,20 +1,41 @@
 # Continuum
 
-Continuum is a model-agnostic **agent continuity runtime**. It keeps a multi-step agent's progress in durable, runtime-owned state instead of in a provider's chat history. That state has three parts:
+Continuum keeps an AI agent's work **outside the chat**, so you can switch models, versions, vendors or chats without losing it and without paying for the work twice. It does two things:
 
-- verified milestone evidence
-- a ledger of external effects
-- a deterministic continuation packet
+1. **Coding continuity.** Switch from Opus 4.8 to Opus 5.5, from GPT-5.6 to GPT-6.1, or from Codex to Claude Code mid-task. The next model gets:
+   - what is **proven** done (checks that passed on the current code)
+   - **where** the session's code is
+   - what was **decided** in the earlier chat
+   - the next step
 
-After a crash, timeout or model switch, Continuum reuses work that is still valid. It also reconciles any effect whose outcome is uncertain **before** it allows a new side-effecting call.
+   It does not need to re-read the codebase.
+2. **Runtime continuity.** Long-running agent tasks keep their verified milestones and a ledger of external effects. After a crash, timeout or model switch, valid work is reused, and an uncertain side effect is reconciled **before** any new write. Nothing is sent twice.
 
-> How it runs and connects: [`docs/OPERATIONS.md`](docs/OPERATIONS.md). How it is verified: [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
->
-> Specification: [`docs/00-README.md`](docs/00-README.md) (read in order). Coding-agent contract: [`AGENTS.md`](AGENTS.md). Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md). What we decided, did and plan next: [`docs/PROJECT-JOURNAL.md`](docs/PROJECT-JOURNAL.md).
+Continuum itself uses **no LLM**. Memory is what the working agent records while it works (decisions, next steps) plus facts Continuum observes deterministically (git, check results). Plain code assembles them, so there is no extra model cost.
 
-## Quickstart: what you need to run it
+> Docs: [how it runs and connects](docs/OPERATIONS.md) · [coding handoff guide](docs/CODING-HANDOFF.md) · [real handoff trials](docs/HANDOFF-TRIALS.md) · [verification](docs/VERIFICATION.md) · [specification](docs/00-README.md) (read in order) · [decisions](docs/DECISIONS.md) · [changelog](docs/CHANGELOG.md) · [project journal](docs/PROJECT-JOURNAL.md) · [agent contract](AGENTS.md)
 
-**Only one service: PostgreSQL 14+.** There is no Continuum server to keep running. The CLI, the SDK and the MCP server are short-lived processes that share the database. Model API keys are needed only for live model runs; the demos and tests use deterministic fake models.
+## Measured with real models
+
+These are Sonnet → Opus handoffs on a copy of this repository, judged by hidden acceptance tests. Model A built and committed Part 1. Two of the user's requirements existed **only in A's chat**. Model B was told only *"continue where we left off"* ([details](docs/HANDOFF-TRIALS.md)):
+
+| Model B (Opus) | correct result | chat-only requirements kept | work tokens* | files read |
+|---|---|---|---|---|
+| **with Continuum** (2 runs) | **4/4 both runs** | **2/2** | **~14–17k** | 3–4 |
+| without (2 runs) | 1/4 both runs | 0/2 | ~21–29k | 12–14+ |
+
+\*Total tokens minus the ~54k that any agent spends before doing anything.
+
+Without Continuum, Opus never learned that Part 2 existed. Reaching a correct result would take another explanation turn plus the work itself: about 35–45k work tokens, against ~14k with Continuum.
+
+The trials also found three defects in Continuum, all fixed:
+- every `continuum` in paths and commands was redacted, because the default DB password is that word
+- decision reasons were clipped mid-sentence
+- every commit falsely flagged verified work as changed
+
+## Quickstart
+
+**The only service is PostgreSQL 14+.** There is no Continuum server to run. The CLI, SDK and MCP server are short-lived processes that share the database.
 
 ```bash
 # 1. PostgreSQL (local, Docker, or hosted)
@@ -22,96 +43,48 @@ docker run -d --name continuum-pg -p 5432:5432 -e POSTGRES_USER=continuum \
   -e POSTGRES_PASSWORD=continuum -e POSTGRES_DB=continuum postgres:16
 export CONTINUUM_DATABASE_URL=postgresql://continuum:continuum@localhost:5432/continuum
 
-# 2. Install and create tables
-uv venv -p 3.12 .venv && uv pip install -p .venv -e ".[mcp]" && source .venv/bin/activate
-continuum db-init && continuum doctor
+# 2. Install (Linux, macOS, Windows) and check
+uv tool install "continuum[mcp] @ git+https://github.com/rah-9/CONTINUUM"   # or: pipx install …
+continuum doctor
 
-# 3a. Coding continuity: register checks once (human), then connect your agent
+# 3. Once per repository, a human registers the commands that prove work is done
 continuum coding checks add . tests --actor you -- pytest -q
-claude mcp add continuum -- continuum mcp          # or Codex/Cursor: integrations/README.md
 
-# 3b. Or see the runtime recover from a dropped acknowledgement
-continuum run demo_ack_loss_recovery
+# 4. Connect your agent (Claude Code shown; Codex, Cursor, VS Code, Windsurf,
+#    Gemini CLI, Cline, Claude Desktop and others: integrations/README.md)
+claude mcp add continuum -- continuum mcp
 ```
 
-## Switch models mid-coding without losing the work
+Copy [`integrations/AGENT_RULES.md`](integrations/AGENT_RULES.md) into your repo's `AGENTS.md` or `CLAUDE.md`, so every model follows the same protocol. Tables are created automatically on first use.
 
-Measured with real models: in a Sonnet → Opus handoff where the earlier chat held requirements that never appeared in the code, Opus with Continuum finished the job and honoured them. Without Continuum it spent more tokens and built the wrong thing. See [`docs/HANDOFF-TRIALS.md`](docs/HANDOFF-TRIALS.md).
+## Coding continuity: what the next model gets
 
+The agent calls `coding_resume(repo_path, agent=<model id>)` first in every chat. It receives a **compact brief**: Markdown plus the task ids it needs, about 1–3k tokens however long the session is. Pass `detail="full"` for the JSON.
 
-Coding with Claude Opus 4.8 and want Opus 5.5? GPT-5.6 in Codex and want 6.1? Switch, and the new model calls `coding_resume`. It gets the observed state of the code, which tasks are **proven** done by checks on the current code, what the previous model decided, and the next step. Agent notes are labelled as claims; "done" requires a human-registered check passing on the code as it is now. See [`docs/CODING-HANDOFF.md`](docs/CODING-HANDOFF.md) and the drop-in rules in [`integrations/AGENT_RULES.md`](integrations/AGENT_RULES.md). Cloud and Codex setup is in [`integrations/README.md`](integrations/README.md#4-in-the-cloud-claude-code-on-the-web-codex-cloud-and-in-codex).
-
-## Stack
-
-Python 3.12, Pydantic v2, **PostgreSQL 14+** (psycopg 3), jsonschema, FastAPI (loopback HTTP), LiteLLM (live providers), the MCP SDK (stdio facade), pytest, hypothesis, ruff and mypy (`--strict`).
-
-## Architecture
-
-```text
-SDK / CLI / loopback HTTP / stdio MCP          src/continuum/interfaces/
-        │
-Run controller + lease (fencing epochs)        core/runtime.py, core/leases.py, core/journal.py
-Budgets / model sessions + handoff             core/budgets.py, core/sessions.py
-        │
-Step loop + packet builder ── ModelAdapter     core/handoff.py, models/
-        │
-Permission + Tool Gateway ── trusted tools     tools/gateway.py, tools/trusted/
-        │
-Action ledger ◄── Reconciler                   core/ledger.py, core/reconciliation.py
-        │
-Milestone verifiers ── evidence/workspace      verify/, core/verification.py, core/evidence.py
-        │
-PostgreSQL events + projections (1 tx each)    core/store.py, core/projections.py, core/schema.sql
-```
-
-These invariants hold everywhere (see `AGENTS.md`):
-
-- Only the gateway dispatches tools.
-- Only verifiers mark milestones verified.
-- Every state change is one event plus its projection, committed in a single transaction.
-- An ambiguous write is `unknown`, never "failed".
-- No new write happens while any effect is unresolved.
-
-## Setup
-
-```bash
-# 1. PostgreSQL (any local 14+ instance)
-sudo -u postgres psql -c "CREATE USER continuum WITH PASSWORD 'continuum';" \
-                      -c "CREATE DATABASE continuum OWNER continuum;" \
-                      -c "CREATE DATABASE continuum_test OWNER continuum;"
-
-# 2. Python environment
-make install                       # uv venv + editable install with all extras
-export CONTINUUM_DATABASE_URL=postgresql://continuum:continuum@localhost:5432/continuum
-make db                            # create tables (idempotent)
-```
-
-Environment variables:
-
-| Variable | Default | Purpose |
+| In the brief | Source | Trust |
 |---|---|---|
-| `CONTINUUM_DATABASE_URL` | `postgresql://continuum:continuum@localhost:5432/continuum` | runtime database |
-| `CONTINUUM_DB_SCHEMA` | `public` | schema (`search_path`) |
-| `CONTINUUM_HOME` | `~/.continuum` | workspaces, mock-service state (per user, never the current directory) |
-| `CONTINUUM_CONFIG_DIR` | `./config` if it has `tasks/`, else `~/.continuum/config` | `models.yaml`, `tasks/*.yaml` |
-| `CONTINUUM_TEST_DATABASE_URL` | `…/continuum_test` | disposable test database |
+| Code now: branch, HEAD, changed files, content fingerprint | observed at resume | fact |
+| **Code touched in this session:** files, +/- lines, functions defined | observed from git since the session started | fact |
+| Commits since the last checkpoint | observed from git | fact |
+| Check results, valid only if they ran on the current code and definition | `CheckRan` evidence | fact |
+| Tasks, verified or not, and whether any need re-verification | evidence vs the current code | fact |
+| Decisions, context, blockers, next steps, checkpoint summaries | written by the previous agent | claim, kept whole |
 
-Provider API keys come only from the environment. They are redacted before anything is persisted.
-
-## Usage
+**"Done" means proven.** `coding_complete_task` is refused unless the task's human-registered checks passed **on the current code**. The fingerprint is the *content* of the working tree, not its commit history, so committing doesn't count as a change and editing does. Agents cannot register or change checks. Secrets are redacted before storage. The full guide is [`docs/CODING-HANDOFF.md`](docs/CODING-HANDOFF.md).
 
 ```bash
-continuum tasks                                   # pre-registered tasks (config/tasks)
-continuum run inventory_upload_v1                 # start; prints JSON RunResult
-continuum status <run_id>
-continuum resume <run_id> --model B               # continue under lease + ledger rules
-continuum resolve <run_id> <action_id> confirmed --actor ops --reason "seen" --evidence receipt:123
-continuum resolve <run_id> <action_id> approve   --actor lead --reason "reviewed"
-continuum inspect <run_id>                        # side-effect-free timeline + projection diff
-continuum trace <run_id> --out run.jsonl          # full JSON-lines trace with redacted blobs
-continuum --log-level INFO run db_update_selected # stream structured JSON trace to stderr
-continuum serve                                   # http://127.0.0.1:8765 (loopback only)
-continuum mcp                                     # stdio MCP: run_task, get_status
+continuum coding brief --repo .                 # what the next model will see
+continuum coding resume --repo . --agent gpt-6.1   # agents without MCP use the same protocol
+```
+
+## Runtime continuity
+
+```bash
+continuum run demo_ack_loss_recovery       # store commits, ack is lost: proven by query, never re-sent
+continuum run demo_opaque_needs_human      # opaque send times out: pauses for a human
+continuum resolve <run_id> <action_id> confirmed --actor you --reason "seen" --evidence receipt:123
+continuum resume <run_id> --model anthropic/claude-opus-5-5   # continue on another model or vendor
+continuum inspect <run_id>                 # side-effect-free timeline and projection check
 ```
 
 ```python
@@ -122,92 +95,89 @@ with Continuum() as c:
     print(result.status, c.status(result.run_id)["milestones"])
 ```
 
-### See the core idea in two minutes
+These invariants hold everywhere (`AGENTS.md`):
+- Only the gateway dispatches tools.
+- Only verifiers mark milestones verified.
+- Each state change is one event plus its projection, in one transaction.
+- An ambiguous write is `unknown`, never "failed".
+- No new write happens while an effect is unresolved.
+- Human decisions (approve, confirm, retry, abort) are never MCP tools.
 
-```bash
-# The store commits the upload but the acknowledgement is lost. Continuum marks the
-# attempt `unknown`, proves the effect with an authoritative query, and finishes
-# without uploading twice.
-continuum run demo_ack_loss_recovery
-continuum inspect <run_id>       # timeline: ambiguous outcome -> reconciliation -> verified
+## Works with any agent, IDE and environment
 
-# An opaque provider times out after sending. Continuum never re-sends on its own:
-continuum run demo_opaque_needs_human                    # -> awaiting_reconciliation
-continuum resolve <run_id> <action_id> confirmed --actor you --reason "seen in console" \
-    --evidence receipt:123
-continuum resume <run_id>                                # -> completed, exactly one send
-```
+| | |
+|---|---|
+| **MCP clients** | Claude Code (plugin + skill), Cursor, VS Code, Codex CLI, Windsurf, Gemini CLI, Cline, Claude Desktop, JetBrains, Zed: one stdio command, `continuum mcp` |
+| **Agents without MCP** | the same protocol via the CLI (`continuum coding …`) |
+| **OS** | Linux, macOS, Windows. Output is UTF-8 whatever the console encoding. Check commands are resolved like a shell would (`npm` → `npm.cmd`) |
+| **Cloud** | `integrations/cloud/setup.sh` installs through `uv tool` with its own Python 3.12 (PEP 668-safe). Point `CONTINUUM_DATABASE_URL` at a hosted PostgreSQL so sessions outlive containers |
+| **Launch directory** | state lives in `~/.continuum`, never in the directory an IDE starts the server in |
 
-The pre-registered tasks use the deterministic local fake agent by default. To use live models:
+The 19 MCP tools are:
+- **tasks:** `list_tasks`, `run_task`, `resume_run`, `cancel_run`, `get_status`, `inspect_run`, `pending_decisions`, `list_runs`
+- **coding:** `coding_resume`, `coding_start`, `coding_brief`, `coding_add_task`, `coding_set_task_status`, `coding_complete_task`, `coding_note`, `coding_checkpoint`, `coding_run_check`, `coding_sessions`, `coding_close`
 
-1. Fill verified profiles in `config/models.yaml`. Placeholder profiles are rejected at session start.
-2. Set `fake_models: false` in the task's YAML.
+## Configuration
 
-## Switching models (versions, vendors, chats)
-
-A run can continue on any model: another vendor, a newer version, or the same run picked up from a different chat. Verified work is never redone and effects never repeat. See [`docs/MODEL-SWITCHING.md`](docs/MODEL-SWITCHING.md).
-
-```bash
-continuum resume <run_id> --model anthropic/claude-opus-5-5   # e.g. Opus 4.8 -> 5.5
-continuum resume <run_id> --model openai/gpt-6.1               # e.g. GPT-5.6 -> 6.1
-```
-
-## Use Continuum from any coding agent (MCP plugin)
-
-`continuum mcp` is a local stdio MCP server, so Claude Code, Cursor, VS Code, Codex, Claude Desktop or any other MCP client can delegate tasks to Continuum. It exposes `list_tasks`, `run_task`, `resume_run` (optionally on another model), `cancel_run`, `get_status`, `inspect_run`, `pending_decisions` and `list_runs`, plus 11 `coding_*` tools for coding-session continuity.
-
-Human decisions are deliberately **not** tools. The agent shows you the exact `continuum resolve` command instead. Setup for each agent is in [`integrations/README.md`](integrations/README.md).
-
-```bash
-claude mcp add continuum -- continuum mcp                 # Claude Code (server only)
-/plugin marketplace add rah-9/CONTINUUM                   # Claude Code plugin + skill
-continuum doctor                                          # verify the installation
-```
-
-## Development workflow
-
-Each change follows the cycle in `docs/06-DEV-WORKFLOW.md`:
-
-1. **Branch:** one narrow vertical task per branch.
-2. **Spec first:** read `AGENTS.md` and the relevant spec. Contract changes update every affected doc, plus `docs/CHANGELOG.md`.
-3. **Test first:** for ledger, state or recovery behaviour, write the failing test before the change.
-4. **Gate locally:** run `make check`, which is ruff, then mypy `--strict`, then the full pytest suite.
-5. **CI:** `.github/workflows/ci.yml` runs the same gates against a PostgreSQL 16 service, plus a Continuum Lab smoke run.
-6. **Review:** use the mandatory review questions in docs/06 §5.
-
-### Test layers
-
-| Layer | Path | What it proves |
+| Variable | Default | Purpose |
 |---|---|---|
-| Unit / property | `tests/unit` | spec validation, transitions, identity, canonical encoding, packet determinism, fingerprints, redaction, adapter normalization, doc/DDL sync |
-| Integration | `tests/integration` | atomic events+projections, fencing, leases, gateway dedupe/conflict/permissions, reconciliation table, U1–U7 flows, drift, budgets, replay, SDK/CLI/HTTP/MCP, lab safety gates |
-| Contract | `tests/contract` | provider-format tool calls normalized via LiteLLM; error taxonomy drives retry/handoff; live tests opt-in (`CONTINUUM_LIVE=1 pytest -m live`) |
-| Property (stateful) | `tests/property` | Hypothesis-generated interleavings of proposals, faults, crashes and human decisions preserve every ledger invariant in all connector modes |
-| Non-functional | `tests/nonfunctional` | no DB lock across I/O, secret hygiene, reproducibility, parallel processes, performance baselines |
-| Chaos | `tests/chaos` | crash at every write-ahead/commit boundary, then resume; real two-process lease races; `os._exit` after remote commit; stale owner returning |
+| `CONTINUUM_DATABASE_URL` | `postgresql://continuum:continuum@localhost:5432/continuum` | the database (the only service) |
+| `CONTINUUM_DB_SCHEMA` | `public` | schema; lower-case identifier |
+| `CONTINUUM_HOME` | `~/.continuum` | run workspaces and mock-service state |
+| `CONTINUUM_CONFIG_DIR` | `./config` if it has `tasks/`, else `~/.continuum/config` | pre-registered tasks, `models.yaml` |
+| `CONTINUUM_CODING_ROOTS` | unset | restrict coding sessions to these directories (`:`-separated; `;` on Windows) |
+| `CONTINUUM_DB_TIMEOUT_SECONDS` | `10` | how long a command waits for the database |
+| `CONTINUUM_OWNER_ID` | `ctl-<host>-<pid>-<random>` | lease identity; must be unique per process if set |
 
-## Continuum Lab
+API keys come only from the environment. They are redacted, as are URL passwords that look like secrets, before anything is stored. Full reference: [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
-Continuum Lab is the in-repo evaluation suite (`eval/continuum_lab`). It compares **B0**, a plain tool loop with retries and transcript handoff, against **C1** (Continuum). Both get the same tasks, tools, permissions, budgets and ground-truth scorer:
+## Verified
+
+325 tests across these layers:
+- unit
+- integration
+- contract (OpenAI and Anthropic request rules)
+- property (Hypothesis stateful)
+- chaos (crash at every commit boundary, real process races)
+- non-functional (locks, secrets, determinism, concurrency, performance)
+- three audit regression suites
+- portability
+- brief quality
+
+Every requirement maps to tests in [`tests/traceability.yaml`](tests/traceability.yaml), and every defect found has a regression test. Results are in [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
 
 ```bash
-continuum-lab run --suite smoke  --out results/smoke
-continuum-lab run --suite safety --out results/safety          # 15 tasks × 6 faults × 3 modes × 2 seeds
-continuum-lab run --tasks inventory_upload_v1 --faults commit_then_drop --modes observable
+make check                                  # ruff + mypy --strict + all tests (needs PostgreSQL)
+continuum-lab run --suite safety --out results/safety    # B0 vs Continuum, 912 paired cells
+eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-switch trial
 ```
-
-Each run writes `results.json` (raw cells) and `report.md`. The report includes Wilson intervals, matched paired-bootstrap differences, a per-fault breakdown and limitations.
-
-Fake-model results only test the modeled safety properties. They are not evidence about live providers.
 
 ## Repository layout
 
 ```text
-AGENTS.md  README.md  Makefile  pyproject.toml
-config/            models.yaml (live profiles), tasks/*.yaml (pre-registered tasks)
-docs/              00–07 spec, DECISIONS.md, CHANGELOG.md, REVIEW-CHANGES.md
-src/continuum/     core/  models/  tools/  verify/  interfaces/
-integrations/      MCP client configs: Claude Code plugin, Cursor, VS Code, Codex, Claude Desktop
-eval/continuum_lab mock_services/  tasks/  baseline.py  fault_injection.py  runner.py  metrics.py  report.py
-tests/             unit/  integration/  contract/  chaos/
+src/continuum/
+  core/          runtime, store (events + projections), leases, ledger, reconciliation,
+                 verification, sessions/handoff, budgets, redaction, schema.sql
+  coding/        coding continuity: service, repo observer (content fingerprint, code
+                 map), brief, check runner
+  models/ tools/ verify/ interfaces/ (SDK, CLI, loopback HTTP, MCP)
+eval/
+  continuum_lab/   B0-vs-Continuum fault-injection lab
+  handoff_trials/  real model-switch trials (setup, prompts, hidden tests, judge)
+integrations/    AGENT_RULES.md, Claude Code plugin, configs for Cursor, VS Code, Codex,
+                 Windsurf, Gemini CLI, Cline, Claude Desktop; cloud/setup.sh
+docs/            00–07 spec, OPERATIONS, CODING-HANDOFF, HANDOFF-TRIALS, VERIFICATION,
+                 MODEL-SWITCHING, DECISIONS, CHANGELOG, PROJECT-JOURNAL
+tests/           unit/ integration/ contract/ property/ chaos/ nonfunctional/
 ```
+
+## Development
+
+Each change follows [`docs/06-DEV-WORKFLOW.md`](docs/06-DEV-WORKFLOW.md):
+1. One narrow change per branch.
+2. Spec and docs first; contract changes update every affected doc and the changelog.
+3. A failing test first for ledger, state or recovery behaviour.
+4. `make check` locally.
+5. CI runs the same gates against PostgreSQL 16, plus a lab smoke run.
+
+Results are reported honestly: unknown cost is never zero, pauses are not successes, and fake-model results are not presented as live evidence.

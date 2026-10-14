@@ -1,7 +1,7 @@
 # Continuum — specification index
 
-**Spec version:** 0.5 (2026-10-14: PostgreSQL backend, D-001; MCP plugin surface, D-022; coding-session continuity, D-028/D-029)  
-**Status:** v0.1.0 implementation in `src/`, `eval/` and `tests/`; see `CHANGELOG.md`
+**Spec version:** 0.6 (2026-10-14: PostgreSQL backend, D-001; MCP plugin surface, D-022; coding-session continuity, D-028/D-029; content fingerprint and code map, D-034/D-035)  
+**Status:** v0.7.0 implementation in `src/`, `eval/` and `tests/`; see `CHANGELOG.md`, `VERIFICATION.md` and `HANDOFF-TRIALS.md`
 
 **Purpose:** keep multi-step agent progress in runtime-owned, model-independent state. After an interruption or model handoff, reuse *valid verified work* and reconcile any uncertain external effect **before** new side-effecting work.
 
@@ -33,6 +33,7 @@ For any conflict: **04 governs effects/retries; 03 governs persisted state; 02 g
 - **Reconciliation:** establish the actual effect from authoritative evidence; retry only under an explicitly safe contract, otherwise pause for human review.
 - **Handoff:** restart model reasoning from a deterministic packet assembled from runtime state.
 - **Coding session:** an append-only journal of one piece of coding work in one repository (tasks, notes, checkpoints, check results) that any model or chat can resume. See docs/02 §10.
+- **Coding brief:** what the next model receives on `coding_resume`: verified facts (code fingerprint, check results, the code map of files the session changed, commits since the last checkpoint) separated from agent notes (claims). Bounded and compact; built by plain code, no LLM.
 - **Registered check:** a command (argv, no shell) that a *human* registers for a repository, such as the test suite. A coding task is verified only by its checks passing on the current code.
 - **Continuum Lab:** the test harness under `eval/` in this same repository.
 
