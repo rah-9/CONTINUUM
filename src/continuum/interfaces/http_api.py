@@ -64,7 +64,7 @@ def _is_loopback(host: str | None) -> bool:
 
 
 def create_app(sdk: Continuum) -> FastAPI:
-    app = FastAPI(title="Continuum (local)", version="0.5.0")
+    app = FastAPI(title="Continuum (local)", version="0.6.0")
 
     @app.middleware("http")
     async def loopback_only(request: Request, call_next: Any) -> Any:

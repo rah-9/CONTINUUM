@@ -12,6 +12,32 @@ After a crash, timeout or model switch, Continuum reuses work that is still vali
 >
 > Specification: [`docs/00-README.md`](docs/00-README.md) (read in order). Coding-agent contract: [`AGENTS.md`](AGENTS.md). Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md). What we decided, did and plan next: [`docs/PROJECT-JOURNAL.md`](docs/PROJECT-JOURNAL.md).
 
+## Quickstart: what you need to run it
+
+**Only one service: PostgreSQL 14+.** There is no Continuum server to keep running. The CLI, the SDK and the MCP server are short-lived processes that share the database. Model API keys are needed only for live model runs; the demos and tests use deterministic fake models.
+
+```bash
+# 1. PostgreSQL (local, Docker, or hosted)
+docker run -d --name continuum-pg -p 5432:5432 -e POSTGRES_USER=continuum \
+  -e POSTGRES_PASSWORD=continuum -e POSTGRES_DB=continuum postgres:16
+export CONTINUUM_DATABASE_URL=postgresql://continuum:continuum@localhost:5432/continuum
+
+# 2. Install and create tables
+uv venv -p 3.12 .venv && uv pip install -p .venv -e ".[mcp]" && source .venv/bin/activate
+continuum db-init && continuum doctor
+
+# 3a. Coding continuity: register checks once (human), then connect your agent
+continuum coding checks add . tests --actor you -- pytest -q
+claude mcp add continuum -- continuum mcp          # or Codex/Cursor: integrations/README.md
+
+# 3b. Or see the runtime recover from a dropped acknowledgement
+continuum run demo_ack_loss_recovery
+```
+
+## Switch models mid-coding without losing the work
+
+Coding with Claude Opus 4.8 and want Opus 5.5? GPT-5.6 in Codex and want 6.1? Switch, and the new model calls `coding_resume`. It gets the observed state of the code, which tasks are **proven** done by checks on the current code, what the previous model decided, and the next step. Agent notes are labelled as claims; "done" requires a human-registered check passing on the code as it is now. See [`docs/CODING-HANDOFF.md`](docs/CODING-HANDOFF.md) and the drop-in rules in [`integrations/AGENT_RULES.md`](integrations/AGENT_RULES.md). Cloud and Codex setup is in [`integrations/README.md`](integrations/README.md#4-in-the-cloud-claude-code-on-the-web-codex-cloud-and-in-codex).
+
 ## Stack
 
 Python 3.12, Pydantic v2, **PostgreSQL 14+** (psycopg 3), jsonschema, FastAPI (loopback HTTP), LiteLLM (live providers), the MCP SDK (stdio facade), pytest, hypothesis, ruff and mypy (`--strict`).
@@ -125,7 +151,7 @@ continuum resume <run_id> --model openai/gpt-6.1               # e.g. GPT-5.6 ->
 
 ## Use Continuum from any coding agent (MCP plugin)
 
-`continuum mcp` is a local stdio MCP server, so Claude Code, Cursor, VS Code, Codex, Claude Desktop or any other MCP client can delegate tasks to Continuum. It exposes `list_tasks`, `run_task`, `resume_run` (optionally on another model), `cancel_run`, `get_status`, `inspect_run`, `pending_decisions` and `list_runs`.
+`continuum mcp` is a local stdio MCP server, so Claude Code, Cursor, VS Code, Codex, Claude Desktop or any other MCP client can delegate tasks to Continuum. It exposes `list_tasks`, `run_task`, `resume_run` (optionally on another model), `cancel_run`, `get_status`, `inspect_run`, `pending_decisions` and `list_runs`, plus 11 `coding_*` tools for coding-session continuity.
 
 Human decisions are deliberately **not** tools. The agent shows you the exact `continuum resolve` command instead. Setup for each agent is in [`integrations/README.md`](integrations/README.md).
 

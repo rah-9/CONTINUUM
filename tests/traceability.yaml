@@ -136,3 +136,20 @@ G5_no_false_verification_after_drift:
   - tests/integration/test_drift.py::test_artifact_drift_invalidates_milestone_and_descendants_keeps_history
 G6_no_tool_call_during_replay:
   - tests/integration/test_replay.py::test_inspect_invokes_no_tool_or_model
+R13_coding_session_continuity:
+  - tests/integration/test_coding.py::test_c3_editing_code_after_verification_requires_reverification
+  - tests/integration/test_coding.py::test_c4_failing_missing_and_timed_out_checks_never_verify
+  - tests/integration/test_coding.py::test_c5_task_without_checks_is_an_unverified_claim
+  - tests/integration/test_coding.py::test_c6_secrets_redacted_from_notes_and_check_output
+  - tests/integration/test_coding.py::test_c7_journal_is_immutable_and_closed_sessions_reject_writes
+  - tests/integration/test_coding.py::test_c8_concurrent_agents_append_gaplessly
+  - tests/integration/test_coding.py::test_c9_any_kind_of_project_without_git
+  - tests/integration/test_coding.py::test_c10_changing_a_check_definition_invalidates_verification
+  - tests/unit/test_repo_observer.py::test_git_fingerprint_tracks_edits_untracked_and_respects_gitignore
+  - tests/unit/test_repo_observer.py::test_running_tests_does_not_change_the_fingerprint
+  - tests/integration/test_schema.py::test_ensure_schema_migrates_only_when_needed
+U8_coding_handoff_between_models_and_chats:
+  - tests/integration/test_coding.py::test_c1_switch_claude_opus_4_8_to_5_5_keeps_verified_coding_work
+  - tests/integration/test_coding.py::test_c2_codex_5_6_to_6_1_finds_session_by_repo_in_a_new_process
+  - tests/integration/test_coding.py::test_c11_shell_only_agents_use_the_same_protocol_via_cli
+  - tests/integration/test_mcp_stdio.py::test_coding_work_survives_model_switch_between_chats_over_mcp

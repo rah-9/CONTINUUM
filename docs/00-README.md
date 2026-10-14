@@ -1,6 +1,6 @@
 # Continuum — specification index
 
-**Spec version:** 0.4 (2026-10-13: PostgreSQL backend, D-001; MCP plugin surface, D-022)  
+**Spec version:** 0.5 (2026-10-14: PostgreSQL backend, D-001; MCP plugin surface, D-022; coding-session continuity, D-028/D-029)  
 **Status:** v0.1.0 implementation in `src/`, `eval/` and `tests/`; see `CHANGELOG.md`
 
 **Purpose:** keep multi-step agent progress in runtime-owned, model-independent state. After an interruption or model handoff, reuse *valid verified work* and reconcile any uncertain external effect **before** new side-effecting work.
@@ -32,13 +32,15 @@ For any conflict: **04 governs effects/retries; 03 governs persisted state; 02 g
 - **Unknown:** a dispatched action may or may not have committed. It is *not* equivalent to failure.
 - **Reconciliation:** establish the actual effect from authoritative evidence; retry only under an explicitly safe contract, otherwise pause for human review.
 - **Handoff:** restart model reasoning from a deterministic packet assembled from runtime state.
+- **Coding session:** an append-only journal of one piece of coding work in one repository (tasks, notes, checkpoints, check results) that any model or chat can resume. See docs/02 §10.
+- **Registered check:** a command (argv, no shell) that a *human* registers for a repository, such as the test suite. A coding task is verified only by its checks passing on the current code.
 - **Continuum Lab:** the test harness under `eval/` in this same repository.
 
 ## Explicit guarantees and limits
 
 - For tasks and tools meeting the declared contracts, Continuum **attempts to retain verified progress and avoid unsafe duplicate dispatches**. It does **not** guarantee exactly-once effects across arbitrary external services.
 - PostgreSQL (14+) is the **only** durable backend in v1, for a local single-host runtime (one database, controllers on one machine). Multiple workers claiming one run are blocked by lease/epoch rules, but external side effects still require reconciliation.
-- v1 has a Python SDK, CLI, minimal localhost HTTP surface and a **local stdio MCP server** for task delegation and read-only inspection (`list_tasks`, `run_task`, `resume_run`, `cancel_run`, `get_status`, `inspect_run`, `pending_decisions`, `list_runs`), so any MCP-capable coding agent can use Continuum as a plugin. Human decisions are never exposed through MCP. Distributed/multi-host deployment, arbitrary MCP tool ingestion, code execution, dashboards and production hosting are **post-MVP**.
+- v1 has a Python SDK, CLI, minimal localhost HTTP surface and a **local stdio MCP server** for task delegation and read-only inspection (`list_tasks`, `run_task`, `resume_run`, `cancel_run`, `get_status`, `inspect_run`, `pending_decisions`, `list_runs`), so any MCP-capable coding agent can use Continuum as a plugin. The same server offers **coding-session continuity** (`coding_*` tools, docs/02 §10) so coding work survives a switch of model, version, vendor or chat. Human decisions and check registration are never exposed through MCP. Distributed/multi-host deployment, arbitrary MCP tool ingestion, code execution, dashboards and production hosting are **post-MVP**.
 
 ## Repo layout note
 

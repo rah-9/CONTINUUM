@@ -21,7 +21,7 @@ Read `docs/00-README.md`, then `docs/01-PRD.md` and the specification(s) relevan
 - One vertical task per branch/PR; write failing core tests before changing ledger, state or recovery behavior.
 - Use deterministic fake model and trusted mocks by default. Live calls are explicitly opt-in and must respect budgets.
 - Keep API keys out of git, event payloads, packets and test artifacts. Mask errors and enforce workspace path containment.
-- No dashboard, Redis, distributed orchestrator, vector DB, arbitrary code runner, production hosting, remote MCP tool discovery or IDE/browser plugins in v1. The only v1 MCP surface is the local stdio server for pre-registered task delegation and read-only inspection; never add human-decision tools (approve/confirm/retry/abort) to it.
+- No dashboard, Redis, distributed orchestrator, vector DB, arbitrary code runner, production hosting, remote MCP tool discovery or IDE/browser plugins in v1. The only v1 MCP surface is the local stdio server for pre-registered task delegation, read-only inspection and coding-session continuity (`coding_*`, docs/02 §10); never add human-decision tools (approve/confirm/retry/abort) or check-registration tools to it.
 - Any change to state, events, action identity, verification or packet rules requires matching doc updates and a short entry in `docs/CHANGELOG.md`. Dependency additions require `docs/DECISIONS.md` rationale.
 - Do not solve ambiguity by inventing business semantics. Ask for or document a specific decision; do not implement potentially unsafe guesses.
 

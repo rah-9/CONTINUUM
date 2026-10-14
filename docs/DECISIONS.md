@@ -202,3 +202,34 @@ CI runs every layer. See `docs/VERIFICATION.md`.
 Lease expiry and DB time are now `DOUBLE PRECISION` seconds with no rounding. Existing databases are altered idempotently by `db-init`.
 
 The defect surfaced as an intermittent chaos-test failure under load. It was reproduced deterministically by acquiring at the worst-case sub-second offset (`test_lease_ttl_is_not_shortened_by_rounding`), and only then fixed.
+
+## D-028 — Coding-session continuity is a separate journal, judged by observation
+
+**Context.** Users switch models in the middle of coding: Opus 4.8 → 5.5 in Claude Code, GPT-5.6 → 6.1 in Codex, or into a new chat. Runs (task specs, milestones, the ledger) model work that Continuum drives. A coding agent drives itself and edits files directly, so a run doesn't fit.
+
+**Decision.**
+- Add `coding_sessions`/`coding_events`/`coding_checks` (schema v3), separate from runs. The journal is append-only and immutable, with a gapless per-session `seq` under the session row lock.
+- Continuum **observes** the repository itself (git HEAD + `diff HEAD --binary` + untracked non-ignored files, or file hashes outside git). It never trusts an agent's description of the code.
+- A task is verified only by checks that are *valid now*: passed, on the current fingerprint, with an unchanged definition digest. Otherwise completion is refused with the reason. A task without checks can be marked done but stays unverified.
+- The resume brief separates `verified_facts` from `agent_notes` (claims). This mirrors invariant 8: unverified model claims are not carried over as facts.
+- Interpreter caches (`__pycache__`, `.pyc`) are excluded from the fingerprint. Running tests must not invalidate the evidence it produced (regression test).
+
+**Alternatives rejected.** Storing chat transcripts (not authoritative, vendor-specific and large). Trusting agent-reported test results (a model cannot verify its own progress). Copying code into the database (git already holds it).
+
+## D-029 — Checks are human-registered commands; agents can only run them
+
+**Context.** Verification needs to run something (tests, a linter, a build). AGENTS.md excludes an arbitrary code runner, and a model must not define its own bar for "done".
+
+**Decision.**
+- Checks are registered only by a person through the CLI (`continuum coding checks add REPO NAME --actor X -- argv…`), stored with who and when. There is **no** MCP tool to register or change one.
+- Agents can only run a check by name. It runs as an argv list (no shell), in the repository root, under a timeout (1–3600 s). Output is redacted, kept as a tail, and digested.
+- No model supplies a command, so this is not an arbitrary code runner. It executes the commands a human would otherwise run by hand.
+- The verification evidence records the definition digest. Changing a definition invalidates every task it verified, and the brief flags checks (re)registered during the session.
+
+**Limitation (accepted).** An agent with shell access can impersonate the human CLI, and Continuum cannot authenticate a local user. The design is tamper-**evident** rather than tamper-proof: the who, the when, the flag and the invalidation. Teams that need more should keep checks under code review (for example, mirror them in CI) and review the flags.
+
+## D-030 — Automatic schema migration on start; CLI argv after `--`
+
+- `ensure_schema()` compares `schema_meta.version` with the code's version and migrates only when they differ (or on a fresh database). The CLI (except `db-init`/`doctor`) and the MCP server call it, so upgrading Continuum never leaves an agent facing a missing table.
+- `continuum coding checks add … -- cmd args` splits raw argv at `--` before argparse. argparse `REMAINDER` swallowed options such as `--actor` when they appeared after the positionals.
+

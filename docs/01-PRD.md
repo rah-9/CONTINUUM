@@ -19,7 +19,7 @@ Secondary correctness issue: an agent's self-report must not substitute for inde
 
 **In v1:** one run at a time per ownership lease; milestone-driven workflow; PostgreSQL append-only events and transactional projections; read/write tool gateway; durable action identity and retries; unknown-action reconciliation; deterministic verifiers; two-provider handoff supported and three independently tested provider configurations as benchmark goal; Python SDK/CLI; minimal localhost HTTP access; a thin local stdio MCP task-delegation facade; local mocks and integrated Continuum Lab.
 
-**Out of v1:** generic planning, multi-agent coordination, arbitrary external MCP servers, hosted multi-tenancy, vector DB, long-term chat memory, dashboard, multi-host/distributed database deployment, distributed orchestration, sandboxed arbitrary code/shell execution, live side-effect replay, native IDE/browser extensions and remote MCP tool **discovery/hosting**. (Shipping MCP *client configuration* so agents can launch the local stdio server is in scope.) Document their future interface boundaries only; do not implement speculatively.
+**Out of v1:** generic planning, multi-agent coordination, arbitrary external MCP servers, hosted multi-tenancy, vector DB, long-term chat memory, dashboard, multi-host/distributed database deployment, distributed orchestration, sandboxed arbitrary code/shell execution (running a *human-registered* coding check under R13 is not arbitrary execution: no model supplies a command), live side-effect replay, native IDE/browser extensions and remote MCP tool **discovery/hosting**. (Shipping MCP *client configuration* so agents can launch the local stdio server is in scope.) Document their future interface boundaries only; do not implement speculatively.
 
 Tools run as **trusted, explicitly registered Python adapters** with schema validation, allowlists and fixed endpoints. Arbitrary tool code supplied by a model is disallowed.
 
@@ -31,6 +31,7 @@ Tools run as **trusted, explicitly registered Python adapters** with schema vali
 - **U4 / portability:** reject incompatible model capabilities explicitly; serialize a valid continuation packet within its context limit.
 - **U5 / accuracy:** only verifier outputs mark milestones verified. If inputs/outputs change, invalidate affected milestones and descendants.
 - **U6 / safety:** two processes racing to resume one run cannot both acquire controller ownership; stale owners cannot authorize another tool attempt.
+- **U8 / coding handoff:** a coding agent on model A (e.g. Claude Opus 4.8, or GPT-5.6 in Codex) records tasks, decisions and check results while it works. Model B, in a new chat or process, resumes the same repository and sees the verified state of the code, which tasks are proven done, what the previous agent decided and what to do next. Work verified on code that has since changed, or by a check whose definition changed, must be re-verified.
 - **U7 / proof:** Continuum Lab compares matched baseline/Continuum runs, publishing failure counts, uncertainty and cost.
 
 ## 4. Required behavior
@@ -53,11 +54,13 @@ Tools run as **trusted, explicitly registered Python adapters** with schema vali
 
 **R9 Budgets:** enforce max model calls, tokens, spending, active-execution duration (excluding manual pause and process downtime), and recovery count. A provider switch can avoid provider-specific limits but **cannot bypass the run's aggregate budget**. Exhausted hard budgets stop the run; resume requires a new authorized policy/version, not silent reset.
 
-**R10 Interfaces:** SDK (`start`, `resume`, `status`, `resolve_action`), local CLI, minimal HTTP (`POST /runs`, `GET /runs/{id}`, `POST /runs/{id}/resume`, `POST /runs/{id}/actions/{action_id}/resolve`) and a local stdio MCP server for pre-registered task specs: delegation and read-only inspection (`list_tasks`, `run_task`, `resume_run`, `cancel_run`, `get_status`, `inspect_run`, `pending_decisions`, `list_runs`). Human decisions (`resolve_action`) are **never** exposed through MCP, because a model must not approve or confirm its own side effects. HTTP must remain bound to loopback in v1. Do not expose an unauthenticated production service.
+**R10 Interfaces:** SDK (`start`, `resume`, `status`, `resolve_action`), local CLI, minimal HTTP (`POST /runs`, `GET /runs/{id}`, `POST /runs/{id}/resume`, `POST /runs/{id}/actions/{action_id}/resolve`) and a local stdio MCP server for pre-registered task specs: delegation and read-only inspection (`list_tasks`, `run_task`, `resume_run`, `cancel_run`, `get_status`, `inspect_run`, `pending_decisions`, `list_runs`) plus coding-session continuity (R13). Human decisions (`resolve_action`) and check registration are **never** exposed through MCP, because a model must not approve or confirm its own side effects. HTTP must remain bound to loopback in v1. Do not expose an unauthenticated production service.
 
 **R11 Replay:** side-effect-free diagnostic replay from recorded events and tool/model responses only. Resume is a separate controlled operation, never marketed as live replay.
 
 **R12 Tests:** deterministic fake adapter, mock read/write services, crash boundary tests, evidence drift, lease races, duplicate model proposals, idempotency expiration, eventual-consistency traps and baseline comparison.
+
+**R13 Coding-session continuity:** a coding session is an append-only journal per repository (`coding_sessions`/`coding_events`, docs/03), independent of any model's chat history. Continuum observes the repository itself (git HEAD, diff and untracked files, or file hashes outside git) to fingerprint the code. A task is *verified* only when every check it names was registered by a human, passed on the current fingerprint, and still has the same definition; an agent's own claim of success is recorded as unverified. The resume brief separates verified facts from agent notes (claims). Checks run as fixed argv lists without a shell, with a timeout, in the repository root; output is redacted before persistence. Agents may start, resume, add tasks, record notes and checkpoints, run registered checks and complete tasks; they may never register or change checks.
 
 ## 5. Non-functional requirements
 

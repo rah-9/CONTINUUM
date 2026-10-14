@@ -7,12 +7,16 @@ surface is deliberately limited (docs/01 R10, docs/02 s8):
 * delegation: ``list_tasks``, ``run_task``, ``resume_run``, ``cancel_run``
 * read-only inspection: ``get_status``, ``inspect_run``, ``pending_decisions``,
   ``list_runs``
+* coding-session continuity (docs/02 s10): ``coding_resume``, ``coding_start``,
+  ``coding_brief``, ``coding_add_task``, ``coding_set_task_status``,
+  ``coding_complete_task``, ``coding_note``, ``coding_checkpoint``,
+  ``coding_run_check``, ``coding_sessions``, ``coding_close``
 
 **Human decisions are never exposed.** Approving, confirming or retrying an
 uncertain side effect must come from a person (CLI/HTTP), never from a model
 acting through MCP; ``pending_decisions`` tells the agent exactly what to ask
-its user to do. Arbitrary task specs, tool execution and remote MCP discovery
-are not offered.
+its user to do. Checks are registered only by a person through the CLI.
+Arbitrary task specs, tool execution and remote MCP discovery are not offered.
 """
 
 from __future__ import annotations
@@ -25,7 +29,14 @@ from continuum.core.errors import ContinuumError
 from continuum.core.runtime import RunResult
 from continuum.interfaces.sdk import Continuum
 
-SERVER_INSTRUCTIONS = """Continuum runs pre-registered multi-step tasks with durable, verified
+SERVER_INSTRUCTIONS = """CODING CONTINUITY: if you are a coding agent working in a repository, call
+coding_resume(repo_path, agent=<your exact model id>) FIRST in every new chat or after switching
+model; if it reports no session, call coding_start with the goal. Follow the returned brief.
+Record decisions and next steps with coding_note, call coding_checkpoint after meaningful changes,
+and before claiming a task done run its checks (coding_run_check) then coding_complete_task.
+Checks are registered by a human; you cannot define or change them.
+
+TASK DELEGATION: Continuum runs pre-registered multi-step tasks with durable, verified
 progress and an external-effect ledger. Use run_task to delegate a task, then get_status /
 inspect_run to follow it. A run may stop in `awaiting_reconciliation` or
 `paused_for_approval`: call pending_decisions and ask your user to make the decision with the
@@ -97,6 +108,55 @@ class McpFacade:
                             "command shown; do not attempt it yourself."}
         return self._guard(view)
 
+    # ---- coding-session continuity (agent operations only) -----------------------------
+
+    def coding_start(self, repo_path: str, goal: str, agent: str,
+                     tasks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        return self._guard(lambda: self.sdk.coding.start(repo_path, goal, agent=agent,
+                                                         tasks=tasks))
+
+    def coding_resume(self, agent: str, repo_path: str | None = None,
+                      session_id: str | None = None) -> dict[str, Any]:
+        return self._guard(lambda: self.sdk.coding.resume(agent=agent, repo_path=repo_path,
+                                                          session_id=session_id))
+
+    def coding_brief(self, session_id: str) -> dict[str, Any]:
+        return self._guard(lambda: self.sdk.coding.brief(session_id))
+
+    def coding_add_task(self, session_id: str, title: str, agent: str,
+                        checks: list[str] | None = None) -> dict[str, Any]:
+        return self._guard(lambda: self.sdk.coding.add_task(session_id, title,
+                                                            checks=checks or [], agent=agent))
+
+    def coding_set_task_status(self, session_id: str, task_id: str, status: str, agent: str,
+                               note: str = "") -> dict[str, Any]:
+        return self._guard(lambda: self.sdk.coding.set_task_status(
+            session_id, task_id, status, agent=agent, note=note))
+
+    def coding_complete_task(self, session_id: str, task_id: str, agent: str,
+                             note: str = "") -> dict[str, Any]:
+        return self._guard(lambda: self.sdk.coding.complete_task(session_id, task_id,
+                                                                 agent=agent, note=note))
+
+    def coding_note(self, session_id: str, kind: str, text: str, agent: str
+                    ) -> dict[str, Any]:
+        if kind not in ("decision", "context", "next_step", "blocker"):
+            return {"error": "kind must be decision, context, next_step or blocker"}
+        return self._guard(lambda: self.sdk.coding.note(session_id, kind,  # type: ignore[arg-type]
+                                                        text, agent=agent))
+
+    def coding_checkpoint(self, session_id: str, summary: str, agent: str) -> dict[str, Any]:
+        return self._guard(lambda: self.sdk.coding.checkpoint(session_id, summary, agent=agent))
+
+    def coding_run_check(self, session_id: str, name: str, agent: str) -> dict[str, Any]:
+        return self._guard(lambda: self.sdk.coding.run_check(session_id, name, agent=agent))
+
+    def coding_sessions(self, repo_path: str | None = None) -> dict[str, Any]:
+        return self._guard(lambda: {"sessions": self.sdk.coding.sessions(repo_path)})
+
+    def coding_close(self, session_id: str, reason: str, agent: str) -> dict[str, Any]:
+        return self._guard(lambda: self.sdk.coding.close(session_id, reason, agent=agent))
+
     def list_runs(self, limit: int = 20) -> dict[str, Any]:
         runs = self.sdk.runs()[-max(1, min(limit, 200)):]
         return {"runs": [self.sdk.status(r) | {"actions": None} for r in reversed(runs)]}
@@ -105,7 +165,7 @@ class McpFacade:
 def run_stdio(sdk: Continuum) -> None:
     from mcp.server.mcpserver import MCPServer  # mcp>=2 (FastMCP was renamed)
 
-    sdk.init_db()  # idempotent; lets a freshly installed plugin work immediately
+    sdk.ensure_schema()  # lets a freshly installed plugin work immediately
     facade = McpFacade(sdk)
     server: MCPServer[Any] = MCPServer("continuum", instructions=SERVER_INSTRUCTIONS)
 
@@ -151,5 +211,70 @@ def run_stdio(sdk: Continuum) -> None:
     def list_runs(limit: int = 20) -> dict[str, Any]:
         """Most recent runs with their status."""
         return facade.list_runs(limit)
+
+    # ---- coding-session continuity ------------------------------------------------------
+
+    @server.tool()
+    def coding_resume(agent: str, repo_path: str | None = None,
+                      session_id: str | None = None) -> dict[str, Any]:
+        """CALL FIRST in every new chat or after switching model. Joins the repo's active
+        coding session as `agent` (your exact model id) and returns the handoff brief:
+        verified facts, tasks, decisions, next steps and rules."""
+        return facade.coding_resume(agent, repo_path, session_id)
+
+    @server.tool()
+    def coding_start(repo_path: str, goal: str, agent: str,
+                     tasks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """Start a coding session for a repository. tasks: [{"title", "checks": [names]}]."""
+        return facade.coding_start(repo_path, goal, agent, tasks)
+
+    @server.tool()
+    def coding_brief(session_id: str) -> dict[str, Any]:
+        """Read-only handoff brief for a coding session (also as markdown)."""
+        return facade.coding_brief(session_id)
+
+    @server.tool()
+    def coding_add_task(session_id: str, title: str, agent: str,
+                        checks: list[str] | None = None) -> dict[str, Any]:
+        """Add a task; name the registered checks that must pass for it to count as done."""
+        return facade.coding_add_task(session_id, title, agent, checks)
+
+    @server.tool()
+    def coding_set_task_status(session_id: str, task_id: str, status: str, agent: str,
+                               note: str = "") -> dict[str, Any]:
+        """Set a task to open, in_progress, blocked or dropped (use coding_complete_task
+        to finish)."""
+        return facade.coding_set_task_status(session_id, task_id, status, agent, note)
+
+    @server.tool()
+    def coding_complete_task(session_id: str, task_id: str, agent: str,
+                             note: str = "") -> dict[str, Any]:
+        """Mark a task done. Refused unless its checks passed on the CURRENT code."""
+        return facade.coding_complete_task(session_id, task_id, agent, note)
+
+    @server.tool()
+    def coding_note(session_id: str, kind: str, text: str, agent: str) -> dict[str, Any]:
+        """Record a decision, context, next_step or blocker for the next model or chat."""
+        return facade.coding_note(session_id, kind, text, agent)
+
+    @server.tool()
+    def coding_checkpoint(session_id: str, summary: str, agent: str) -> dict[str, Any]:
+        """Record what changed; Continuum captures the repository state itself."""
+        return facade.coding_checkpoint(session_id, summary, agent)
+
+    @server.tool()
+    def coding_run_check(session_id: str, name: str, agent: str) -> dict[str, Any]:
+        """Run a human-registered check (e.g. tests) and record the result as evidence."""
+        return facade.coding_run_check(session_id, name, agent)
+
+    @server.tool()
+    def coding_sessions(repo_path: str | None = None) -> dict[str, Any]:
+        """List coding sessions, optionally for one repository."""
+        return facade.coding_sessions(repo_path)
+
+    @server.tool()
+    def coding_close(session_id: str, reason: str, agent: str) -> dict[str, Any]:
+        """Close a coding session when the goal is finished or abandoned."""
+        return facade.coding_close(session_id, reason, agent)
 
     server.run("stdio")

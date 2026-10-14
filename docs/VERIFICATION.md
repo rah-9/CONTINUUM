@@ -39,6 +39,9 @@ CONTINUUM_LIVE=1 pytest -m live              # real providers (needs keys + prof
 | Registry identity | Demo tasks resumed against the wrong binding | `test_demo_tasks_show_recovery_and_human_pause` |
 | Chaos test under load | **Lease rounding:** `::bigint` rounds DB time, so a lease could expire up to 1 s early (a 1 s TTL lasted ~0.1 s); reproduced deterministically, fixed with fractional time | `test_lease_ttl_is_not_shortened_by_rounding` |
 | Non-functional test | Starting an existing run id leaked a raw `UniqueViolation` | `test_starting_an_existing_run_id_is_a_typed_error` |
+| Coding handoff test | Running the tests wrote `__pycache__`, changing the fingerprint, so a just-passed check never counted | `test_running_tests_does_not_change_the_fingerprint` |
+| Shell-agent CLI test | `checks add … --actor X -- cmd` lost `--actor` to argparse `REMAINDER` | `test_c11_shell_only_agents_use_the_same_protocol_via_cli` |
+| Shell-agent CLI test | CLI hit a missing table on a database from an older version | `test_ensure_schema_migrates_only_when_needed` |
 
 ## Latest results (2026-10-13)
 
@@ -58,6 +61,19 @@ CONTINUUM_LIVE=1 pytest -m live              # real providers (needs keys + prof
   - **222/222** ambiguous actions resolved or escalated
   - clean completion 0.78 vs 0.72, paired +0.057 [+0.011, +0.103]
   - full report: `docs/lab-reports/`
+
+## Coding continuity (v0.6.0)
+
+`tests/integration/test_coding.py` C1–C11 and `test_mcp_stdio.py` cover:
+- Opus 4.8 → 5.5 and GPT-5.6 → 6.1 handoffs, in new processes and over real MCP stdio between separate server processes
+- re-verification after an edit or a check-definition change
+- failing, timed-out and unregistered checks
+- unverified claims
+- secret redaction
+- immutability and closed sessions
+- concurrent gapless appends
+- non-git projects
+- shell-only agents via the CLI
 
 ## Known limits of this evidence
 
