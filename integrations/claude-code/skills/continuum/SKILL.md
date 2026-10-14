@@ -1,9 +1,28 @@
 ---
 name: continuum
-description: Delegate a pre-registered multi-step task (uploads, database updates, notifications, file pipelines) to Continuum so progress survives crashes and model switches and side effects never repeat. Use when the user asks to run, resume, check or inspect a Continuum task or run.
+description: Keep coding work continuous across model switches and new chats (e.g. Opus 4.8 to 5.5) with Continuum's coding-session journal and verified checks; also delegate pre-registered multi-step tasks whose side effects must never repeat. Use at the start of every coding session in a repo that uses Continuum, after switching model, and when the user asks to run, resume or inspect Continuum work.
 ---
 
 # Using Continuum from a coding agent
+
+## Coding continuity (every session in a repo)
+
+- **First call:** `coding_resume(repo_path, agent=<your exact model id>)`. If no session exists,
+  call `coding_start(repo_path, goal, agent, tasks=[{"title", "checks"}])`.
+- **Read the brief.** `verified_facts` were observed by Continuum; `agent_notes` are claims from
+  earlier models. Continue from `next_steps` and open tasks. Never redo verified tasks unless
+  `needs_reverification` is true.
+- **While working:**
+  - record decisions, context and blockers with `coding_note`
+  - call `coding_checkpoint(summary)` after meaningful changes
+- **To finish a task:** run its checks with `coding_run_check`, then call
+  `coding_complete_task`. A refusal means the checks failed or the code changed since they
+  passed.
+- **Before stopping:** add a `next_step` note for the next model.
+- **Checks belong to humans.** Only a human registers checks. Never change them, and never edit
+  tests just to pass them.
+
+## Delegating pre-registered tasks
 
 Continuum runs **pre-registered** tasks. It records progress only when a verifier
 proves a milestone, and it ledgers every external effect so retries never duplicate it.

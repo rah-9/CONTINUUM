@@ -15,6 +15,7 @@ def _servers(path: Path) -> dict:
 
 def test_mcp_client_configs_launch_continuum_mcp():
     for path in [INTEGRATIONS / "claude-code" / ".mcp.json",
+                 INTEGRATIONS / "claude-code" / "project.mcp.json",
                  INTEGRATIONS / "cursor" / "mcp.json",
                  INTEGRATIONS / "vscode" / "mcp.json",
                  INTEGRATIONS / "claude-desktop" / "claude_desktop_config.json"]:
@@ -34,3 +35,16 @@ def test_claude_code_plugin_and_marketplace():
     skill = (INTEGRATIONS / "claude-code" / "skills" / "continuum" / "SKILL.md").read_text()
     assert skill.startswith("---\nname: continuum\ndescription: ")
     assert "do not decide for the user" in skill.lower()
+
+
+def test_agent_rules_and_skill_teach_the_coding_handoff_protocol():
+    rules = (INTEGRATIONS / "AGENT_RULES.md").read_text()
+    skill = (INTEGRATIONS / "claude-code" / "skills" / "continuum" / "SKILL.md").read_text()
+    for text in (rules, skill):
+        for tool in ("coding_resume", "coding_run_check", "coding_complete_task", "next_step"):
+            assert tool in text
+    assert "continuum coding resume" in rules  # CLI fallback for agents without MCP
+    # the cloud config takes the database URL (a secret) from the environment, never inline
+    project = _servers(INTEGRATIONS / "claude-code" / "project.mcp.json")["continuum"]
+    assert project["env"]["CONTINUUM_DATABASE_URL"] == "${CONTINUUM_DATABASE_URL}"
+    assert "postgresql://" not in (INTEGRATIONS / "cloud" / "setup.sh").read_text()
