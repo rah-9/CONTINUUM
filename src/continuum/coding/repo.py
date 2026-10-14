@@ -175,10 +175,12 @@ def _content_tree(root: Path, gitdir: Path, untracked: list[bytes]) -> bytes:
     yields a different one. Names are bytes to git, so any file name works."""
     with tempfile.TemporaryDirectory(prefix="continuum-index-") as tmp:
         index = Path(tmp) / "index"
-        if (gitdir / "index").is_file():
-            shutil.copyfile(gitdir / "index", index)
         env = {"GIT_INDEX_FILE": str(index), "GIT_LITERAL_PATHSPECS": "1"}
-        _must(root, "add", "--update", "--", ".", env=env)  # tracked: edits and deletions
+        if (gitdir / "index").is_file():  # no index yet: nothing is tracked
+            shutil.copyfile(gitdir / "index", index)
+            # tracked edits and deletions, whole tree; no pathspec, so newer gits cannot
+            # fail with "pathspec did not match" (git 2.55 does in an empty repository)
+            _must(root, "add", "--update", env=env)
         if untracked:  # exact names from `git status`, as bytes (any encoding)
             _must(root, "add", "--pathspec-from-file=-", "--pathspec-file-nul", env=env,
                   stdin=b"\0".join(untracked))
