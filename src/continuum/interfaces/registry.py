@@ -36,11 +36,15 @@ class TaskBinding:
 TaskFactory = Callable[[Path, dict[str, Any]], TaskBinding]
 
 
-def _load_factory(ref: str) -> TaskFactory:
-    module_name, _, attr = ref.partition(":")
+def _load_factory(ref: Any) -> TaskFactory:
+    module_name, _, attr = str(ref).partition(":")
     if not module_name or not attr:
         raise SpecValidationError(f"factory must be 'module:function', got {ref!r}")
-    factory: TaskFactory = getattr(importlib.import_module(module_name), attr)
+    try:
+        factory: TaskFactory = getattr(importlib.import_module(module_name), attr)
+    except (ImportError, AttributeError) as exc:
+        raise SpecValidationError(f"task factory {ref!r} cannot be loaded: "
+                                  f"{type(exc).__name__}") from exc
     return factory
 
 
@@ -49,10 +53,20 @@ class TaskRegistry:
         self.config_dir = config_dir
         self.state_dir = state_dir
         self._entries: dict[str, dict[str, Any]] = {}
+        # Malformed task files are reported (``errors``, ``continuum doctor``) instead of
+        # making every command, including read-only inspection, fail at startup.
+        self.errors: dict[Path, str] = {}
         tasks_dir = config_dir / "tasks"
         for path in sorted(tasks_dir.glob("*.yaml")) if tasks_dir.is_dir() else []:
-            entry = yaml.safe_load(path.read_text())
-            task_id = entry["task_id"]
+            try:
+                entry = yaml.safe_load(path.read_text())
+            except yaml.YAMLError as exc:
+                self.errors[path] = f"invalid YAML: {type(exc).__name__}"
+                continue
+            task_id = entry.get("task_id") if isinstance(entry, dict) else None
+            if not isinstance(task_id, str) or not task_id:
+                self.errors[path] = "not a mapping with a task_id"
+                continue
             if task_id in self._entries:
                 raise SpecValidationError(f"task {task_id} registered twice")
             self._entries[task_id] = entry
@@ -68,8 +82,13 @@ class TaskRegistry:
         entry = self._entries.get(task_id)
         if entry is None:
             raise NotFoundError(f"task {task_id!r} is not pre-registered")
-        factory = _load_factory(entry["factory"])
-        binding = factory(self.state_dir / "tasks" / task_id, dict(entry.get("options") or {}))
+        factory = _load_factory(entry.get("factory"))
+        options = entry.get("options") or {}
+        if not isinstance(options, dict):
+            raise SpecValidationError(f"task {task_id}: options must be a mapping")
+        binding = factory(self.state_dir / "tasks" / task_id, dict(options))
+        if not isinstance(binding, TaskBinding):
+            raise SpecValidationError(f"task {task_id}: factory did not return a TaskBinding")
         if binding.spec.task_id != task_id:
             # The registered id is the run's identity: resume and status look the
             # binding (and its tool/service state) up by the run's task_id.
@@ -92,7 +111,18 @@ def load_live_router(path: Path) -> ModelRouter:
     switch to a newly released model version without code changes. Placeholder
     profiles are rejected at session start, never silently used.
     """
-    data = yaml.safe_load(path.read_text()) if path.exists() else {}
+    try:
+        return _load_live_router(path)
+    except (yaml.YAMLError, KeyError, TypeError, AttributeError, ValueError) as exc:
+        # pydantic.ValidationError is a ValueError
+        raise SpecValidationError(f"{path} is invalid: {type(exc).__name__}: "
+                                  f"{str(exc).splitlines()[0][:200]}") from exc
+
+
+def _load_live_router(path: Path) -> ModelRouter:
+    data = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
+    if not isinstance(data, dict):
+        raise TypeError("models.yaml must be a mapping with a 'models' key")
     endpoints: dict[str, ModelEndpoint] = {}
     for alias, cfg in (data.get("models") or {}).items():
         cfg = dict(cfg)

@@ -12,6 +12,7 @@ from __future__ import annotations
 import ipaddress
 from dataclasses import asdict
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -22,7 +23,9 @@ from continuum.core.errors import (
     ContinuumError,
     InvalidTransitionError,
     NotFoundError,
+    PacketTooLargeError,
     SpecValidationError,
+    UnsupportedCapabilityError,
 )
 from continuum.core.runtime import RunResult
 from continuum.interfaces.sdk import Continuum
@@ -52,6 +55,13 @@ def _result(r: RunResult) -> dict[str, Any]:
     return data
 
 
+def _hostname(host_header: str | None) -> str | None:
+    """Host header -> hostname without port ('[::1]:8765' -> '::1')."""
+    if not host_header:
+        return None
+    return urlsplit(f"//{host_header}").hostname
+
+
 def _is_loopback(host: str | None) -> bool:
     if host is None:
         return False
@@ -64,13 +74,21 @@ def _is_loopback(host: str | None) -> bool:
 
 
 def create_app(sdk: Continuum) -> FastAPI:
-    app = FastAPI(title="Continuum (local)", version="0.6.1")
+    app = FastAPI(title="Continuum (local)", version="0.6.2")
 
     @app.middleware("http")
     async def loopback_only(request: Request, call_next: Any) -> Any:
         client = request.client.host if request.client else None
         if not _is_loopback(client):
             return JSONResponse({"detail": "loopback access only"}, status_code=403)
+        # DNS rebinding: a web page whose domain resolves to 127.0.0.1 reaches us from a
+        # loopback client, so the Host (and any browser Origin) must name loopback too.
+        if not _is_loopback(_hostname(request.headers.get("host"))):
+            return JSONResponse({"detail": "invalid Host header"}, status_code=403)
+        origin = request.headers.get("origin")
+        if origin is not None and not _is_loopback(urlsplit(origin).hostname):
+            return JSONResponse({"detail": "cross-origin requests are refused"},
+                                status_code=403)
         return await call_next(request)
 
     @app.exception_handler(ContinuumError)
@@ -80,7 +98,8 @@ def create_app(sdk: Continuum) -> FastAPI:
             status = 404
         elif isinstance(exc, AlreadyOwnedError | InvalidTransitionError):
             status = 409
-        elif isinstance(exc, SpecValidationError):
+        elif isinstance(exc, SpecValidationError | UnsupportedCapabilityError
+                        | PacketTooLargeError):
             status = 422
         return JSONResponse({"detail": str(exc), "code": exc.code}, status_code=status)
 

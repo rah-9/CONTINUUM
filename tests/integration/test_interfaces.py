@@ -52,7 +52,8 @@ def test_unregistered_task_is_rejected(sdk):
 
 
 def test_http_api_endpoints(sdk):
-    client = TestClient(create_app(sdk), client=("127.0.0.1", 50000))
+    client = TestClient(create_app(sdk), client=("127.0.0.1", 50000),
+                        base_url="http://127.0.0.1:8765")
     created = client.post("/runs", json={"task_id": "notify_with_approval"})
     assert created.status_code == 201
     body = created.json()
@@ -117,7 +118,8 @@ def test_demo_tasks_show_recovery_and_human_pause(sdk):
 
 
 def test_http_trace_endpoint(sdk):
-    client = TestClient(create_app(sdk), client=("127.0.0.1", 50000))
+    client = TestClient(create_app(sdk), client=("127.0.0.1", 50000),
+                        base_url="http://127.0.0.1:8765")
     run_id = client.post("/runs", json={"task_id": "db_update_selected"}).json()["run_id"]
     trace = client.get(f"/runs/{run_id}/trace").json()
     assert trace[0]["type"] == "RunCreated"

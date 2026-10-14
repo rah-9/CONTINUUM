@@ -16,6 +16,7 @@ R3_single_owner_lease_fencing:
   - tests/integration/test_store.py::test_stale_or_missing_fence_cannot_write
   - tests/chaos/test_processes.py::test_two_processes_racing_to_resume_cannot_both_own
   - tests/chaos/test_heartbeat.py::test_heartbeat_keeps_lease_through_slow_tool
+  - tests/integration/test_core_hardening.py::test_k2_same_process_cannot_operate_twice_on_one_run
 R4_tool_gateway:
   - tests/integration/test_gateway.py::test_duplicate_proposal_reuses_action_and_never_redispatches
   - tests/integration/test_gateway.py::test_same_identity_different_args_is_intent_conflict
@@ -35,11 +36,14 @@ R7_verification:
   - tests/integration/test_drift.py::test_model_claim_alone_never_verifies
   - tests/integration/test_drift.py::test_artifact_drift_invalidates_milestone_and_descendants_keeps_history
   - tests/unit/test_evidence.py::test_fingerprint_changes_with_any_input
+  - tests/integration/test_core_hardening.py::test_k1_transient_verifier_error_on_resume_is_not_drift
+  - tests/integration/test_core_hardening.py::test_k9_blob_refs_are_validated_and_human_receipts_are_not_read_as_blobs
 R8_handoff:
   - tests/integration/test_handoff.py::test_packet_carries_handoff_provenance_and_verified_state
   - tests/integration/test_handoff.py::test_persistent_failure_hands_off_with_packet_and_preserves_budget
   - tests/contract/test_model_switching.py::test_vendor_switch_mid_run_openai_to_anthropic
   - tests/contract/test_model_switching.py::test_version_upgrade_between_chats_gpt_5_6_to_6_1
+  - tests/integration/test_core_hardening.py::test_k8_malformed_provider_response_is_a_model_error
 R9_budgets:
   - tests/integration/test_budgets.py::test_model_call_budget_is_enforced_across_handoffs
   - tests/integration/test_budgets.py::test_recovery_budget_and_no_silent_reset
@@ -49,6 +53,10 @@ R10_interfaces:
   - tests/integration/test_interfaces.py::test_http_api_endpoints
   - tests/integration/test_interfaces.py::test_cli_json_output
   - tests/integration/test_mcp_stdio.py::test_mcp_plugin_end_to_end_over_stdio
+  - tests/integration/test_core_hardening.py::test_k3_http_rejects_foreign_host_and_origin
+  - tests/integration/test_core_hardening.py::test_k4_unknown_model_alias_is_rejected_before_any_run_is_created
+  - tests/integration/test_core_hardening.py::test_k5_bad_task_files_are_reported_not_fatal
+  - tests/integration/test_core_hardening.py::test_k5_mcp_masks_unexpected_errors_and_list_runs_tolerates_bad_runs
 R11_side_effect_free_replay:
   - tests/integration/test_replay.py::test_inspect_invokes_no_tool_or_model
   - tests/integration/test_observability.py::test_timeline_and_trace_export_are_read_only
@@ -105,6 +113,7 @@ NF1_no_db_lock_across_io:
 NF2_secrets_never_persisted:
   - tests/nonfunctional/test_nonfunctional.py::test_nf2_secrets_never_persisted_or_logged
   - tests/integration/test_gateway.py::test_secrets_in_arguments_are_rejected
+  - tests/integration/test_core_hardening.py::test_k7_rejection_reasons_are_redacted
 NF3_reproducibility:
   - tests/nonfunctional/test_nonfunctional.py::test_nf3_runs_are_reproducible
   - tests/unit/test_packet.py::test_packet_is_deterministic_and_carries_verified_state
@@ -116,12 +125,14 @@ NF6_structured_json_tracing:
   - tests/integration/test_observability.py::test_json_trace_lines_cover_events_tools_and_models
 NF7_loopback_only_http:
   - tests/integration/test_interfaces.py::test_http_rejects_non_loopback_clients_and_binds
+  - tests/integration/test_core_hardening.py::test_k3_http_rejects_foreign_host_and_origin
 NF8_workspace_path_containment:
   - tests/unit/test_evidence.py::test_path_traversal_rejected
   - tests/unit/test_evidence.py::test_symlink_escape_rejected
 NF9_unknown_usage_never_zero:
   - tests/unit/test_models.py::test_cost_is_estimated_from_profile_price_never_invented
   - tests/contract/test_model_switching.py::test_zero_registry_price_means_unknown_not_free
+  - tests/integration/test_core_hardening.py::test_k6_zero_registry_cost_is_unknown_and_configured_prices_win
 
 G1_no_repeat_commit_on_idempotent_fixture:
   - tests/integration/test_lab.py::test_gate_no_extra_commit_on_deduped_fixture
