@@ -29,13 +29,28 @@ def _run(lab):
     return result.run_id
 
 
+def test_ensure_schema_migrates_only_when_needed(schema, clock):
+    from continuum.core.ids import SequentialIds
+    from continuum.core.store import Store
+    from tests.conftest import DSN
+
+    fresh = Store(DSN, schema=schema + "_fresh", clock=clock, ids=SequentialIds("f"))
+    try:
+        assert fresh.ensure_schema() is True   # missing -> created
+        assert fresh.ensure_schema() is False  # current -> untouched
+    finally:
+        fresh.close()
+        with psycopg.connect(DSN, autocommit=True) as conn:
+            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}_fresh" CASCADE'.encode())
+
+
 def test_migrate_is_idempotent_and_versioned(store):
     store.migrate()
     store.migrate()
     with store.connection() as conn:
         row = conn.execute(b"SELECT value FROM schema_meta WHERE key = 'schema_version'"
                            ).fetchone()
-    assert row["value"] == "2"
+    assert row["value"] == "3"
 
 
 @pytest.mark.parametrize(("constraint", "enum"), [

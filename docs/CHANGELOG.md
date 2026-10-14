@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.0 — 2026-10-14
+
+Spec 0.5.
+
+### Added
+- **Coding-session continuity** (D-028, D-029; docs/01 R13/U8, docs/02 §10, docs/03 schema v3). Coding work carries over when you switch models, versions, vendors or chats:
+  - an append-only coding journal per repository
+  - code state observed by Continuum
+  - tasks verified only by human-registered checks passing on the current code with an unchanged definition
+  - a handoff brief that separates verified facts from agent claims
+  - tamper evidence for check definitions
+- MCP: 11 `coding_*` tools (no check-registration or human-decision tool). Server instructions tell agents to call `coding_resume` first.
+- CLI: `continuum coding …` for humans (checks, sessions, brief, close) and for shell-only agents (resume, note, checkpoint, check, task).
+- `integrations/AGENT_RULES.md` (drop-in rules for AGENTS.md/CLAUDE.md), the Claude Code project `.mcp.json`, the cloud setup script, and `docs/CODING-HANDOFF.md`. README quickstart.
+- Automatic schema migration on start (`ensure_schema`, D-030).
+
+### Fixed
+- Running a check that wrote `__pycache__` changed the code fingerprint and made the result unusable as evidence.
+- `coding checks add … --actor X -- cmd` lost `--actor` to argparse `REMAINDER`.
+- The CLI failed with a missing table on a database created by an older version.
+
 ## 0.5.0 — 2026-10-13
 
 ### Added

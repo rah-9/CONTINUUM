@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from continuum.coding.service import CodingContinuity
 from continuum.core.clock import SystemClock
 from continuum.core.ids import RandomIds
 from continuum.core.runtime import Decision, RunResult, Runtime, RuntimeConfig
@@ -23,6 +24,7 @@ class Continuum:
         self.store = store or Store(self.settings.database_url, schema=self.settings.db_schema,
                                     clock=self.clock, ids=self.ids)
         self.registry = registry or TaskRegistry(self.settings.config_dir, self.settings.home)
+        self.coding = CodingContinuity(self.store, clock=self.clock, ids=self.ids)
 
     def close(self) -> None:
         self.store.close()
@@ -35,6 +37,10 @@ class Continuum:
 
     def init_db(self) -> None:
         self.store.migrate()
+
+    def ensure_schema(self) -> bool:
+        """Create or upgrade the schema only when needed (cheap version check)."""
+        return self.store.ensure_schema()
 
     def tasks(self) -> list[dict[str, Any]]:
         return self.registry.describe()

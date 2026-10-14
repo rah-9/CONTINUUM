@@ -84,8 +84,24 @@ For non-file effects, verification observes mock service ground truth or a docum
 - Structured local tracing: every committed event, model call and tool dispatch is logged as one JSON line (IDs, types, statuses and durations only; never arguments or payloads).
 - `resume`: real continuation under lease and ledger safeguards. Do **not** implement a `live replay` mode in v1.
 - SDK/CLI execute locally. Minimal HTTP binds to `127.0.0.1` by default; production authentication/deployment are explicitly excluded.
-- A v1 local **stdio MCP server** lets any MCP-capable agent delegate and follow pre-registered tasks (`list_tasks`, `run_task`, `resume_run`, `cancel_run`, `get_status`, `inspect_run`, `pending_decisions`, `list_runs`); it does not install a harness inside the host. Human decisions are not MCP tools: `pending_decisions` returns the exact command a *person* runs. `resume_run(model_alias=...)` continues the same run on another model from verified state. Arbitrary remote MCP tool discovery remains post-MVP. Tool annotations from external MCP servers are untrusted until an operator creates a trusted manifest.
+- A v1 local **stdio MCP server** lets any MCP-capable agent delegate and follow pre-registered tasks (`list_tasks`, `run_task`, `resume_run`, `cancel_run`, `get_status`, `inspect_run`, `pending_decisions`, `list_runs`); it does not install a harness inside the host. Human decisions are not MCP tools: `pending_decisions` returns the exact command a *person* runs. The `coding_*` tools (§10) carry coding work across models; there is no tool to register or change a check. `resume_run(model_alias=...)` continues the same run on another model from verified state. Arbitrary remote MCP tool discovery remains post-MVP. Tool annotations from external MCP servers are untrusted until an operator creates a trusted manifest.
 
 ## 9. Required crash boundaries
 
 Inject kill before and after: event/projection commit; lease acquisition; action creation; attempt-start commit; remote service commit; response receipt; action confirmation commit; artifact write/rename; milestone verification commit; model switch commit. Each restart must preserve invariants and either continue safely or pause explicitly.
+
+## 10. Coding-session continuity
+
+Coding agents (Claude Code, Codex, Cursor, …) do their own editing; Continuum does not drive them. It keeps the **state of the coding work** outside any chat so the next model can continue from it.
+
+1. A human registers checks once per repository: `continuum coding checks add REPO tests --actor alice -- pytest -q`. Definitions are stored with who registered them and when.
+2. The agent calls `coding_resume(repo_path, agent=<model id>)` first in every chat. If there is no active session it calls `coding_start(goal, tasks)`. Each start or resume records `SessionStarted`/`AgentJoined` with an observed `RepoState`.
+3. While working it records `NoteRecorded` (decision, context, next_step, blocker) and `CheckpointCaptured` (summary plus observed state).
+4. `coding_run_check(name)` runs the registered argv in the repository root without a shell, under a timeout, and records `CheckRan` with the code fingerprint observed **before** the run, the definition digest, the exit code and a redacted output tail. If the check itself modified the tree, a context note records it.
+5. `coding_complete_task(task_id)` succeeds only if each named check's latest run is *valid now*: passed, on the current fingerprint and with an unchanged definition. Otherwise it is refused with the reason. A task without checks may be marked done, but stays `verified: false`.
+6. On resume the brief is rebuilt from the journal plus a **fresh observation**. Verified tasks whose code or check definitions changed are flagged `needs_reverification`. Checks (re)registered during the session are flagged so a person can review them.
+
+Every event is one transaction that locks the session row, appends with the next gapless `seq` and updates `last_seq`. Events are immutable, and closed sessions reject writes. Model notes are presented as claims under `agent_notes`, never inside `verified_facts`.
+
+**Limit:** an agent with shell access could run the human CLI to register a check. Continuum cannot authenticate the local user, so it makes this **tamper-evident**, not impossible. See D-029.
+

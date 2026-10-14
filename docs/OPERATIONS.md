@@ -42,9 +42,11 @@ Because state lives only in PostgreSQL, these processes are interchangeable. A r
    
    See `integrations/README.md` for every client.
 2. When the agent starts, it **spawns `continuum mcp` as a child process**. The two talk MCP (JSON-RPC 2.0) over the child's stdin and stdout. No network port is opened. Logs go to stderr, so they never corrupt the protocol stream.
-3. On startup the server runs `db-init` (idempotent), loads the pre-registered tasks from `CONTINUUM_CONFIG_DIR` and advertises 8 tools with instructions for the agent.
+3. On startup the server runs `db-init` (idempotent), loads the pre-registered tasks from `CONTINUUM_CONFIG_DIR` and advertises 19 tools (8 for tasks, 11 for coding continuity) with instructions for the agent.
 4. When the agent calls `run_task`, the server process runs the task's step loop. It acquires the run lease, calls models and trusted tools through the gateway, and verifies milestones. It returns when the run completes or pauses for a human.
 5. When the agent session ends, the child process exits. The run's state remains in PostgreSQL.
+
+In cloud agent containers, the same applies inside the container. Point `CONTINUUM_DATABASE_URL` at a PostgreSQL that outlives the container, set as a secret, and install Continuum in the environment's setup script (`integrations/cloud/setup.sh`). See `integrations/README.md` §4.
 
 Human decisions never travel over MCP. For those, the agent calls `pending_decisions` and shows you the `continuum resolve …` command to run in your terminal.
 

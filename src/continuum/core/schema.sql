@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-INSERT INTO schema_meta (key, value) VALUES ('schema_version', '2')
+INSERT INTO schema_meta (key, value) VALUES ('schema_version', '3')
   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- TRUNCATE would bypass the row-level immutability trigger.
@@ -205,3 +205,59 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_action ON artifacts(producing_action_id
 -- Recovery scans for attempts that started but never recorded an outcome.
 CREATE INDEX IF NOT EXISTS idx_attempts_started ON action_attempts(action_id)
   WHERE status = 'started';
+
+-- ---------------------------------------------------------------------------
+-- Coding-session continuity (schema version 3, docs/02 s10).
+-- A coding agent's work in a repository survives model switches and new chats:
+-- an append-only journal per session, plus checks that only a human registers.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS coding_sessions (
+  session_id TEXT PRIMARY KEY,
+  repo_root  TEXT NOT NULL,                   -- absolute, resolved path
+  goal       TEXT NOT NULL,
+  status     TEXT NOT NULL,                   -- active | closed
+  last_seq   BIGINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS coding_events (
+  session_id   TEXT NOT NULL REFERENCES coding_sessions(session_id),
+  seq          BIGINT NOT NULL,
+  type         TEXT NOT NULL,
+  actor        TEXT NOT NULL,                 -- agent label (self-reported) or human:<id>
+  payload_json JSONB NOT NULL,
+  occurred_at  TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (session_id, seq)
+);
+
+DROP TRIGGER IF EXISTS coding_events_immutable ON coding_events;
+CREATE TRIGGER coding_events_immutable BEFORE UPDATE OR DELETE ON coding_events
+  FOR EACH ROW EXECUTE FUNCTION continuum_events_immutable();
+DROP TRIGGER IF EXISTS coding_events_no_truncate ON coding_events;
+CREATE TRIGGER coding_events_no_truncate BEFORE TRUNCATE ON coding_events
+  FOR EACH STATEMENT EXECUTE FUNCTION continuum_events_immutable();
+
+-- Verification commands are registered by a human operator, never by an agent.
+CREATE TABLE IF NOT EXISTS coding_checks (
+  repo_root       TEXT NOT NULL,
+  name            TEXT NOT NULL,
+  argv_json       JSONB NOT NULL,             -- executed without a shell
+  timeout_seconds INTEGER NOT NULL,
+  registered_by   TEXT NOT NULL,
+  registered_at   TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (repo_root, name)
+);
+
+SELECT continuum_add_constraint('coding_sessions', 'coding_sessions_status_valid',
+  $c$CHECK (status IN ('active', 'closed'))$c$);
+SELECT continuum_add_constraint('coding_events', 'coding_events_type_valid', $c$CHECK (type IN (
+  'SessionStarted', 'AgentJoined', 'TaskAdded', 'TaskStatusChanged', 'NoteRecorded',
+  'CheckpointCaptured', 'CheckRan', 'SessionClosed'))$c$);
+SELECT continuum_add_constraint('coding_events', 'coding_events_seq_positive',
+  'CHECK (seq > 0)');
+SELECT continuum_add_constraint('coding_checks', 'coding_checks_timeout_positive',
+  'CHECK (timeout_seconds BETWEEN 1 AND 3600)');
+
+CREATE INDEX IF NOT EXISTS idx_coding_sessions_repo ON coding_sessions(repo_root, status);
