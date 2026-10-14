@@ -59,6 +59,43 @@ tests and docs for the finished Part 1 and concluded that adding a CLI "would be
 With the handoff it knew what was done (verified on the current code), what remained,
 and both requirements that never appeared in the code.
 
+## Trial 3: the same realistic handoff with a code map in the brief
+
+The brief now also lists, observed from git with no model involved, the files the session
+changed since it started and the names they define. A rule tells the next model to start
+there. The experiment was repeated from scratch: a new Model A run, then B in both
+conditions. Model A peeked at a hidden test file, which only affects A's side. Both B
+runs were blind to the hidden tests.
+
+## Reading the token numbers correctly
+
+An agent that does nothing still costs **about 54k tokens**: its system prompt and tool
+definitions. This was measured with an Opus agent told to reply "OK". The comparable cost
+is therefore the **work tokens** (total minus 54k), and what matters is the **cost to a
+correct result**.
+
+| B (Opus), realistic handoff | correct? | work tokens | tool calls | files read |
+|---|---|---|---|---|
+| Continuum, brief without code map (Trial 2) | **4/4** | ~17.3k | 13 | 4 |
+| Continuum, brief with code map (Trial 3) | **4/4** | **~13.8k** | **10** | **3** |
+| baseline, run 1 (Trial 2) | 1/4 | ~21.3k | 15 | 12+ |
+| baseline, run 2 (Trial 3) | 1/4 | ~29.4k | 18 | 14+ |
+
+**Neither baseline run reached a correct result.** Both built tests for the finished part,
+and did not know Part 2 or its two requirements existed. One concluded that adding a CLI
+"would be guessing"; the other asked whether one was wanted at all. Getting a correct
+result therefore needs a second turn in which the user re-explains the work, plus roughly
+the ~14k of work Continuum's run spent. That puts the baseline's cost to a correct result
+at about **35–45k work tokens, versus ~14k with Continuum: about 60–70% fewer**. It also
+saves the user's time repeating themselves.
+
+**Worst outcomes** (what Continuum must never do):
+- **Make the next model wrong.** A misleading signal such as a false "re-verify", or corrupted text.
+- **Make it more expensive.** A long, noisy brief.
+
+The trials found and fixed one of each kind (see below). The current brief costs about
+1–3k tokens of the work budget.
+
 ## Defects the trials found in Continuum (all fixed, with regression tests)
 
 1. **Corrupting redaction.** The README's local database password is the word
@@ -79,8 +116,9 @@ and both requirements that never appeared in the code.
 
 ## Limits
 
-- One run per condition per trial, so the numbers show a direction, not a statistic. Model
-  output varies, and the trials should be repeated, and widened to more task types.
+- Small samples: two runs per condition on the realistic handoff. The direction is consistent
+  (Continuum 2/2 correct, baseline 0/2), but the token figures are not a statistic. Widen to
+  more task types, and repeat.
 - The agents used the CLI, not MCP tools. The protocol is identical, and the MCP path is
   covered by `tests/integration/test_mcp_stdio.py`.
 - Sonnet → Opus within one vendor. Cross-vendor handoffs (e.g. GPT → Claude) use the same
