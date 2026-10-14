@@ -85,6 +85,7 @@ class CheckRan(_P):
     output_tail: str
     output_sha256: str
     fingerprint: str
+    modified_tree: bool = False
 
 
 class SessionClosed(_P):

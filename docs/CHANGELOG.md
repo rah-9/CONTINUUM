@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.6.1 — 2026-10-14
+
+A full-codebase audit of the coding-continuity layer found 23 issues, all fixed with regression tests (`tests/integration/test_coding_hardening.py`, D-031).
+
+### Fixed
+- **Verification could fail open.**
+  - A git command that failed or timed out was hashed as empty, so a dirty tree could match a clean one. Observation now raises `observation_failed`.
+  - External diff drivers and textconv could hide edits. Diffs are now raw.
+  - In a repo with no commits, staged changes were invisible.
+  - `src/build/`-style source directories were excluded at any depth.
+  - Untracked symlinks were followed outside the repo.
+- **Atomicity:** `coding_start` now writes the session row, `SessionStarted` and the initial tasks in one transaction, after validating every task. Invalid tasks no longer leave orphan sessions or turn `"pytest"` into checks `p, t, s, …`.
+- **Evidence race:** `coding_complete_task` is refused if the journal moved on, or the code changed, between evaluation and commit.
+- **Closed sessions** no longer run a check's command.
+- **Crashes:** a non-executable check, or one whose argv names a directory, is recorded as a failed run (exit 126), not a raw exception.
+- **Claims vs facts:**
+  - checkpoint summaries moved from `verified_facts` to `agent_notes`
+  - agent text is flattened in the Markdown brief, so it cannot forge headings or "verified" lines
+  - agents cannot record actions as `human:`
+  - agent labels are redacted
+- **Containment:** a coding repository is never `/` or the home directory itself, and stays inside `CONTINUUM_CODING_ROOTS` when that is set.
+- **Schema:** older code never downgrades a newer schema (`schema_too_new`). Concurrent first-use migrations are serialized by an advisory lock.
+- **CLI:** `--` is special only for `coding checks add`, so `note … -- "-x text"` works again.
+- Rename entries are parsed correctly in `changed_files`. Timestamps are compared as datetimes. A check that modifies the tree is flagged (`modified_tree`). Briefs observe the repository once and index check runs in a single pass.
+
 ## 0.6.0 — 2026-10-14
 
 Spec 0.5.
