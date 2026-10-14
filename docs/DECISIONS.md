@@ -301,3 +301,16 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 
 **Considered and rejected.** Batching the `runs.last_event_seq` update once per transaction would save about 14% of statements in a run. Those updates come from the pure projection shared with replay and rebuild (invariant I2), so the saving does not justify touching that path.
 
+## D-035 — Fingerprint the content, not the history; judge Continuum by real handoffs
+
+**Context.** Real Sonnet → Opus handoff trials (`docs/HANDOFF-TRIALS.md`) found three defects that no unit test had caught:
+- After every commit, verified work was flagged as changed, because the fingerprint included the commit id.
+- The default DSN password `continuum` made redaction rewrite every path and command.
+- Bounded notes lost their reasons.
+
+**Decision.**
+- **Fingerprint = git tree of the working copy's content.** It is built in a private index copy from tracked files on disk plus the untracked, non-ignored files from `git status`. Committing, staging or amending identical content keeps the fingerprint, and any content change alters it. This costs about 165 ms on a 20k-file repo, instead of about 70 ms. Accuracy over speed, because a false "re-verify" makes the next model redo or re-check finished work, which is the cost Continuum exists to remove.
+- **URL passwords are redacted inside URLs.** They are redacted elsewhere only if they look like secrets.
+- **The brief keeps fewer, whole notes** rather than many clipped ones.
+- **The success measure is transfer quality in real model switches.** That means hidden tests, chat-only requirements, redone work, and the tokens spent. Micro-benchmarks are not the measure. Trials are part of evaluating any change to the brief or the fingerprint.
+

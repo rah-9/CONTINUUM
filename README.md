@@ -36,6 +36,9 @@ continuum run demo_ack_loss_recovery
 
 ## Switch models mid-coding without losing the work
 
+Measured with real models: in a Sonnet → Opus handoff where the earlier chat held requirements that never appeared in the code, Opus with Continuum finished the job and honoured them. Without Continuum it spent more tokens and built the wrong thing. See [`docs/HANDOFF-TRIALS.md`](docs/HANDOFF-TRIALS.md).
+
+
 Coding with Claude Opus 4.8 and want Opus 5.5? GPT-5.6 in Codex and want 6.1? Switch, and the new model calls `coding_resume`. It gets the observed state of the code, which tasks are **proven** done by checks on the current code, what the previous model decided, and the next step. Agent notes are labelled as claims; "done" requires a human-registered check passing on the code as it is now. See [`docs/CODING-HANDOFF.md`](docs/CODING-HANDOFF.md) and the drop-in rules in [`integrations/AGENT_RULES.md`](integrations/AGENT_RULES.md). Cloud and Codex setup is in [`integrations/README.md`](integrations/README.md#4-in-the-cloud-claude-code-on-the-web-codex-cloud-and-in-codex).
 
 ## Stack

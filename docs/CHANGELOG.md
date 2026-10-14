@@ -11,8 +11,17 @@ Measured, then improved (D-034). All numbers are on a 20,000-file git repository
 ### Added
 - **`verified_facts.commits_since_last_checkpoint`**, observed from git: the next model sees exactly which commits were made since the last checkpoint. When history was rewritten the value is `None` (unknown), never a guess.
 
+### Validated with real model switches
+- **Trials.** Sonnet → Opus handoffs on a copy of this repository, judged by hidden tests (`docs/HANDOFF-TRIALS.md`).
+  - **Realistic trial:** prior work committed, and requirements stated only in the earlier chat. With Continuum, Opus finished the job (4/4) and honoured both chat-only requirements, using 71.3k tokens. Without it, Opus spent 75.3k tokens and delivered the wrong thing (1/4).
+- **Defects the trials found (all fixed, with tests):**
+  - redaction turned every `continuum` in paths and commands into `[REDACTED]`, because the default DSN password is that word
+  - decision reasons were clipped mid-sentence
+  - every commit falsely flagged verified work as changed. The fingerprint is now the content tree, not the commit; this costs about 165 ms on a 20k-file repo
+  - in a fresh repo, newer git (2.55) failed `git add --update -- .`
+
 ### Performance
-- **Fingerprint:** about 2× faster (120–170 ms → about 70 ms), down from 7 to 5 git processes. Untracked files now come from the single `git status` call, and the index is listed only when `.gitmodules` exists. Coding operations are 35–55% faster end to end; for example `resume` went from 132 to 83 ms and `run_check` from 270 to 168 ms. A non-functional test pins the git-call count.
+- **Fingerprint:** 7 → 5 git processes. It was about 2× faster before the content-tree change above, which trades that speed back for accuracy. Untracked files now come from the single `git status` call, and the index is listed only when `.gitmodules` exists. A non-functional test pins the git-call count. Measured on the 20k-file repo: a fingerprint takes about 165 ms with the content tree. Accuracy over speed: we chose the content tree over a 70 ms commit-based fingerprint that raised false alarms.
 
 ## 0.6.3 — 2026-10-14
 
