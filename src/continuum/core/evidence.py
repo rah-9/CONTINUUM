@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 from continuum.core.canonical import canonical_json, digest, sha256_hex
-from continuum.core.errors import PathContainmentError, SpecValidationError
+from continuum.core.errors import ContinuumError, PathContainmentError, SpecValidationError
 from continuum.core.state import TaskSpec
 
 BLOB_PREFIX = "blob:sha256:"
@@ -45,6 +46,18 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
+
+
+_BLOB_REF = re.compile(r"blob:sha256:[0-9a-f]{64}")
+
+
+class EvidenceError(ContinuumError, ValueError):
+    code = "invalid_evidence"
+
+
+def is_blob_ref(ref: str | None) -> TypeGuard[str]:
+    """Exactly ``blob:sha256:<64 hex>``: anything else is never read as a path."""
+    return bool(ref and _BLOB_REF.fullmatch(ref))
 
 
 class Workspace:
@@ -115,14 +128,24 @@ class Workspace:
         return BLOB_PREFIX + hexdigest
 
     def get_blob(self, ref: str) -> Any:
-        if not ref.startswith(BLOB_PREFIX):
-            raise ValueError(f"not a blob reference: {ref}")
+        if not is_blob_ref(ref):
+            raise EvidenceError(f"not a blob reference: {ref[:80]!r}")
         hexdigest = ref.removeprefix(BLOB_PREFIX)
         path = self.base / "blobs" / hexdigest[:2] / f"{hexdigest}.json"
-        data = path.read_bytes()
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError as exc:
+            raise EvidenceError(f"blob {ref} does not exist in run {self.run_id}") from exc
         if sha256_hex(data) != hexdigest:
-            raise ValueError(f"blob {ref} content does not match its digest")
+            raise EvidenceError(f"blob {ref} content does not match its digest")
         return json.loads(data)
+
+    def has_blob(self, ref: str) -> bool:
+        try:
+            self.get_blob(ref)
+        except EvidenceError:
+            return False
+        return True
 
 
 def input_fingerprint(

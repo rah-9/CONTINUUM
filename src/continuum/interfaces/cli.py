@@ -8,6 +8,9 @@ import sys
 from dataclasses import asdict
 from typing import Any
 
+import psycopg
+from psycopg_pool import PoolTimeout
+
 from continuum.core.canonical import canonical_json
 from continuum.core.errors import ContinuumError
 from continuum.core.runtime import RunResult
@@ -144,8 +147,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(raw)
     args.argv = command
     configure_logging(args.log_level)
-    sdk = Continuum()
+    sdk: Continuum | None = None
     try:
+        sdk = Continuum()
         if args.cmd not in ("db-init", "doctor"):
             sdk.ensure_schema()  # first use on a fresh database just works
         match args.cmd:
@@ -196,8 +200,14 @@ def main(argv: list[str] | None = None) -> int:
     except ContinuumError as exc:
         _print({"error": str(exc), "code": exc.code})
         return 2
+    except (psycopg.OperationalError, PoolTimeout) as exc:
+        _print({"error": f"database unavailable ({type(exc).__name__}); check "
+                         "CONTINUUM_DATABASE_URL and that PostgreSQL is running",
+                "code": "database_unavailable"})
+        return 2
     finally:
-        sdk.close()
+        if sdk is not None:
+            sdk.close()
     return 0
 
 

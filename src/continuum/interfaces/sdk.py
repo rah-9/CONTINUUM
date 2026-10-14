@@ -11,6 +11,7 @@ from continuum.core.runtime import Decision, RunResult, Runtime, RuntimeConfig
 from continuum.core.store import Store
 from continuum.interfaces.registry import TaskBinding, TaskRegistry, load_live_router
 from continuum.interfaces.settings import Settings
+from continuum.models.base import ModelRouter
 
 
 class Continuum:
@@ -22,7 +23,8 @@ class Continuum:
         self.clock = SystemClock()
         self.ids = RandomIds()
         self.store = store or Store(self.settings.database_url, schema=self.settings.db_schema,
-                                    clock=self.clock, ids=self.ids)
+                                    clock=self.clock, ids=self.ids,
+                                    pool_timeout_seconds=self.settings.db_timeout_seconds)
         self.registry = registry or TaskRegistry(self.settings.config_dir, self.settings.home)
         self.coding = CodingContinuity(self.store, clock=self.clock, ids=self.ids)
 
@@ -45,8 +47,11 @@ class Continuum:
     def tasks(self) -> list[dict[str, Any]]:
         return self.registry.describe()
 
-    def _runtime(self, binding: TaskBinding) -> Runtime:
-        models = binding.models or load_live_router(self.settings.config_dir / "models.yaml")
+    def _runtime(self, binding: TaskBinding, *, read_only: bool = False) -> Runtime:
+        # Read-only inspection never needs live models, so a broken models.yaml cannot
+        # hide a run's state from the person trying to repair it.
+        models = binding.models or (ModelRouter({}) if read_only else load_live_router(
+            self.settings.config_dir / "models.yaml"))
         config = RuntimeConfig(workspace_root=self.settings.home / "workspaces",
                                input_root=binding.input_root, owner_id=self.settings.owner_id,
                                lease_ttl_seconds=self.settings.lease_ttl_seconds,
@@ -55,10 +60,10 @@ class Continuum:
         return Runtime(store=self.store, tools=binding.tools, verifiers=binding.verifiers,
                        models=models, config=config, clock=self.clock, ids=self.ids)
 
-    def _runtime_for_run(self, run_id: str) -> Runtime:
+    def _runtime_for_run(self, run_id: str, *, read_only: bool = False) -> Runtime:
         with self.store.read() as q:
             task_id = q.run(run_id).task_id
-        return self._runtime(self.registry.binding(task_id))
+        return self._runtime(self.registry.binding(task_id), read_only=read_only)
 
     def start(self, task_id: str, *, model_alias: str | None = None) -> RunResult:
         binding = self.registry.binding(task_id)
@@ -68,7 +73,7 @@ class Continuum:
         return self._runtime_for_run(run_id).resume(run_id, model_alias=model_alias)
 
     def status(self, run_id: str) -> dict[str, Any]:
-        return self._runtime_for_run(run_id).status(run_id)
+        return self._runtime_for_run(run_id, read_only=True).status(run_id)
 
     def resolve_action(self, run_id: str, action_id: str, decision: Decision, *, actor: str,
                        reason: str, evidence_ref: str | None = None) -> RunResult:
@@ -79,11 +84,11 @@ class Continuum:
         return self._runtime_for_run(run_id).cancel(run_id, actor=actor, reason=reason)
 
     def inspect(self, run_id: str) -> dict[str, Any]:
-        return self._runtime_for_run(run_id).inspect(run_id)
+        return self._runtime_for_run(run_id, read_only=True).inspect(run_id)
 
     def pending_decisions(self, run_id: str) -> list[dict[str, Any]]:
         """Read-only: decisions only a human may make, with the command to make them."""
-        return self._runtime_for_run(run_id).pending_decisions(run_id)
+        return self._runtime_for_run(run_id, read_only=True).pending_decisions(run_id)
 
     def doctor(self) -> dict[str, Any]:
         """Check the installation: database, schema, registered tasks and model profiles."""
@@ -105,6 +110,8 @@ class Continuum:
                                 "error": type(exc).__name__}
         tasks = self.registry.task_ids()
         checks["tasks"] = {"ok": bool(tasks), "count": len(tasks),
+                           "invalid_files": {str(path): why for path, why
+                                             in self.registry.errors.items()},
                            "config_dir": str(self.settings.config_dir.resolve())}
         models: dict[str, Any] = {}
         try:
@@ -123,7 +130,7 @@ class Continuum:
 
     def trace(self, run_id: str) -> list[dict[str, Any]]:
         """Read-only JSON trace export (events with redacted blobs inlined)."""
-        return self._runtime_for_run(run_id).trace_export(run_id)
+        return self._runtime_for_run(run_id, read_only=True).trace_export(run_id)
 
     def runs(self) -> list[str]:
         with self.store.read() as q:

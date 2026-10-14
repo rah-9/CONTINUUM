@@ -21,6 +21,7 @@ Arbitrary task specs, tool execution and remote MCP discovery are not offered.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
@@ -28,6 +29,8 @@ from typing import Any
 from continuum.core.errors import ContinuumError
 from continuum.core.runtime import RunResult
 from continuum.interfaces.sdk import Continuum
+
+log = logging.getLogger(__name__)
 
 SERVER_INSTRUCTIONS = """CODING CONTINUITY: if you are a coding agent working in a repository, call
 coding_resume(repo_path, agent=<your exact model id>) FIRST in every new chat or after switching
@@ -63,18 +66,27 @@ class McpFacade:
 
     @staticmethod
     def _guard(fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        """Typed errors go back to the agent; anything else is masked (details stay in the
+        server's stderr log, never in the protocol stream or the model's context)."""
         try:
             return fn()
         except ContinuumError as exc:
             return {"error": str(exc), "code": exc.code}
+        except Exception as exc:
+            log.exception("unexpected error in MCP tool")
+            return {"error": f"internal error ({type(exc).__name__}); see the server log",
+                    "code": "internal"}
 
     def list_tasks(self) -> dict[str, Any]:
-        tasks = self.sdk.tasks()
-        out: dict[str, Any] = {"tasks": tasks}
-        if not tasks:
-            out["hint"] = ("no tasks registered; set CONTINUUM_CONFIG_DIR to a directory "
-                           "containing tasks/*.yaml")
-        return out
+        def view() -> dict[str, Any]:
+            tasks = self.sdk.tasks()
+            out: dict[str, Any] = {"tasks": tasks}
+            if not tasks:
+                out["hint"] = ("no tasks registered; set CONTINUUM_CONFIG_DIR to a directory "
+                               "containing tasks/*.yaml")
+            return out
+
+        return self._guard(view)
 
     def run_task(self, task_id: str, model_alias: str | None = None) -> dict[str, Any]:
         if task_id not in self.sdk.registry.task_ids():
@@ -158,8 +170,16 @@ class McpFacade:
         return self._guard(lambda: self.sdk.coding.close(session_id, reason, agent=agent))
 
     def list_runs(self, limit: int = 20) -> dict[str, Any]:
-        runs = self.sdk.runs()[-max(1, min(limit, 200)):]
-        return {"runs": [self.sdk.status(r) | {"actions": None} for r in reversed(runs)]}
+        def view() -> dict[str, Any]:
+            runs = self.sdk.runs()[-max(1, min(limit, 200)):]
+            # one unreadable run (e.g. its task was deregistered) must not hide the others
+            def one(run_id: str) -> dict[str, Any]:
+                return {"run_id": run_id} | self._guard(lambda: self.sdk.status(run_id)) \
+                    | {"actions": None}
+
+            return {"runs": [one(r) for r in reversed(runs)]}
+
+        return self._guard(view)
 
 
 def run_stdio(sdk: Continuum) -> None:

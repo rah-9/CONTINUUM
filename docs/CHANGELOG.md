@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.2 — 2026-10-14
+
+The full-codebase audit, continued into the core runtime and interfaces, found 9 issues. All are fixed, each with a regression test written first (`tests/integration/test_core_hardening.py`, D-032).
+
+### Fixed
+- **A transient read error permanently failed runs (high).** On resume or finalize, a verifier `ERROR` (for example a `store.head` timeout) was treated like `FAIL`. It invalidated the milestone and could end the run with `drift_requires_remediation`. Now an error records `VerifierError`, invalidates nothing, and pauses in `awaiting_reconciliation`. The next resume re-observes.
+- **Concurrent operations in one process shared a lease (high).** Two HTTP requests in one `continuum serve` used the same controller id, so a second resume, resolve or cancel re-entered the live lease with the same epoch. Its `release` then expired the lease under the running driver. Runs are now also claimed per process for each operation, so a concurrent operation gets `already_owned`.
+- **DNS rebinding against the loopback HTTP API (medium).** Requests whose `Host` or `Origin` is not loopback are refused.
+- **Unknown model alias (medium).** It is rejected before any run is created (start) or any lease is taken (resume), and HTTP returns 422 instead of 500. Previously an orphan run was left `running`.
+- **Raw tracebacks from interfaces (medium).**
+  - Malformed task files are reported (`continuum doctor` → `invalid_files`) instead of breaking every command.
+  - Bad factories and a broken `models.yaml` are typed `invalid_spec` errors.
+  - Read-only inspection never loads live models.
+  - MCP masks unexpected errors (`code: internal`), and `list_runs` tolerates an unreadable run.
+  - The CLI reports `database_unavailable` (bounded by `CONTINUUM_DB_TIMEOUT_SECONDS`, default 10).
+- **Costs (medium).** A model-registry cost of 0 is now unknown, never "free". A configured price snapshot replaces LiteLLM's generic estimate.
+- **Secrets in rejection reasons (low).** Schema and path errors quoting argument values are redacted before they are persisted.
+- **Malformed provider responses (low)** become a typed `ModelError`, so the run hands off instead of crashing.
+- **Blob references (low).** They are validated as `blob:sha256:<64 hex>`. A human receipt (`receipt:123`) is never read as a blob, and a nonexistent blob is refused as evidence.
+
 ## 0.6.1 — 2026-10-14
 
 A full-codebase audit of the coding-continuity layer found 23 issues, all fixed with regression tests (`tests/integration/test_coding_hardening.py`, D-031).
