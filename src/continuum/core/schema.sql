@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-INSERT INTO schema_meta (key, value) VALUES ('schema_version', '3')
+INSERT INTO schema_meta (key, value) VALUES ('schema_version', '4')
   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- TRUNCATE would bypass the row-level immutability trigger.
@@ -207,7 +207,7 @@ CREATE INDEX IF NOT EXISTS idx_attempts_started ON action_attempts(action_id)
   WHERE status = 'started';
 
 -- ---------------------------------------------------------------------------
--- Coding-session continuity (schema version 3, docs/02 s10).
+-- Coding-session continuity (schema versions 3-4, docs/02 s10).
 -- A coding agent's work in a repository survives model switches and new chats:
 -- an append-only journal per session, plus checks that only a human registers.
 -- ---------------------------------------------------------------------------
@@ -252,12 +252,24 @@ CREATE TABLE IF NOT EXISTS coding_checks (
 
 SELECT continuum_add_constraint('coding_sessions', 'coding_sessions_status_valid',
   $c$CHECK (status IN ('active', 'closed'))$c$);
+-- Schema v4 added ChatCaptured: replace the v3 list (an older constraint would reject it).
+ALTER TABLE coding_events DROP CONSTRAINT IF EXISTS coding_events_type_valid;
 SELECT continuum_add_constraint('coding_events', 'coding_events_type_valid', $c$CHECK (type IN (
   'SessionStarted', 'AgentJoined', 'TaskAdded', 'TaskStatusChanged', 'NoteRecorded',
-  'CheckpointCaptured', 'CheckRan', 'SessionClosed'))$c$);
+  'CheckpointCaptured', 'CheckRan', 'ChatCaptured', 'SessionClosed'))$c$);
 SELECT continuum_add_constraint('coding_events', 'coding_events_seq_positive',
   'CHECK (seq > 0)');
 SELECT continuum_add_constraint('coding_checks', 'coding_checks_timeout_positive',
   'CHECK (timeout_seconds BETWEEN 1 AND 3600)');
 
 CREATE INDEX IF NOT EXISTS idx_coding_sessions_repo ON coding_sessions(repo_root, status);
+
+-- Schema v4: the same repository at another path (another machine, a cloud container,
+-- a re-cloned checkout) is recognised by its normalized remote URL, never by guessing.
+ALTER TABLE coding_sessions ADD COLUMN IF NOT EXISTS repo_key TEXT;  -- NULL: no remote
+ALTER TABLE coding_checks ADD COLUMN IF NOT EXISTS repo_key TEXT;
+CREATE INDEX IF NOT EXISTS idx_coding_sessions_key ON coding_sessions(repo_key, status);
+CREATE INDEX IF NOT EXISTS idx_coding_checks_key ON coding_checks(repo_key, name);
+-- Captured chat messages are deduplicated by their key (re-imports are idempotent).
+CREATE INDEX IF NOT EXISTS idx_coding_events_capture_key ON coding_events
+  (session_id, (payload_json->>'key')) WHERE type = 'ChatCaptured';

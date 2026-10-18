@@ -1,4 +1,8 @@
-# Append to ~/.codex/config.toml (Windows: %USERPROFILE%\.codex\config.toml)
+# Append to ~/.codex/config.toml (Windows: %USERPROFILE%\.codex\config.toml).
+# `notify` must be a top-level key: put it above any [table] in your config.
+# It journals each turn (your words and the agent's report) so another app can continue.
+notify = ["continuum", "hook", "codex"]
+
 [mcp_servers.continuum]
 command = "continuum"
 args = ["mcp"]

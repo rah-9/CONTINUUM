@@ -1,9 +1,11 @@
-"""Observe a working tree: fingerprint and summary, for any kind of project.
+"""Observe a working tree: identity, fingerprint and code map, for any kind of project.
 
-Git repositories: fingerprint over HEAD, the full diff against HEAD (staged and
-unstaged) and the contents of untracked, non-ignored files. Other directories:
-fingerprint over every file's path and content hash, skipping VCS, virtualenv
-and dependency/cache directories. Commands run without a shell.
+Git repositories: the fingerprint is the git tree of the working copy's *content*
+(tracked files as they are on disk plus untracked, non-ignored files), so a commit of
+the same content is not a change (D-035). The repository's identity is its top-level
+directory, and across checkouts its normalized remote URL (D-036). Other
+directories: fingerprint over every file's path and content hash, skipping VCS,
+virtualenv and dependency/cache directories. Commands run without a shell.
 """
 
 from __future__ import annotations
@@ -55,6 +57,71 @@ def resolve_repo(path: str) -> Path:
     if allowed and not any(root == a or root.is_relative_to(a) for a in allowed):
         raise PathContainmentError(f"{root} is outside CONTINUUM_CODING_ROOTS")
     return root
+
+
+def canonical_root(path: str) -> Path:
+    """The directory a session is keyed by: the git top level when ``path`` is inside a
+    git work tree, so an agent started in ``repo/src`` and one started in ``repo`` share
+    the session. Falls back to ``path`` itself when the top level is not an acceptable
+    project directory (e.g. a dotfiles repository in the home directory)."""
+    given = resolve_repo(path)
+    top = _git(given, "rev-parse", "--show-toplevel")
+    if not top or not top.strip():
+        return given
+    try:
+        return resolve_repo(os.fsdecode(top.strip()))
+    except (PathContainmentError, SpecValidationError):
+        return given
+
+
+_SCP_LIKE = re.compile(r"^(?:[^@/]+@)?([^:/]+):(?!//)(.+)$")
+
+
+def normalize_remote(url: str) -> str | None:
+    """A credential-free, comparable identity for a remote URL.
+
+    ``https://user:token@GitHub.com/Org/Repo.git``, ``git@github.com:org/repo`` and
+    ``ssh://git@github.com/org/repo/`` all become ``github.com/org/repo``."""
+    url = url.strip()
+    if not url:
+        return None
+    if "://" in url:
+        scheme, rest = url.split("://", 1)
+        if scheme.lower() == "file":
+            return "file:" + rest.rstrip("/").lower()
+        host, _, path = rest.partition("/")
+        host = host.rsplit("@", 1)[-1]          # drop user info (and any credentials)
+        host = host.split(":", 1)[0]             # drop the port
+    elif (m := _SCP_LIKE.match(url)) and not os.path.isabs(url) \
+            and not re.match(r"^[A-Za-z]:[\\/]", url):  # not a Windows drive path
+        host, path = m.group(1), m.group(2)
+    else:
+        return "file:" + url.rstrip("/").lower()  # a local path remote
+    path = path.strip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    return f"{host}/{path}".lower() if host and path else None
+
+
+def repo_key(root: Path) -> str | None:
+    """Identity of the repository across checkouts: its normalized ``origin`` remote (or
+    its only remote). ``None`` when there is none: then only the path identifies it."""
+    url = _git(root, "config", "--get", "remote.origin.url")
+    if not url:
+        names = (_git(root, "remote") or b"").split()
+        if len(names) != 1:
+            return None
+        url = _git(root, "config", "--get", f"remote.{names[0].decode()}.url")
+    return normalize_remote(url.decode("utf-8", errors="replace")) if url else None
+
+
+def current_branch(root: Path) -> str | None:
+    """The checked-out branch as ``git status`` names it (``(detached)`` without one);
+    ``None`` outside git."""
+    if _git(root, "rev-parse", "--is-inside-work-tree") is None:
+        return None
+    ref = _git(root, "symbolic-ref", "--short", "-q", "HEAD")
+    return ref.decode("utf-8", errors="replace").strip() if ref else "(detached)"
 
 
 GIT = shutil.which("git")
@@ -259,18 +326,58 @@ def session_changes(root: Path, base: str | None) -> dict[str, Any] | None:
     for raw in untracked:
         path = _show(raw)
         file = root / os.fsdecode(raw)
-        try:
-            data = file.read_bytes() if file.is_file() and not file.is_symlink() else b""
-        except OSError:
-            data = b""
-        files[path] = {"path": path, "status": "untracked", "added": data.count(b"\n"),
-                       "deleted": 0, "near": [],
-                       "defines": list(dict.fromkeys(
-                           _show(m.group(1)) for m in (_DEFINITION.match(b"+" + ln)
-                                                        for ln in data.splitlines()) if m)
-                       )[:MAP_NAMES]}
+        files[path] = {"path": path, "status": "untracked", "deleted": 0, "near": [],
+                       **_scan_new_file(file)}
     ranked = sorted(files.values(), key=lambda f: (-(f["added"] + f["deleted"]), f["path"]))
-    return {"since": base, "total_files": len(ranked), "files": ranked[:MAP_FILES]}
+    return {"since": base, "basis": "git", "total_files": len(ranked),
+            "files": ranked[:MAP_FILES]}
+
+
+SCAN_BYTES = 256 * 1024  # a new file's definitions are read from its first 256 KiB
+
+
+def _scan_new_file(file: Path) -> dict[str, Any]:
+    """Line count and definitions of a new file, reading a bounded prefix (an untracked
+    1 GB data file must not be read into memory to build a code map)."""
+    try:
+        if not file.is_file() or file.is_symlink():
+            return {"added": 0, "defines": []}
+        with file.open("rb") as fh:
+            head = fh.read(SCAN_BYTES)
+            lines = head.count(b"\n")
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                lines += chunk.count(b"\n")
+    except OSError:
+        return {"added": 0, "defines": []}
+    defines = list(dict.fromkeys(_show(m.group(1)) for m in (
+        _DEFINITION.match(b"+" + ln) for ln in head.splitlines()) if m))[:MAP_NAMES]
+    return {"added": lines, "defines": defines}
+
+
+def files_changed_since(root: Path, since: float) -> dict[str, Any]:
+    """The code map outside git: files modified after ``since`` (POSIX time), by mtime.
+    Deletions cannot be seen without a VCS; the map says so (``basis``)."""
+    found: list[dict[str, Any]] = []
+    count = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        top = Path(dirpath) == root
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS
+                             and not (top and d in TOP_LEVEL_BUILD_DIRS))
+        for name in sorted(filenames):
+            path = Path(dirpath) / name
+            count += 1
+            if count > MAX_FILES or name.endswith(NOISE_SUFFIXES) or path.is_symlink():
+                continue
+            try:
+                if path.stat().st_mtime <= since:
+                    continue
+            except OSError:
+                continue
+            found.append({"path": path.relative_to(root).as_posix(), "status": "changed",
+                          "deleted": 0, "near": [], **_scan_new_file(path)})
+    found.sort(key=lambda f: (-f["added"], f["path"]))
+    return {"since": None, "basis": "mtime", "total_files": len(found),
+            "files": found[:MAP_FILES]}
 
 
 def commits_since(root: Path, base: str, limit: int = 20) -> list[dict[str, str]] | None:

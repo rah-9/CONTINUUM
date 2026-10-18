@@ -5,6 +5,8 @@ You are coding with one model and want to continue with another, for example:
 - Claude Opus 4.8 → Claude Opus 5.5 in Claude Code
 - GPT-5.6 → GPT-6.1 in the Codex shell
 - Claude → GPT, or one chat to a brand-new chat the next day
+- **one app to another:** Claude Code → Codex → Cursor, mid-task
+- your laptop → a cloud container (another checkout of the same repository)
 
 Chat history does not survive the switch, and it shouldn't be trusted anyway. Continuum keeps the **state of the coding work** outside the chat, in PostgreSQL, and hands the next model a brief built from facts it can check.
 
@@ -18,6 +20,9 @@ Chat history does not survive the switch, and it shouldn't be trusted anyway. Co
 | Which checks passed, on which code, with which definition | `CheckRan` events, compared with the code now | fact |
 | Tasks, and whether each is **verified** or needs re-verification | evidence fingerprints vs the code now | fact |
 | Checks registered by a human, and whether any changed this session | `coding_checks` | fact |
+| **What the user asked**, verbatim, in every earlier chat and app | captured by the app's hooks, never by a model | the user's words: requirements, newest wins |
+| The previous agent's last message | captured by the app's hooks | claim |
+| Attention: what is missing or changed (no capture, uncheckpointed code, failing checks, a moved session) | computed from the journal | fact |
 | Decisions, context, blockers and next steps | notes recorded by previous agents, kept whole | claim |
 | Checkpoints (what was being done, by which model) | agent summary plus the observed state | claim plus fact |
 
@@ -28,6 +33,14 @@ Continuum calls no LLM. The brief is the agent's own notes plus facts observed f
 It works for any kind of coding, not only backend work: a frontend, data pipelines, infrastructure, docs, notebooks, a game or a firmware project. Inside git it fingerprints the **content** of the working copy (tracked files on disk plus untracked, non-ignored files), so a commit of the same content is not a change but any edit is. Outside git it hashes the files. Checks are any command you would run yourself: `pytest -q`, `npm test`, `cargo test`, `terraform validate`, `make lint`.
 
 ## One-time setup (per repository, by a human)
+
+```bash
+continuum coding setup .     # rules in AGENTS.md (+ CLAUDE.md), Claude Code hooks, .mcp.json
+```
+
+For Codex, add the snippet it prints to `~/.codex/config.toml` (the MCP server plus
+`notify = ["continuum", "hook", "codex"]`). With the Claude Code plugin installed, its hooks
+come with the plugin. Then register the checks:
 
 ```bash
 continuum coding checks add . tests --actor alice -- pytest -q
@@ -62,6 +75,22 @@ Then add the rules from [`integrations/AGENT_RULES.md`](../integrations/AGENT_RU
 
 The new model sees that it joined, which tasks are verified, the latest check results on the current code, the decisions made, and the next step. Then it carries on.
 
+## Switching apps: Claude Code → Codex (or back)
+
+This works even when the first agent never called a Continuum tool and the chat ended
+without warning (quota, crash, closed window):
+
+1. While you work in Claude Code, its hooks journal **your messages** and each turn's final
+   report. The first message starts a session if there is none.
+2. Open Codex in the same repository (any subdirectory, or another clone with the same
+   remote and branch). Following `AGENTS.md`, it calls `coding_resume`.
+3. Codex receives your requirements in your own words, what the last agent reported, where
+   the code changed, what is proven, and the *Attention* list of gaps. Its own turns are
+   journaled through `notify`, so switching back to Claude Code shows them, before the first
+   prompt, through the SessionStart hook.
+
+The exact algorithm and every tested scenario: [`MEMORY-ALGORITHM.md`](MEMORY-ALGORITHM.md).
+
 ## Switching: GPT-5.6 → GPT-6.1 in Codex
 
 Same protocol. Codex reads `AGENTS.md`, calls `coding_resume` over MCP (or `continuum coding resume --repo . --agent gpt-6.1` from its shell) and continues. The session is found **by repository**, so a new process, a new chat or even a new machine pointing at the same database picks it up.
@@ -76,6 +105,8 @@ In real Sonnet → Opus handoffs on this repository ([`HANDOFF-TRIALS.md`](HANDO
 
 ```bash
 continuum coding brief --repo .          # Markdown brief, the same thing the model sees
+continuum coding recall "force overwrite" --repo .   # search everything, including old chats
+continuum coding import ~/.codex/sessions/…/rollout-….jsonl --repo .   # apps without hooks
 continuum coding brief --repo . --json   # machine-readable
 continuum coding sessions --repo .
 continuum coding close SESSION --reason "merged" --actor alice
@@ -84,7 +115,8 @@ continuum coding close SESSION --reason "merged" --actor alice
 ## Guarantees and limits
 
 - The journal is append-only (enforced by a database trigger), with one gapless sequence per session, even with two agents writing at once. A closed session rejects writes.
-- Secrets in notes and check output are redacted before they are stored. Check output is kept only as a tail plus a digest.
+- Secrets in notes, captured chat and check output are redacted before they are stored: known secret values, URL credentials and well-known token formats. Check output is kept only as a tail plus a digest. Do not paste secrets into chat anyway: a secret in an unknown format can't be recognised.
+- Capture is opt-in per repository (the hooks), and `CONTINUUM_HOOKS=off` turns it off.
 - Checks run as argv lists without a shell, in the repository root, under a timeout (default 600 s). A closed session never runs one.
 - Repository paths are contained: never `/` or your home directory itself. Set `CONTINUUM_CODING_ROOTS=/path/to/projects` (`:`-separated; `;` on Windows) to restrict agents to your project directories.
 - If git can't be read (lock, timeout, broken config), Continuum refuses to fingerprint instead of guessing, so stale evidence never counts.
