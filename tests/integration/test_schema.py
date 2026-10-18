@@ -12,6 +12,7 @@ from continuum.core.state import (
     MilestoneStatus,
     RunStatus,
 )
+from continuum.core.store import Store
 
 
 def _exec(store, sql, params=()):
@@ -50,7 +51,7 @@ def test_migrate_is_idempotent_and_versioned(store):
     with store.connection() as conn:
         row = conn.execute(b"SELECT value FROM schema_meta WHERE key = 'schema_version'"
                            ).fetchone()
-    assert row["value"] == "3"
+    assert row["value"] == Store.SCHEMA_VERSION
 
 
 @pytest.mark.parametrize(("constraint", "enum"), [

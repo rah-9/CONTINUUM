@@ -37,6 +37,16 @@ eval/handoff_trials/export_feature/judge.sh /tmp/trial/proj_b0
 Record each B run's token usage. Subtract the cost of an idle agent of the same kind (one
 told only to reply "OK") to get the work tokens.
 
+## App switch after an abrupt end (Trial 4)
+
+The same project and judge, but model A never uses Continuum: install only the Claude Code
+hooks (`integrations/claude-code/hooks/hooks.json` as `.claude/settings.json`), give A the
+user's request in two `claude -p` turns (`--resume` for the second, which adds the two
+Part 2 requirements and ends the chat), then run `continuum coding setup` for B. Run B with
+`CONTINUUM_HOOKS=off` (no capture, no brief at start: like an app without hooks) and
+`--mcp-config proj/.mcp.json`. Before the B runs, move A's directory under
+`~/.claude/projects/` away, so no B can read A's chat from disk.
+
 ## GPT → Claude (cross-vendor)
 
 The trial is vendor-neutral. Use **Codex CLI** (a GPT model) as model A and **Claude Code**

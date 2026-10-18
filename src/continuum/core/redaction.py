@@ -20,6 +20,36 @@ _URL_PASSWORD = re.compile(r"[a-z][a-z0-9+.-]*://[^:/@\s]*:([^@\s]+)@", re.IGNOR
 _URL_CREDENTIAL = re.compile(r"([a-z][a-z0-9+.-]*://[^:/@\s]*:)[^@\s]+@", re.IGNORECASE)
 
 
+# Well-known credential formats, redacted wherever they appear (pasted logs, chat, check
+# output), even when the secret is not in this process's environment.
+_KNOWN_TOKENS = re.compile(
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----"
+    r"|\bsk-(?:ant-|proj-)?(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{20,}"  # Anthropic/OpenAI
+    r"|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}"         # GitHub tokens
+    r"|\bgithub_pat_[A-Za-z0-9_]{40,}"
+    r"|\bglpat-[A-Za-z0-9_-]{20,}"                        # GitLab
+    r"|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"                     # AWS access key ids
+    r"|\bxox[abprs]-[A-Za-z0-9-]{10,}"                    # Slack
+    r"|\bAIza[0-9A-Za-z_-]{35}"                           # Google API keys
+    r"|\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}",  # JWTs
+    re.S)
+# `password = hunter2hunter2`, `"api_key": "…"`, `TOKEN=…`: the value is redacted when it
+# looks like a credential (letters and digits, no spaces, not an identifier or a call).
+_ASSIGNED = re.compile(
+    r"((?:api[_-]?key|secret|token|password|passwd|pwd|access[_-]?key|auth)"
+    r"[\"']?\s*[:=]\s*[\"']?)([A-Za-z0-9_\-+/=.~]{12,})", re.IGNORECASE)
+
+
+def _credential_like(value: str) -> bool:
+    return any(c.isdigit() for c in value) and any(c.isalpha() for c in value)
+
+
+def _redact_patterns(value: str) -> str:
+    value = _KNOWN_TOKENS.sub(REDACTED, value)
+    return _ASSIGNED.sub(lambda m: m.group(1) + REDACTED if _credential_like(m.group(2))
+                         else m.group(0), value)
+
+
 def _looks_secret(value: str) -> bool:
     """At least 8 characters from at least two classes (lower, upper, digit, other)."""
     classes = sum((any(c.islower() for c in value), any(c.isupper() for c in value),
@@ -47,7 +77,7 @@ class Redactor:
     def text(self, value: str) -> str:
         for secret in self._values:
             value = value.replace(secret, REDACTED)
-        return _URL_CREDENTIAL.sub(rf"\1{REDACTED}@", value)
+        return _redact_patterns(_URL_CREDENTIAL.sub(rf"\1{REDACTED}@", value))
 
     def __call__(self, value: Any) -> Any:
         if isinstance(value, str):

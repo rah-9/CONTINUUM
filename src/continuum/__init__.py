@@ -4,4 +4,4 @@ Runtime-owned durable state, verified milestone evidence and an external-effect
 ledger, persisted in PostgreSQL. See ``docs/00-README.md`` for the specification.
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"

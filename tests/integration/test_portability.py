@@ -56,3 +56,13 @@ def test_p2_state_never_lands_in_the_launch_directory(tmp_path, monkeypatch):
     assert Settings().config_dir == Path("config")
     monkeypatch.setenv("CONTINUUM_HOME", "~/elsewhere")
     assert Settings().home == tmp_path / "user" / "elsewhere"
+
+
+def test_p3_cli_output_into_a_closed_pipe_is_not_a_crash(tmp_path):
+    """Agents pipe output into `head`; the reader closing early printed a traceback."""
+    proc = subprocess.Popen([EXE, "coding", "setup", "--dry-run", str(tmp_path)],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert proc.stdout is not None and proc.stderr is not None
+    proc.stdout.close()          # the reader is gone before the first write (`| head -0`)
+    err = proc.stderr.read().decode()
+    assert proc.wait(timeout=60) == 0 and "Traceback" not in err, err

@@ -96,6 +96,43 @@ saves the user's time repeating themselves.
 The trials found and fixed one of each kind (see below). The current brief costs about
 1–3k tokens of the work budget.
 
+## Trial 4: switching apps after an abrupt end, with an agent that never used Continuum
+
+The hardest realistic case (v0.8.0). Unlike Trials 1–3, nothing depends on the first agent's
+discipline:
+
+- **Model A (Sonnet) in real Claude Code**, non-interactively (`claude -p`). Only Continuum's
+  Claude Code **hooks** are installed: no rules, no MCP server, no mention of Continuum in
+  the prompt. The user's request comes in two turns. The second turn adds two requirements
+  for Part 2 (no overwrite without `--force`, sorted keys) and ends the chat: *"I'm out of
+  time with you now, stop here."* A never called a Continuum tool. It saved the requirements
+  in Claude Code's own per-project memory, which another app cannot see.
+- **Model B (Opus) configured like another app** (Codex-style): the repository's `AGENTS.md`
+  rules and the MCP server, **no hooks** and no brief at session start. B's prompt does not
+  mention Continuum: *"The user switched coding apps in the middle of their work… Continue
+  where we left off on the session-export feature. Finish it and commit with git."*
+- **Baseline B:** the same code and prompt, no Continuum.
+- During both B runs, A's Claude Code transcript and memory directory were moved out of
+  reach, so neither B could read A's chat from disk.
+
+| B (Opus) after an app switch | hidden tests | chat-only requirements | tool calls | wall time | cost |
+|---|---|---|---|---|---|
+| **with Continuum** (rules + MCP only) | **4/4** | **2/2** | **16** | **1.8 min** | **$0.56** |
+| baseline | 1/4 | 0/2 | 20 | 5.1 min | $0.63 |
+
+With Continuum, B followed the repository's rules on its own: `coding_resume` first. The
+brief gave it both of the user's messages verbatim and the code map. It then registered the
+tasks, ran the human-registered checks, completed both tasks as verified, and left a
+checkpoint and a next step. The baseline found nothing for its folder, implemented a CLI
+without `--out`, and ended with: *"If the earlier chat agreed on things that never made it
+into the code, such as a `--out` file option, … I couldn't see them."*
+
+**A first run of this trial was discarded.** The project copy still contained this document,
+and the baseline read it and "knew" the hidden requirements. The setup script now strips the
+trial's write-up and every pointer to it, and refuses to start if the requirements appear
+anywhere in the project. In that discarded run, Continuum's B also scored 4/4 under the
+corrected judge (below).
+
 ## Defects the trials found in Continuum (all fixed, with regression tests)
 
 1. **Corrupting redaction.** The README's local database password is the word
@@ -114,13 +151,24 @@ The trials found and fixed one of each kind (see below). The current brief costs
      staging or amending identical content is not a change.
    - Test: `test_committing_or_staging_identical_content_keeps_the_fingerprint`.
 
+4. **`continuum … | head` crashed** with a `BrokenPipeError` traceback (agents pipe output
+   constantly; found while preparing Trial 4).
+   - Test: `test_p3_cli_output_into_a_closed_pipe_is_not_a_crash`.
+
+Defects in the trial harness (fixed): the project leaked this write-up (above), and the R4 judge
+compared exact JSON text, so compact separators failed it although the keys were sorted. It
+now checks key order.
+
 ## Limits
 
-- Small samples: two runs per condition on the realistic handoff. The direction is consistent
+- Small samples: two runs per condition on the realistic handoff, and one clean run of the
+  app switch (Trial 4). The direction is consistent
   (Continuum 2/2 correct, baseline 0/2), but the token figures are not a statistic. Widen to
   more task types, and repeat.
-- The agents used the CLI, not MCP tools. The protocol is identical, and the MCP path is
-  covered by `tests/integration/test_mcp_stdio.py`.
+- Trials 1–3 used the CLI; Trial 4 used the MCP tools and real Claude Code hooks.
+- Trial 4's "other app" is Claude Code configured like Codex (rules + MCP, no hooks), because
+  this environment has no OpenAI access. Codex's own `notify` capture is covered by the scenario
+  tests, not by a live run.
 - Sonnet → Opus within one vendor. The GPT → Claude trial is packaged and ready, but not yet run:
   the cloud environment these trials ran in has no OpenAI access. See
   [`eval/handoff_trials/README.md`](../eval/handoff_trials/README.md); it uses Codex CLI (GPT)

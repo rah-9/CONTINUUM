@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "continuum"
-version = "0.7.0"
+version = "0.8.0"
 description = "Model-agnostic agent continuity runtime: durable verified state and an external-effect ledger."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -41,6 +41,7 @@ packages = ["src/continuum", "eval/continuum_lab"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/continuum/core/schema.sql" = "continuum/core/schema.sql"
+"src/continuum/coding/agent_rules.md" = "continuum/coding/agent_rules.md"
 
 [tool.hatch.build]
 dev-mode-dirs = ["src", "eval"]

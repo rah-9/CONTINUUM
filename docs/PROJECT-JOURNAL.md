@@ -152,6 +152,14 @@ Every feature is judged by one question: *does it keep valid work and prevent un
 - **No LLM inside Continuum.** Memory is the agent's own notes plus observed facts, so there is no extra model cost.
 - The trial harness is packaged in `eval/handoff_trials/` with a GPT → Claude runbook.
 
+### Phase 9: v0.8.0, continuity across apps, machines and abrupt ends
+
+- **The gap:** memory depended on the previous agent writing notes. Switching *apps* (Claude Code → Codex), a sudden end (quota, crash) or another checkout (laptop → container) lost what the user had said and sometimes the whole session.
+- **Chat capture by the app, not a model** (D-036). Hooks journal the user's words and each turn's report. The transcript parser reads any app's format by structure. The brief leads with the user's requirements (newest wins), the last report and computed Attention lines. Claude Code shows the brief before the first turn.
+- **Repository identity:** the git top level, then remote + branch, never a guess.
+- **`coding_recall`** keeps the brief small without forgetting anything. **`continuum coding setup`** wires a repository in one command.
+- **The whole algorithm is written down** with its bounds and a tested scenario matrix ([MEMORY-ALGORITHM.md](MEMORY-ALGORITHM.md)), and validated with real models in real Claude Code (Trial 4 in [HANDOFF-TRIALS.md](HANDOFF-TRIALS.md)).
+
 ## 4. Evidence so far
 
 Results are from the deterministic fake-model safety matrix: 15 tasks × 6 faults × 3 connector modes × 2 seeds, 912 paired cells. They test **modeled** safety properties only. They are not claims about live providers. The full report is in `lab-reports/`.

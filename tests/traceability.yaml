@@ -190,3 +190,26 @@ U8_coding_handoff_between_models_and_chats:
   - tests/integration/test_brief_quality.py::test_b1_brief_stays_bounded_for_a_long_session
   - tests/integration/test_brief_quality.py::test_b2_commits_since_last_checkpoint_are_observed_facts
   - tests/integration/test_brief_quality.py::test_b3_history_is_best_effort_when_the_checkpoint_commit_is_gone
+  - tests/integration/test_brief_quality.py::test_b4_decision_reasons_and_next_steps_reach_the_next_model_whole
+  - tests/integration/test_brief_quality.py::test_b5_code_map_shows_where_the_session_worked
+U9_continuity_across_apps_machines_and_abrupt_ends:
+  - tests/integration/test_scenarios.py::test_s1_claude_code_to_codex_with_an_abrupt_end_and_no_agent_notes
+  - tests/integration/test_scenarios.py::test_s2_another_checkout_continues_the_session_and_uses_its_checks
+  - tests/integration/test_scenarios.py::test_s2b_a_different_branch_is_never_joined_by_guessing
+  - tests/integration/test_scenarios.py::test_s3_hooks_fire_repeatedly_and_concurrently_without_duplicates
+  - tests/integration/test_scenarios.py::test_s4_a_hook_never_breaks_or_stalls_the_agent
+  - tests/integration/test_scenarios.py::test_s4b_hook_cli_round_trip_over_a_real_database
+  - tests/integration/test_scenarios.py::test_s5_long_sessions_stay_bounded_and_nothing_is_forgotten
+  - tests/integration/test_scenarios.py::test_s6_projects_without_git_get_a_code_map_too
+  - tests/integration/test_scenarios.py::test_s7_secrets_pasted_into_chat_are_never_stored
+  - tests/integration/test_scenarios.py::test_s8_short_replies_and_conflicting_requests
+  - tests/integration/test_scenarios.py::test_s9_closed_sessions_are_not_resumed_and_capture_starts_a_new_one
+  - tests/integration/test_scenarios.py::test_s10_setup_wires_any_repo_idempotently_and_keeps_existing_config
+  - tests/integration/test_scenarios.py::test_s11_a_v3_database_upgrades_in_place
+  - tests/integration/test_scenarios.py::test_s12_hooks_installed_for_every_project_only_journal_git_repositories
+  - tests/unit/test_transcript.py::test_claude_code_transcript_keeps_only_what_the_person_typed
+  - tests/unit/test_transcript.py::test_codex_rollout_without_injected_context_or_duplicates
+  - tests/unit/test_transcript.py::test_gemini_and_generic_chat_exports
+  - tests/unit/test_transcript.py::test_unknown_future_wrappers_and_garbage_degrade_gracefully
+  - tests/unit/test_redaction.py::test_well_known_credentials_are_redacted_even_when_not_in_the_environment
+  - tests/unit/test_integrations.py::test_apps_journal_the_chat_through_the_hook_command

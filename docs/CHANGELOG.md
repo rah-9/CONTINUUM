@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.8.0 — 2026-10-18
+
+Continuity across **apps**, **machines** and **abrupt ends**, not only across models in one app (D-036). The complete algorithm, its bounds and the scenario matrix are in `docs/MEMORY-ALGORITHM.md`.
+
+### Added
+- **Chat capture without any model.** `continuum hook <app>` journals the user's own words and each turn's final agent report from the app's hook payload.
+  - Claude Code: the plugin's `hooks/hooks.json`, or `continuum coding setup`.
+  - Codex: `notify = ["continuum", "hook", "codex"]`.
+  - Any app with JSON hooks; `continuum coding import <transcript>` and `continuum coding capture` for others.
+  - It works even if the agent never calls a Continuum tool or is cut off mid-turn. In a git repository, the first message starts a session. A plugin's hooks run in every folder, so other folders need an explicit `coding_start`.
+  - At a turn's end only the newest 2 MiB of the transcript are read, so long chats do not slow every turn down. Compaction and session end re-read it all to catch up.
+  - New event `ChatCaptured`; schema v4, upgraded in place.
+- **Structural transcript parser.** It reads Claude Code, Codex, Gemini and generic chat exports, and wrappers it has never seen, by structure. Harness-injected text (system reminders, environment context, instruction files) is removed.
+- **The brief leads with "What the user asked"** (verbatim; first + newest 6; newest wins), the **last agent report** (a claim) and **Attention** lines computed from the journal.
+- **Brief at chat start.** Claude Code's SessionStart hook puts the brief into the new chat before the model's first turn.
+- **`coding_recall`** (MCP, read-only) and `continuum coding recall`: keyword search over everything the session remembers. The brief stays bounded, and nothing is forgotten. 20 MCP tools.
+- **`continuum coding setup`.** One command writes the rules into AGENTS.md (imported by CLAUDE.md), Claude Code hooks and `.mcp.json`, idempotently, keeping existing content. It prints the Codex snippet.
+- **Code map outside git**, by modification time.
+
+### Changed
+- **A session is found by the git top level** (an agent in `repo/src` joins `repo`'s session), then by the **normalized remote URL and the same branch** in another checkout (laptop → container). The session moves there, recorded in the journal, and the human's checks apply there. Another branch is never joined by guessing.
+- **Redaction also removes well-known credential formats**: Anthropic/OpenAI, GitHub, GitLab, AWS, Slack and Google keys, JWTs, private keys, and `password=…`-style assignments. This holds even when the secret is not in the environment, because captured chat contains what users paste.
+- Agent notes in the full JSON brief are bounded like the Markdown ones. The agent list is bounded.
+
+### Fixed
+- `continuum … | head` printed a `BrokenPipeError` traceback.
+- **Trial harness leak.** The project copy contained `docs/HANDOFF-TRIALS.md`, which names the hidden chat-only requirements. A baseline agent read it and "knew" them. `setup.sh` now strips the trial write-up and every pointer to the trial, and refuses to start if the requirements appear anywhere in the project.
+- **Trial judge.** R4 compared exact JSON text, so compact separators failed it although the keys were sorted. It now checks key order at every level.
+- An untracked multi-gigabyte file was read whole to build the code map; it is now scanned with a bounded prefix.
+
 ## 0.7.0 — 2026-10-14
 
 Measured, then improved (D-034). All numbers are on a 20,000-file git repository with 200 changed and untracked files.
