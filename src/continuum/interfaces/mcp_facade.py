@@ -10,7 +10,8 @@ surface is deliberately limited (docs/01 R10, docs/02 s8):
 * coding-session continuity (docs/02 s10): ``coding_resume``, ``coding_start``,
   ``coding_brief``, ``coding_add_task``, ``coding_set_task_status``,
   ``coding_complete_task``, ``coding_note``, ``coding_checkpoint``,
-  ``coding_run_check``, ``coding_sessions``, ``coding_close``
+  ``coding_run_check``, ``coding_recall`` (read-only search), ``coding_sessions``,
+  ``coding_close``
 
 **Human decisions are never exposed.** Approving, confirming or retrying an
 uncertain side effect must come from a person (CLI/HTTP), never from a model
@@ -35,7 +36,10 @@ log = logging.getLogger(__name__)
 
 SERVER_INSTRUCTIONS = """CODING CONTINUITY: if you are a coding agent working in a repository, call
 coding_resume(repo_path, agent=<your exact model id>) FIRST in every new chat or after switching
-model; if it reports no session, call coding_start with the goal. Follow the returned brief.
+model; if it reports no session, call coding_start with the goal. Follow the returned brief:
+"What the user asked" is the user's own words from earlier chats (any app), the newest wins.
+To find anything older than the brief shows, call coding_recall(query) instead of re-reading
+the repository.
 Record decisions and next steps with coding_note, call coding_checkpoint after meaningful changes,
 and before claiming a task done run its checks (coding_run_check) then coding_complete_task.
 Checks are registered by a human; you cannot define or change them.
@@ -174,6 +178,13 @@ class McpFacade:
     def coding_sessions(self, repo_path: str | None = None) -> dict[str, Any]:
         return self._guard(lambda: {"sessions": self.sdk.coding.sessions(repo_path)})
 
+    def coding_recall(self, query: str, session_id: str | None = None,
+                      repo_path: str | None = None, all_sessions: bool = False,
+                      limit: int = 8) -> dict[str, Any]:
+        return self._guard(lambda: self.sdk.coding.recall(
+            query, session_id=session_id, repo_path=repo_path, all_sessions=all_sessions,
+            limit=limit))
+
     def coding_close(self, session_id: str, reason: str, agent: str) -> dict[str, Any]:
         return self._guard(lambda: self.sdk.coding.close(session_id, reason, agent=agent))
 
@@ -297,6 +308,15 @@ def run_stdio(sdk: Continuum) -> None:
     def coding_run_check(session_id: str, name: str, agent: str) -> dict[str, Any]:
         """Run a human-registered check (e.g. tests) and record the result as evidence."""
         return facade.coding_run_check(session_id, name, agent)
+
+    @server.tool()
+    def coding_recall(query: str, session_id: str | None = None,
+                      repo_path: str | None = None, all_sessions: bool = False,
+                      limit: int = 8) -> dict[str, Any]:
+        """Search everything the coding session remembers (older notes, decisions, what the
+        user said in earlier chats, checkpoints, check output) by keywords. Read-only. Use
+        it instead of re-reading the repository when the brief does not show something."""
+        return facade.coding_recall(query, session_id, repo_path, all_sessions, limit)
 
     @server.tool()
     def coding_sessions(repo_path: str | None = None) -> dict[str, Any]:

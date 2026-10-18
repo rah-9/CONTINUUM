@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from dataclasses import asdict
 from typing import Any
@@ -69,6 +70,10 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8765)
     sub.add_parser("mcp", help="local stdio MCP server for coding agents")
+    hk = sub.add_parser("hook", help="app hook: capture the chat, show the brief at session "
+                                     "start (continuum hook claude-code|codex|gemini-cli ...)")
+    hk.add_argument("app")
+    hk.add_argument("payload", nargs="?")
 
     coding = sub.add_parser("coding", help="coding-session continuity across models and chats")
     csub = coding.add_subparsers(dest="coding_cmd", required=True)
@@ -97,6 +102,29 @@ def build_parser() -> argparse.ArgumentParser:
     cl.add_argument("session")
     cl.add_argument("--reason", required=True)
     cl.add_argument("--actor", required=True)
+    su = csub.add_parser("setup", help="write AGENTS.md/CLAUDE.md rules, Claude Code hooks "
+                                       "and .mcp.json for a repository (idempotent)")
+    su.add_argument("repo", nargs="?", default=".")
+    su.add_argument("--dry-run", action="store_true")
+    cpt = csub.add_parser("capture", help="record a chat message verbatim (for apps without "
+                                          "hooks); text from the argument or stdin")
+    cpt.add_argument("text", nargs="?")
+    cpt.add_argument("--repo", default=".")
+    cpt.add_argument("--role", choices=["user", "agent"], default="user")
+    cpt.add_argument("--source", default="cli")
+    cpt.add_argument("--chat")
+    imp = csub.add_parser("import", help="import a chat transcript (Claude Code, Codex, "
+                                         "Gemini CLI or any JSON/JSONL chat) idempotently")
+    imp.add_argument("transcript")
+    imp.add_argument("--repo", default=".")
+    imp.add_argument("--source", default="transcript")
+    imp.add_argument("--chat")
+    rcl = csub.add_parser("recall", help="search everything the session remembers")
+    rcl.add_argument("query")
+    rcl.add_argument("--repo", default=".")
+    rcl.add_argument("--session")
+    rcl.add_argument("--all", action="store_true", help="every session of this repository")
+    rcl.add_argument("--limit", type=int, default=8)
     # Agent operations for shell-only agents (same protocol as the MCP coding_* tools).
     rs = csub.add_parser("resume", help="join the repo's session as AGENT and print the brief")
     rs.add_argument("--repo", default=".")
@@ -147,8 +175,24 @@ def _utf8_output() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        code = _main(argv)
+        sys.stdout.flush()  # buffered output reaches a closed pipe here, not at exit
+        return code
+    except BrokenPipeError:
+        # the reader went away (e.g. `continuum coding brief | head`): not an error.
+        # Point stdout at devnull so the interpreter's final flush cannot raise again.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 0
+
+
+def _main(argv: list[str] | None = None) -> int:
     _utf8_output()
     raw = list(sys.argv[1:] if argv is None else argv)
+    if raw[:1] == ["hook"]:  # app hooks: never fail, never print errors into the chat
+        from continuum.coding.hooks import main as hook_main
+
+        return hook_main(raw[1:])
     command: list[str] = []
     # `coding checks add … -- cmd args`: everything after `--` is the check's argv, never
     # Continuum options. Other commands keep argparse's normal `--` escape.
@@ -160,6 +204,15 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(raw)
     args.argv = command
     configure_logging(args.log_level)
+    if args.cmd == "coding" and args.coding_cmd == "setup":  # files only, no database
+        from continuum.coding.install import setup
+
+        try:
+            _print(setup(args.repo, dry_run=args.dry_run))
+        except (OSError, ValueError) as exc:
+            _print({"error": str(exc), "code": "setup_failed"})
+            return 2
+        return 0
     sdk: Continuum | None = None
     try:
         sdk = Continuum()
@@ -251,6 +304,21 @@ def _coding(sdk: Continuum, args: argparse.Namespace) -> int:
                 sys.stdout.write(brief["markdown"])
         case "sessions":
             _print(coding.sessions(args.repo))
+        case "capture":
+            from continuum.coding.transcript import Message
+
+            text = args.text if args.text is not None else sys.stdin.read()
+            _print(coding.capture(args.repo, [Message(args.role, text)], source=args.source,
+                                  chat_id=args.chat))
+        case "import":
+            from continuum.coding.transcript import read_transcript
+
+            _print(coding.capture(args.repo, read_transcript(args.transcript),
+                                  source=args.source, chat_id=args.chat or args.transcript))
+        case "recall":
+            _print(coding.recall(args.query, session_id=args.session,
+                                 repo_path=None if args.session else args.repo,
+                                 all_sessions=args.all, limit=args.limit))
         case "close":
             _print(coding.close(args.session, args.reason, agent=args.actor, human=True))
         case "resume":

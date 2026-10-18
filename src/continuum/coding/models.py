@@ -16,6 +16,7 @@ class CodingEventType(StrEnum):
     NOTE_RECORDED = "NoteRecorded"
     CHECKPOINT_CAPTURED = "CheckpointCaptured"
     CHECK_RAN = "CheckRan"
+    CHAT_CAPTURED = "ChatCaptured"
     SESSION_CLOSED = "SessionClosed"
 
 
@@ -48,6 +49,9 @@ class SessionStarted(_P):
 class AgentJoined(_P):
     agent: str
     state: RepoState
+    # Set when the agent joined from another checkout of the same repository (another
+    # machine or container): the session's root moves there. None: same root as before.
+    repo_root: str | None = None
 
 
 class TaskAdded(_P):
@@ -88,6 +92,22 @@ class CheckRan(_P):
     modified_tree: bool = False
 
 
+ChatRole = Literal["user", "agent"]
+
+
+class ChatCaptured(_P):
+    """A chat message captured by a hook or a transcript import, never written by a model
+    tool call. ``user`` messages are the user's own words (requirements); ``agent``
+    messages are a model's report (a claim). ``key`` makes re-imports idempotent."""
+
+    role: ChatRole
+    text: str
+    source: str            # claude-code | codex | gemini-cli | transcript | cli | ...
+    chat_id: str | None = None
+    key: str
+    chars_omitted: int = 0
+
+
 class SessionClosed(_P):
     reason: str
 
@@ -100,6 +120,7 @@ PAYLOADS: dict[CodingEventType, type[_P]] = {
     CodingEventType.NOTE_RECORDED: NoteRecorded,
     CodingEventType.CHECKPOINT_CAPTURED: CheckpointCaptured,
     CodingEventType.CHECK_RAN: CheckRan,
+    CodingEventType.CHAT_CAPTURED: ChatCaptured,
     CodingEventType.SESSION_CLOSED: SessionClosed,
 }
 TYPE_OF: dict[type[_P], CodingEventType] = {v: k for k, v in PAYLOADS.items()}

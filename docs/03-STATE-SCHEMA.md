@@ -193,7 +193,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-INSERT INTO schema_meta (key, value) VALUES ('schema_version', '3')
+INSERT INTO schema_meta (key, value) VALUES ('schema_version', '4')
   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- TRUNCATE would bypass the row-level immutability trigger.
@@ -260,7 +260,7 @@ CREATE INDEX IF NOT EXISTS idx_attempts_started ON action_attempts(action_id)
   WHERE status = 'started';
 
 -- ---------------------------------------------------------------------------
--- Coding-session continuity (schema version 3, docs/02 s10).
+-- Coding-session continuity (schema versions 3-4, docs/02 s10).
 -- A coding agent's work in a repository survives model switches and new chats:
 -- an append-only journal per session, plus checks that only a human registers.
 -- ---------------------------------------------------------------------------
@@ -305,15 +305,27 @@ CREATE TABLE IF NOT EXISTS coding_checks (
 
 SELECT continuum_add_constraint('coding_sessions', 'coding_sessions_status_valid',
   $c$CHECK (status IN ('active', 'closed'))$c$);
+-- Schema v4 added ChatCaptured: replace the v3 list (an older constraint would reject it).
+ALTER TABLE coding_events DROP CONSTRAINT IF EXISTS coding_events_type_valid;
 SELECT continuum_add_constraint('coding_events', 'coding_events_type_valid', $c$CHECK (type IN (
   'SessionStarted', 'AgentJoined', 'TaskAdded', 'TaskStatusChanged', 'NoteRecorded',
-  'CheckpointCaptured', 'CheckRan', 'SessionClosed'))$c$);
+  'CheckpointCaptured', 'CheckRan', 'ChatCaptured', 'SessionClosed'))$c$);
 SELECT continuum_add_constraint('coding_events', 'coding_events_seq_positive',
   'CHECK (seq > 0)');
 SELECT continuum_add_constraint('coding_checks', 'coding_checks_timeout_positive',
   'CHECK (timeout_seconds BETWEEN 1 AND 3600)');
 
 CREATE INDEX IF NOT EXISTS idx_coding_sessions_repo ON coding_sessions(repo_root, status);
+
+-- Schema v4: the same repository at another path (another machine, a cloud container,
+-- a re-cloned checkout) is recognised by its normalized remote URL, never by guessing.
+ALTER TABLE coding_sessions ADD COLUMN IF NOT EXISTS repo_key TEXT;  -- NULL: no remote
+ALTER TABLE coding_checks ADD COLUMN IF NOT EXISTS repo_key TEXT;
+CREATE INDEX IF NOT EXISTS idx_coding_sessions_key ON coding_sessions(repo_key, status);
+CREATE INDEX IF NOT EXISTS idx_coding_checks_key ON coding_checks(repo_key, name);
+-- Captured chat messages are deduplicated by their key (re-imports are idempotent).
+CREATE INDEX IF NOT EXISTS idx_coding_events_capture_key ON coding_events
+  (session_id, (payload_json->>'key')) WHERE type = 'ChatCaptured';
 ```
 
 **Time budget:** `max_active_seconds` counts execution time while the runtime is actively processing a run, not manual approval/reconciliation pauses or process downtime. Record bounded active-time increments via `RunActiveTimeRecorded` events and `usage_totals.active_elapsed_ms`; cap each increment using a monotonic clock while the process is alive. Active time includes recovery on resume (reconciliation, re-verification, authorized retries). Increments are recorded after every model call and every batch of tool dispatches, and when the operation ends, so the cap (which guards against suspend gaps) never truncates real work. Wall-clock time is reported as a separate evaluation metric.
@@ -336,7 +348,7 @@ CREATE INDEX IF NOT EXISTS idx_coding_sessions_repo ON coding_sessions(repo_root
 
 Verification success must supply an evidence reference pointing to read-only verifier output, not model prose. At resume, recheck source snapshots, artifact hash and dependency fingerprints. Invalidate the changed milestone **and transitive downstream dependents** with events. Already committed effects remain in the ledger; when redo is needed, their operation keys still prevent blind repeats. If desired new payload conflicts with an existing confirmed operation key, stop and require a distinct task/spec version or human-approved remediation workflow, not overwriting history. The runtime records this stop as `RunFailed(failure_code = "drift_requires_remediation")`.
 
-**Coding sessions (schema v3).** `coding_sessions`, `coding_events` and `coding_checks` are separate from runs. `coding_events` is append-only (an immutability trigger, and TRUNCATE is blocked) with a gapless per-session `seq` assigned under the session row lock. A coding task is verified only by `CheckRan` evidence whose fingerprint equals the current observed `RepoState.fingerprint` and whose `argv_sha256` equals the digest of the check's current registered definition (docs/02 §10). `continuum` migrates older schemas automatically on start (`ensure_schema`). Migrations are serialized by an advisory lock, and a schema newer than the code is a `schema_too_new` error, never a downgrade.
+**Coding sessions (schema v3, extended in v4).** v4 adds `ChatCaptured` events (the user's words and the agent's last report, captured by app hooks; deduplicated through an index on `payload_json->>'key'`), `AgentJoined.repo_root` (set when a session moves to another checkout), and `repo_key` on sessions and checks (the normalized, credential-free remote URL that identifies the same repository at another path). The v3 event-type constraint is replaced on upgrade. **Coding sessions (schema v3).** `coding_sessions`, `coding_events` and `coding_checks` are separate from runs. `coding_events` is append-only (an immutability trigger, and TRUNCATE is blocked) with a gapless per-session `seq` assigned under the session row lock. A coding task is verified only by `CheckRan` evidence whose fingerprint equals the current observed `RepoState.fingerprint` and whose `argv_sha256` equals the digest of the check's current registered definition (docs/02 §10). `continuum` migrates older schemas automatically on start (`ensure_schema`). Migrations are serialized by an advisory lock, and a schema newer than the code is a `schema_too_new` error, never a downgrade.
 
 ## 6. Portable packet projection (example)
 

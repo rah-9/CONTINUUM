@@ -15,6 +15,7 @@ How Continuum is tested, what each layer proves, and the latest results. The req
 | Coding continuity | `tests/integration/test_coding.py`, `test_mcp_stdio.py`, `tests/unit/test_repo_observer.py` | functional, end-to-end over real MCP stdio | cross-model handoffs (C1–C11), content fingerprint, re-verification, redaction, shell-only agents |
 | Brief quality | `tests/integration/test_brief_quality.py` | functional + size bounds | the brief stays bounded however long the session (B1), commits since the last checkpoint (B2–B3), notes reach the next model whole (B4), the code map shows where the session worked (B5) |
 | Audit regression | `test_coding_hardening.py` (H1–H21), `test_core_hardening.py` (K1–K9), `test_pass2_hardening.py` (Q1–Q17) | security + robustness | every finding from three full-codebase audits stays fixed |
+| Continuity scenarios | `tests/integration/test_scenarios.py` (S1–S11), `tests/unit/test_transcript.py` | end-to-end through the apps' entry points (hook payloads, transcripts, MCP-equivalent calls, CLI) | app switch with an abrupt end and no agent notes, another checkout, repeated and concurrent hooks, a hook with the database down, long sessions with recall, non-git projects, secrets in chat, setup, schema upgrade ([MEMORY-ALGORITHM.md](MEMORY-ALGORITHM.md) §5) |
 | Portability | `tests/integration/test_portability.py` | cross-OS behaviour | UTF-8 output on any console, launch-directory independence, Windows check-command resolution |
 | Regression | everywhere | regression | every defect found has a test, see below |
 | Experiment | `continuum-lab` | paired B0/C1 study | safety and progress metrics with uncertainty (`docs/lab-reports/`) |
@@ -48,6 +49,10 @@ eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-sw
 | Coding handoff test | Running the tests wrote `__pycache__`, changing the fingerprint, so a just-passed check never counted | `test_running_tests_does_not_change_the_fingerprint` |
 | Shell-agent CLI test | `checks add … --actor X -- cmd` lost `--actor` to argparse `REMAINDER` | `test_c11_shell_only_agents_use_the_same_protocol_via_cli` |
 | Shell-agent CLI test | CLI hit a missing table on a database from an older version | `test_ensure_schema_migrates_only_when_needed` |
+| Scenario test (v0.8.0) | An agent started in `repo/src` and one in `repo` got two different sessions; a clone at another path started from nothing | `test_s1_…`, `test_s2_…` |
+| Scenario test (v0.8.0) | A key pasted into chat was stored unless it was in this process's environment | `test_s7_secrets_pasted_into_chat_are_never_stored` |
+| Real handoff trial (v0.8.0) | `continuum … \| head` crashed with a `BrokenPipeError` traceback | `test_p3_cli_output_into_a_closed_pipe_is_not_a_crash` |
+| Code review (v0.8.0) | The code map read an untracked file whole (a multi-GB data file into memory) | bounded scan in `repo._scan_new_file` |
 | Real handoff trial (v0.7.0) | Every `continuum` in paths and commands was redacted, because the default DB password is that dictionary word | `test_dictionary_word_url_passwords_never_corrupt_ordinary_text` |
 | Real handoff trial (v0.7.0) | Decision reasons and next steps were clipped at 300 characters, so the next model lost the *why* | `test_b4_decision_reasons_and_next_steps_reach_the_next_model_whole` |
 | Real handoff trial (v0.7.0) | The commit id was part of the fingerprint, so every commit flagged verified work as needing re-verification | `test_committing_or_staging_identical_content_keeps_the_fingerprint` |
@@ -56,9 +61,9 @@ eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-sw
 | Core audit (v0.6.2) | Transient verifier error treated as drift (run failed); one process re-entered a live lease; DNS rebinding; orphan run on a bad model alias; raw tracebacks from config/MCP/CLI; zero registry cost recorded as $0; secrets in rejection reasons; malformed provider responses; unvalidated blob refs | `tests/integration/test_core_hardening.py` (K1–K9) |
 | Full-codebase audit (v0.6.1) | 23 coding-layer issues: fail-open git fingerprint, diff drivers, no-HEAD staged changes, orphan sessions, closed-session check runs, `human:` spoofing, brief forging, schema downgrade, migration race, CLI `--`, rename parsing and others | `tests/integration/test_coding_hardening.py` (H1–H21) |
 
-## Latest results (2026-10-14)
+## Latest results (2026-10-18)
 
-- `make check`: ruff clean, `mypy --strict` clean. **325 passed**, 5 live tests skipped (opt-in). CI runs the same gates against PostgreSQL 16.
+- `make check`: ruff clean, `mypy --strict` clean. **350 passed**, 5 live tests skipped (opt-in). CI runs the same gates against PostgreSQL 16.
 - **Hardened schema:** the whole suite, including chaos, runs against the new CHECK constraints with zero violations. The runtime never writes a state the database considers invalid.
 - **Property search:** 150 random interleavings × 12 steps per connector mode (450 scenarios). All invariants held at every step.
 - **Non-functional baselines** (this container, PostgreSQL 16, fake models):
@@ -85,6 +90,9 @@ The goal is that the next model finishes the work correctly **without re-reading
 | Continuum, brief with code map | **4/4** | 2/2 | **~13.8k** | **3** |
 | baseline, run 1 | 1/4 | 0/2 | ~21.3k | 12+ |
 | baseline, run 2 | 1/4 | 0/2 | ~29.4k | 14+ |
+
+| **App switch after an abrupt end** (Trial 4): A never used Continuum, B in a Codex-style setup | **4/4** | **2/2** | not measured (cost $0.56, 1.8 min) | 16 tool calls |
+| baseline (Trial 4) | 1/4 | 0/2 | not measured (cost $0.63, 5.1 min) | 20 tool calls |
 
 The baseline never learned Part 2 existed; reaching a correct result would cost another explanation turn plus the work (~35–45k work tokens). The code map cut Continuum's work tokens by about 20%. Continuum itself calls no LLM, so these are the only model costs.
 

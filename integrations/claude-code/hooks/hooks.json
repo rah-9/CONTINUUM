@@ -1,0 +1,10 @@
+{
+  "description": "Continuum: journal the conversation and show the coding brief at session start, so another model, chat or app (e.g. Codex) can continue the work.",
+  "hooks": {
+    "SessionStart": [{"hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}],
+    "PreCompact": [{"hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}],
+    "SessionEnd": [{"hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}]
+  }
+}

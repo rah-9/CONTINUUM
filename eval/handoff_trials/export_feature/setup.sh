@@ -13,6 +13,18 @@ PY="${TRIAL_PYTHON:-python3}"
 rm -rf "$WORK/proj" && mkdir -p "$WORK/proj"
 git -C "$REPO" archive HEAD | tar -x -C "$WORK/proj"
 rm -rf "$WORK/proj/eval/handoff_trials"          # the agents must not see the tests
+rm -f "$WORK/proj/docs/HANDOFF-TRIALS.md"         # ... nor the write-up of this trial
+grep -rIl "handoff_trials" "$WORK/proj" | while read -r f; do   # ... nor pointers to it
+  sed -i.bak '/handoff_trials/d' "$f" && rm -f "$f.bak"
+done
+# Leak guard: the chat-only requirements must exist nowhere in the project, or a baseline
+# can "remember" them by reading the repository (found in Trial 4's first run).
+if grep -rIl -i -e "unless --force" -e "with sorted keys" -e "export_feature" \
+     "$WORK/proj" >/dev/null 2>&1; then
+  echo "leak: the project mentions the hidden requirements:" >&2
+  grep -rIl -i -e "unless --force" -e "with sorted keys" -e "export_feature" "$WORK/proj" >&2
+  exit 1
+fi
 git -C "$WORK/proj" init -q
 git -C "$WORK/proj" -c user.email=trial@example.com -c user.name=trial add -A
 git -C "$WORK/proj" -c user.email=trial@example.com -c user.name=trial commit -qm baseline
