@@ -31,3 +31,31 @@ def test_secret_like_url_passwords_are_redacted_everywhere(monkeypatch):
 
     monkeypatch.setenv("APP_DB_URL", "postgresql://u:S3cretPw0rd@db/x")
     assert "S3cretPw0rd" not in Redactor.from_environment().text("pw is S3cretPw0rd")
+
+
+def test_well_known_credentials_are_redacted_even_when_not_in_the_environment():
+    """Chat capture stores what the user pasted: a colleague's key must not be kept."""
+    r = Redactor()
+    secrets = ["sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+               "sk-proj-AbCdEfGhIjKlMnOpQrStUv0123",
+               "ghp_" + "a1B2" * 9, "github_pat_" + "A1b2_" * 10,
+               "AKIAIOSFODNN7EXAMPLE", "xoxb-1234567890-abcdefghij",
+               "AIza" + "B" * 35,
+               "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N",
+               "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----"]
+    for secret in secrets:
+        out = r.text(f"here: {secret} ok")
+        assert secret not in out and REDACTED in out and out.endswith(" ok"), secret
+    for line in ('password = "hunter2hunter2x"', "API_KEY=Zq81kd93Jfa02Lm",
+                 'token: "a8f9c0d1e2f3a4b5"'):
+        assert REDACTED in r.text(line), line
+
+
+def test_pattern_redaction_leaves_code_and_prose_alone():
+    r = Redactor()
+    for text in ("token = get_token(request)", "password_hash = hash_password(pw)",
+                 "the secret is to keep functions small", "task-0123 sk-learn notes",
+                 "sk-learn-pipeline-transformer-steps",
+                 "def refresh_token_expiry(): ...", "AKIA is an AWS prefix",
+                 "eyJ is base64 for {\"", "auth = AuthConfiguration.from_settings()"):
+        assert r.text(text) == text, text

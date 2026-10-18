@@ -9,11 +9,14 @@ description: Keep coding work continuous across model switches and new chats (e.
 
 - **First call:** `coding_resume(repo_path, agent=<your exact model id>)`. If no session exists,
   call `coding_start(repo_path, goal, agent, tasks=[{"title", "checks"}])`.
-- **Read the brief.** `verified_facts` were observed by Continuum; `agent_notes` are claims from
-  earlier models. Continue from `next_steps` and open tasks. Never redo verified tasks unless
+- **Read the brief.** "What the user asked" is the user's own words from earlier chats and apps:
+  the requirements, newest wins. `verified_facts` were observed by Continuum; `agent_notes` and the
+  last agent report are claims from earlier models. The brief may already be in your context
+  (shown by a hook at session start); still call `coding_resume` once. Continue from `next_steps` and open tasks. Never redo verified tasks unless
   `needs_reverification` is true.
 - **Don't re-read the repository.** Start from "Code touched in this session" (the code map)
-  and the next step. Use `coding_brief(detail="full")` only for check output or commands.
+  and the next step. Use `coding_brief(detail="full")` only for check output or commands, and
+  `coding_recall(query)` to find anything older than the brief shows.
 - **While working:**
   - record decisions, context and blockers with `coding_note`
   - call `coding_checkpoint(summary)` after meaningful changes

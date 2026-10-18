@@ -1,7 +1,7 @@
 # Continuum — specification index
 
-**Spec version:** 0.6 (2026-10-14: PostgreSQL backend, D-001; MCP plugin surface, D-022; coding-session continuity, D-028/D-029; content fingerprint and code map, D-034/D-035)  
-**Status:** v0.7.0 implementation in `src/`, `eval/` and `tests/`; see `CHANGELOG.md`, `VERIFICATION.md` and `HANDOFF-TRIALS.md`
+**Spec version:** 0.7 (2026-10-18: PostgreSQL backend, D-001; MCP plugin surface, D-022; coding-session continuity, D-028/D-029; content fingerprint and code map, D-034/D-035; capture across apps and checkouts, D-036)  
+**Status:** v0.8.0 implementation in `src/`, `eval/` and `tests/`; see `CHANGELOG.md`, `VERIFICATION.md` and `HANDOFF-TRIALS.md`
 
 **Purpose:** keep multi-step agent progress in runtime-owned, model-independent state. After an interruption or model handoff, reuse *valid verified work* and reconcile any uncertain external effect **before** new side-effecting work.
 
@@ -17,6 +17,7 @@ This is a **single project**. Continuum Lab is its in-repository fault-injection
 6. [06-DEV-WORKFLOW.md](06-DEV-WORKFLOW.md): implementation sequence, repo structure, gates
 7. [07-EVAL-PLAN.md](07-EVAL-PLAN.md): controlled tests, mocks, measurements
 8. [../AGENTS.md](../AGENTS.md): binding coding-agent instructions
+9. [MEMORY-ALGORITHM.md](MEMORY-ALGORITHM.md): the coding-continuity algorithm, its bounds and scenario matrix
 
 ## Normative precedence
 
@@ -34,6 +35,7 @@ For any conflict: **04 governs effects/retries; 03 governs persisted state; 02 g
 - **Handoff:** restart model reasoning from a deterministic packet assembled from runtime state.
 - **Coding session:** an append-only journal of one piece of coding work in one repository (tasks, notes, checkpoints, check results) that any model or chat can resume. See docs/02 §10.
 - **Coding brief:** what the next model receives on `coding_resume`: verified facts (code fingerprint, check results, the code map of files the session changed, commits since the last checkpoint) separated from agent notes (claims). Bounded and compact; built by plain code, no LLM.
+- **Captured chat:** the user's own words (and the agent's last report) recorded by the coding app's hooks, not by a model. They reach the next model, in any app, as requirements. See `MEMORY-ALGORITHM.md`.
 - **Registered check:** a command (argv, no shell) that a *human* registers for a repository, such as the test suite. A coding task is verified only by its checks passing on the current code.
 - **Continuum Lab:** the test harness under `eval/` in this same repository.
 
@@ -41,7 +43,7 @@ For any conflict: **04 governs effects/retries; 03 governs persisted state; 02 g
 
 - For tasks and tools meeting the declared contracts, Continuum **attempts to retain verified progress and avoid unsafe duplicate dispatches**. It does **not** guarantee exactly-once effects across arbitrary external services.
 - PostgreSQL (14+) is the **only** durable backend in v1, for a local single-host runtime (one database, controllers on one machine). Multiple workers claiming one run are blocked by lease/epoch rules, but external side effects still require reconciliation.
-- v1 has a Python SDK, CLI, minimal localhost HTTP surface and a **local stdio MCP server** for task delegation and read-only inspection (`list_tasks`, `run_task`, `resume_run`, `cancel_run`, `get_status`, `inspect_run`, `pending_decisions`, `list_runs`), so any MCP-capable coding agent can use Continuum as a plugin. The same server offers **coding-session continuity** (`coding_*` tools, docs/02 §10) so coding work survives a switch of model, version, vendor or chat. Human decisions and check registration are never exposed through MCP. Distributed/multi-host deployment, arbitrary MCP tool ingestion, code execution, dashboards and production hosting are **post-MVP**.
+- v1 has a Python SDK, CLI, minimal localhost HTTP surface and a **local stdio MCP server** for task delegation and read-only inspection (`list_tasks`, `run_task`, `resume_run`, `cancel_run`, `get_status`, `inspect_run`, `pending_decisions`, `list_runs`), so any MCP-capable coding agent can use Continuum as a plugin. The same server offers **coding-session continuity** (`coding_*` tools including the read-only `coding_recall`, docs/02 §10). App hooks (`continuum hook <app>`) capture the conversation without any model so coding work survives a switch of model, version, vendor or chat. Human decisions and check registration are never exposed through MCP. Distributed/multi-host deployment, arbitrary MCP tool ingestion, code execution, dashboards and production hosting are **post-MVP**.
 
 ## Repo layout note
 

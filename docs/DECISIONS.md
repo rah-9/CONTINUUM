@@ -315,3 +315,28 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 - **The brief carries a code map** (`verified_facts.session_changes`): files changed since the session's base commit, with +/- lines, git's enclosing-function context and names defined in added lines. It is observed from git, never from model claims, and is capped (40 files, 8 names each). The rules tell the next model to start from it rather than explore the repository. In Trial 3 it cut work tokens by about 20% with the same correct result. It is informational only and never affects verification.
 - **The success measure is transfer quality in real model switches.** That means hidden tests, chat-only requirements, redone work, and the tokens spent. Micro-benchmarks are not the measure. Trials are part of evaluating any change to the brief or the fingerprint.
 
+## D-036 — Capture the user's words through app hooks; recognise a repository by its remote
+
+**Context.** A switch of *app* (Claude Code → Codex), an abrupt end (quota, crash, closed window) or a different checkout (laptop → cloud container) broke continuity in three ways:
+- What the user said in chat reached the next model only if the previous agent had written it down. Agents often don't, and a cut-off agent can't.
+- Sessions were keyed by the exact path. A subdirectory, a re-clone or a container path started an empty session.
+- Rules lived in whichever instruction file one app reads.
+
+**Decision.**
+- **The user's words are captured by the app, not by a model.** `continuum hook <app>` reads the app's own hook payload (Claude Code hooks, Codex `notify`, any app with a JSON payload) and stores `ChatCaptured` events: every user message, and the newest agent message per capture as the turn's report.
+  - Transcripts are parsed by structure (role/content, parts, message events), so new app versions degrade instead of breaking.
+  - Harness-injected text is removed. Text is redacted, including well-known token formats, and bounded (16k chars).
+  - Messages are deduplicated by a key over source, chat, role and text under the session lock, so hooks can re-import a whole transcript on every turn.
+- **Capture never needs the agent's cooperation and never hurts the app.** The first user message starts a session if none is active. Hooks always exit 0, wait at most 3 s for the database and never read a stdin that does not close.
+- **The brief puts the user's words first, labelled as requirements, newest wins.** It keeps the first request plus the newest 6, whole up to 2,000 characters. Short replies ("continue") are hidden except the newest. The last agent report is shown as a claim. Computed *Attention* lines name the gaps: no capture, a request newer than the last next step, uncheckpointed code, re-verification, a failing check, a moved session, a changed branch.
+- **Repository identity:** the git top level, then the normalized credential-free remote URL **with the same branch**. A session found that way moves to the new checkout (`AgentJoined.repo_root`). Checks registered for the same remote apply. Another branch is reported, never joined.
+- **Recall instead of a bigger brief:** `coding_recall` is deterministic keyword search over the whole journal. It is read-only and therefore allowed over MCP.
+- **One command sets up a repository** (`continuum coding setup`). It writes the rules into AGENTS.md (CLAUDE.md imports it), Claude Code hooks, and `.mcp.json`. It never edits user-level config.
+
+**Considered and rejected.**
+- An LLM summarising chats: extra cost, and it would turn the user's words into a model's claim.
+- Embeddings or a vector index for recall: a dependency and a stateful index for little gain over keyword search on one session.
+- Capturing every agent message: noise. The final report per turn, plus the code and checks, carries the state.
+- Joining by remote alone: two branches of one repository are different work.
+- Exposing capture as an MCP tool: a model could then write "the user's words".
+

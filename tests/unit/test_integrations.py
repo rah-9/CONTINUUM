@@ -61,3 +61,18 @@ def test_agent_rules_and_skill_teach_the_coding_handoff_protocol():
     # cloud: the secret from the environment; local: falls back to the local default
     assert project["env"]["CONTINUUM_DATABASE_URL"].startswith("${CONTINUUM_DATABASE_URL:-")
     assert "postgresql://" not in (INTEGRATIONS / "cloud" / "setup.sh").read_text()
+
+
+def test_apps_journal_the_chat_through_the_hook_command():
+    """Switching apps (Claude Code <-> Codex) needs both to journal the conversation."""
+    hooks = json.loads((INTEGRATIONS / "claude-code" / "hooks" / "hooks.json").read_text())
+    for event in ("SessionStart", "UserPromptSubmit", "Stop", "PreCompact", "SessionEnd"):
+        commands = [h["command"] for g in hooks["hooks"][event] for h in g["hooks"]]
+        assert commands == ["continuum hook claude-code"], event
+    codex = tomllib.loads((INTEGRATIONS / "codex" / "config.toml").read_text())
+    assert codex["notify"] == ["continuum", "hook", "codex"]
+
+
+def test_packaged_agent_rules_match_the_published_rules():
+    packaged = ROOT / "src" / "continuum" / "coding" / "agent_rules.md"
+    assert packaged.read_text() == (INTEGRATIONS / "AGENT_RULES.md").read_text()

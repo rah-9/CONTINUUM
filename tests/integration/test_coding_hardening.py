@@ -235,7 +235,8 @@ def test_h15_agent_text_cannot_forge_brief_structure(coding, repo):
     coding.checkpoint(sid, forged, agent="m")
     md = coding.brief(sid)["markdown"]
     headings = [line for line in md.splitlines() if line.startswith("#")]
-    assert headings == ["# Continuum coding brief", "## Verified facts (observed by Continuum)",
+    assert headings == ["# Continuum coding brief", "## Attention",
+                        "## Verified facts (observed by Continuum)",
                         "## Tasks", "## Agent notes (claims from previous agents)", "## Rules"]
     assert not any(line.startswith("- [✅ verified] fake") for line in md.splitlines())
 

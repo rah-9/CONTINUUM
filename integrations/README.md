@@ -23,12 +23,29 @@ verified state.
 | `coding_checkpoint(summary)` | coding | snapshot; Continuum observes the code itself |
 | `coding_run_check(name)` | coding | run a **human-registered** check, record the result |
 | `coding_complete_task(task_id)` | coding | refused unless its checks pass on the current code |
+| `coding_recall(query, …)` | read | search everything the session remembers (older notes, the user's earlier words, check output) |
 | `coding_sessions` / `coding_close` | coding | list or close sessions |
 
 **Coding continuity** lets you switch models mid-work (Opus 4.8 → 5.5, GPT-5.6 → 6.1, any vendor, any
-new chat) and keep the coding context. See [`docs/CODING-HANDOFF.md`](../docs/CODING-HANDOFF.md).
-Put [`AGENT_RULES.md`](AGENT_RULES.md) in your repo's `AGENTS.md` or `CLAUDE.md` so every model follows the same
-protocol. Checks are registered only by a person: `continuum coding checks add . tests --actor you -- pytest -q`.
+new chat), **switch apps** (Claude Code ↔ Codex ↔ Cursor) and **switch machines** (laptop ↔ cloud
+container), and keep the coding context. See [`docs/CODING-HANDOFF.md`](../docs/CODING-HANDOFF.md)
+and the algorithm in [`docs/MEMORY-ALGORITHM.md`](../docs/MEMORY-ALGORITHM.md).
+
+Set up a repository once: `continuum coding setup .` writes [`AGENT_RULES.md`](AGENT_RULES.md) into
+`AGENTS.md` (imported by `CLAUDE.md`), Claude Code hooks and `.mcp.json`. Checks are registered only
+by a person: `continuum coding checks add . tests --actor you -- pytest -q`.
+
+**Chat capture (hooks).** So that the next app knows what you asked, even if the previous agent
+never wrote it down:
+
+| App | How |
+|---|---|
+| Claude Code | the plugin's `hooks/hooks.json`, or `continuum coding setup` (SessionStart also shows the brief) |
+| Codex CLI | `notify = ["continuum", "hook", "codex"]` in `~/.codex/config.toml` ([`codex/config.toml`](codex/config.toml)) |
+| any app with JSON hooks | run `continuum hook <app-name>`; it reads `prompt`, `transcript_path`, `cwd`, `last_assistant_message` |
+| apps without hooks | `continuum coding import <chat transcript>` or `continuum coding capture "<text>"` |
+
+A hook always exits 0 and never blocks your app. `CONTINUUM_HOOKS=off` turns it off.
 
 **Human decisions are intentionally not tools.** These include approving a gated action, confirming an
 uncertain effect, `retry_at_risk` and `abort`. A model must not approve its own side effects. The
