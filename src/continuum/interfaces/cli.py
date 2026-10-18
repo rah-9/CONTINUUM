@@ -176,7 +176,9 @@ def _utf8_output() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     try:
-        return _main(argv)
+        code = _main(argv)
+        sys.stdout.flush()  # buffered output reaches a closed pipe here, not at exit
+        return code
     except BrokenPipeError:
         # the reader went away (e.g. `continuum coding brief | head`): not an error.
         # Point stdout at devnull so the interpreter's final flush cannot raise again.
