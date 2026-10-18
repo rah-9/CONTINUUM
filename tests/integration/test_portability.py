@@ -58,11 +58,18 @@ def test_p2_state_never_lands_in_the_launch_directory(tmp_path, monkeypatch):
     assert Settings().home == tmp_path / "user" / "elsewhere"
 
 
-def test_p3_cli_output_into_a_closed_pipe_is_not_a_crash(tmp_path):
-    """Agents pipe output into `head`; the reader closing early printed a traceback."""
-    proc = subprocess.Popen([EXE, "coding", "setup", "--dry-run", str(tmp_path)],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    assert proc.stdout is not None and proc.stderr is not None
-    proc.stdout.close()          # the reader is gone before the first write (`| head -0`)
-    err = proc.stderr.read().decode()
-    assert proc.wait(timeout=60) == 0 and "Traceback" not in err, err
+def test_p3_cli_output_into_a_closed_pipe_is_not_a_crash(tmp_path, monkeypatch):
+    """Agents pipe output into `head`; the reader closing early printed a traceback (on
+    CI, from the interpreter's final flush). Deterministic: the reader is already gone."""
+    from continuum.interfaces import cli
+
+    read_end, write_end = os.pipe()
+    os.close(read_end)
+    stream = open(write_end, "w", encoding="utf-8")  # noqa: SIM115 - closed below
+    monkeypatch.setattr(sys, "stdout", stream)
+    try:
+        assert cli.main(["coding", "setup", "--dry-run", str(tmp_path)]) == 0
+        stream.flush()  # what the interpreter does at exit: must not raise
+    finally:
+        monkeypatch.undo()
+        stream.close()
