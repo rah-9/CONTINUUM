@@ -99,6 +99,8 @@ The goal is that the next model finishes the work correctly **without re-reading
 
 | **App switch after an abrupt end** (Trial 4): A never used Continuum, B in a Codex-style setup | **4/4** | **2/2** | not measured (cost $0.56, 1.8 min) | 16 tool calls |
 | baseline (Trial 4) | 1/4 | 0/2 | not measured (cost $0.63, 5.1 min) | 20 tool calls |
+| **30-message chat** (Trial 5), B = Haiku / Sonnet / Opus | **13/13** each (Haiku in 2 runs) | **4/4** export requirements from messages 8–27 | brief ~2.1k tokens vs ~135k of history in A's chat | — |
+| baseline (Trial 5), Haiku / Sonnet / Opus | 9/13 each | 0/4 | — | — |
 
 The baseline never learned Part 2 existed; reaching a correct result would cost another explanation turn plus the work (~35–45k work tokens). The code map cut Continuum's work tokens by about 20%. Continuum itself calls no LLM, so these are the only model costs.
 
