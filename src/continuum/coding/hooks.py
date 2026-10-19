@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """App hooks: journal the conversation and restore memory in *any* coding agent app.
 
 One command serves every app: ``continuum hook <app> [payload]``. The app passes its

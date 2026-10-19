@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Coding-session continuity service.
 
 Rules (enforced here, not by convention):
@@ -18,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +107,12 @@ def _check_names(checks: list[str]) -> list[str]:
         if not _NAME.match(name):
             raise SpecValidationError(f"invalid check name {name!r}")
     return sorted(set(checks))
+
+
+# Lookups by repository return only the caller's own sessions and checks (D-040). Row-level
+# security enforces this for every role; the filter also scopes the schema owner, whom
+# RLS does not restrict, so an operator's own coding never joins someone else's session.
+_MINE = "owner_role = current_user"
 
 
 class CodingContinuity:
@@ -290,7 +298,7 @@ class CodingContinuity:
         root = canonical_root(repo_path)
         with self.store.read() as q:
             row = q._one("SELECT session_id FROM coding_sessions WHERE repo_root = ANY(%s) "
-                         "AND status = 'active' ORDER BY (repo_root = %s) DESC, "
+                         f"AND {_MINE} AND status = 'active' ORDER BY (repo_root = %s) DESC, "
                          "updated_at DESC LIMIT 1",
                          (list({str(root), str(given)}), str(root)))
         if row is not None:
@@ -299,7 +307,8 @@ class CodingContinuity:
         if key is not None:
             with self.store.read() as q:
                 rows = q._all("SELECT session_id, repo_root FROM coding_sessions WHERE "
-                              "repo_key = %s AND status = 'active' ORDER BY updated_at DESC",
+                              f"repo_key = %s AND {_MINE} AND status = 'active' "
+                              "ORDER BY updated_at DESC",
                               (key,))
             if rows:
                 branch = current_branch(root)
@@ -326,8 +335,8 @@ class CodingContinuity:
         """Checks registered for this checkout; for names it lacks, checks a human
         registered for the same repository (same remote) in another checkout."""
         with self.store.read() as q:
-            rows = q._all("SELECT * FROM coding_checks WHERE repo_root = %s OR "
-                          "(%s::text IS NOT NULL AND repo_key = %s) "
+            rows = q._all(f"SELECT * FROM coding_checks WHERE {_MINE} AND (repo_root = %s OR "
+                          "(%s::text IS NOT NULL AND repo_key = %s)) "
                           "ORDER BY (repo_root = %s) DESC, registered_at DESC",
                           (root, key, key, root))
         found: dict[str, dict[str, Any]] = {}
@@ -478,12 +487,14 @@ class CodingContinuity:
         chat = None if chat_id is None else _clean(self.redactor.text(chat_id))[:120]
         prepared: list[ChatCaptured] = []
         idents: list[str | None] = []
-        # A transcript is kept whole: every user message and every agent text message (tool
-        # calls and tool output are not conversation). New turns without a transcript keep
-        # the turn's final agent message.
+        # A transcript is kept whole: every user message, every agent text message and
+        # every tool call as a one-line action (tool output is not kept). New turns
+        # without a transcript keep the turn's final agent message.
         last_agent = max((i for i, m in enumerate(messages) if m.role == "agent"), default=-1)
         for i, msg in enumerate(messages):
             if msg.role == "agent" and not history and i != last_agent:
+                continue
+            if msg.role == "action" and not history:   # tool calls come from transcripts
                 continue
             text = _clean(self.redactor.text(msg.text.strip()))
             if not text:
@@ -493,7 +504,8 @@ class CodingContinuity:
             prepared.append(ChatCaptured(role=msg.role, text=text[:MAX_CAPTURE], source=label,
                                          chat_id=chat, key=key,
                                          chars_omitted=max(0, len(text) - MAX_CAPTURE),
-                                         sent_at=_timestamp(msg.at)))
+                                         sent_at=_timestamp(msg.at),
+                                         failed=msg.role == "action" and msg.failed))
             idents.append(msg.ident if history else None)
         if not prepared:
             return {"captured": 0, "skipped": 0, "session_id": None}
@@ -612,7 +624,7 @@ class CodingContinuity:
         if all_sessions:
             with self.store.read() as q:
                 ids = [r["session_id"] for r in q._all(
-                    "SELECT session_id FROM coding_sessions WHERE repo_root = %s "
+                    f"SELECT session_id FROM coding_sessions WHERE repo_root = %s AND {_MINE} "
                     "ORDER BY updated_at DESC LIMIT 50", (root,))] or ids
         hits: list[tuple[int, str, dict[str, Any]]] = []
         for sid in ids:
@@ -648,12 +660,12 @@ class CodingContinuity:
         with self.store.read() as q:
             if repo_path:
                 rows = q._all("SELECT * FROM coding_sessions WHERE repo_root = ANY(%s) "
-                              "ORDER BY updated_at DESC",
+                              f"AND {_MINE} ORDER BY updated_at DESC",
                               (list({str(canonical_root(repo_path)),
                                      str(resolve_repo(repo_path))}),))
             else:
-                rows = q._all("SELECT * FROM coding_sessions ORDER BY updated_at DESC "
-                              "LIMIT 50", ())
+                rows = q._all(f"SELECT * FROM coding_sessions WHERE {_MINE} ORDER BY updated_at "
+                              "DESC LIMIT 50", ())
         return [{"session_id": r["session_id"], "repo_root": r["repo_root"], "goal": r["goal"],
                  "status": r["status"], "updated_at": _iso(r["updated_at"])} for r in rows]
 
@@ -664,6 +676,68 @@ class CodingContinuity:
                  "timeout_seconds": r["timeout_seconds"],
                  "registered_by": r["registered_by"],
                  "registered_for": r["repo_root"]} for r in rows]
+
+    # ===== human-only: erasure and retention (never MCP) ===============================
+
+    def forget(self, session_id: str, *, actor: str, reason: str) -> dict[str, Any]:
+        """Erase a coding session completely: every journal event (captured chat, notes,
+        check output) and the session row, in one transaction. A content-free tombstone
+        records who erased which session, when and why (D-039).
+
+        Human-only (CLI); the journal is otherwise append-only, enforced by a trigger that
+        admits deletes only inside a transaction that set ``continuum.erasure``."""
+        if not actor.strip() or not reason.strip():
+            raise SpecValidationError("erasure needs a human actor id and a reason")
+        who = HUMAN_PREFIX + " ".join(actor.split())[:120]
+        why = _clean(self.redactor.text(" ".join(reason.split())))[:MAX_TEXT]
+        with self.store.connection() as conn:
+            try:
+                row = conn.execute(
+                    b"SELECT repo_root, owner_role FROM coding_sessions WHERE session_id = %s "
+                    b"FOR UPDATE",
+                    (session_id,)).fetchone()
+                if row is None:
+                    raise NotFoundError(f"coding session {session_id} not found")
+                conn.execute(b"SELECT set_config('continuum.erasure', 'on', true)")
+                erased = conn.execute(b"DELETE FROM coding_events WHERE session_id = %s",
+                                      (session_id,)).rowcount
+                conn.execute(b"DELETE FROM coding_sessions WHERE session_id = %s",
+                             (session_id,))
+                erasure_id = self.ids.new("erase")
+                conn.execute(
+                    b"INSERT INTO coding_erasures (erasure_id, session_id, repo_digest, "
+                    b"events_erased, erased_by, reason, erased_at, owner_role) "
+                    b"VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    (erasure_id, session_id, "sha256:" + sha256_hex(row["repo_root"]),
+                     erased, who, why, self.clock.now(), row["owner_role"]))
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+        return {"erasure_id": erasure_id, "session_id": session_id, "events_erased": erased}
+
+    def forget_older_than(self, days: int, *, actor: str, reason: str,
+                          include_active: bool = False) -> dict[str, Any]:
+        """Retention: erase sessions whose last write is older than ``days``. Closed
+        sessions only, unless ``include_active``. Each is erased like ``forget``."""
+        if days < 1:
+            raise SpecValidationError("retention must be at least 1 day")
+        cutoff = self.clock.now() - timedelta(days=days)
+        statuses = ["closed", "active"] if include_active else ["closed"]
+        with self.store.read() as q:
+            rows = q._all("SELECT session_id FROM coding_sessions WHERE updated_at < %s "
+                          "AND status = ANY(%s) ORDER BY updated_at", (cutoff, statuses))
+        done = [self.forget(r["session_id"], actor=actor, reason=reason) for r in rows]
+        return {"sessions_erased": len(done),
+                "events_erased": sum(d["events_erased"] for d in done),
+                "erasures": [d["erasure_id"] for d in done]}
+
+    def erasures(self, limit: int = 50) -> list[dict[str, Any]]:
+        """The tombstones: what was erased, by whom, when and why (no content)."""
+        with self.store.read() as q:
+            rows = q._all("SELECT * FROM coding_erasures ORDER BY erased_at DESC LIMIT %s",
+                          (max(1, min(limit, 500)),))
+        return [{**r, "erased_at": _iso(r["erased_at"])} for r in rows]
 
     # ===== human-only =================================================================
 
@@ -684,7 +758,8 @@ class CodingContinuity:
                 b"INSERT INTO coding_checks (repo_root, repo_key, name, argv_json, "
                 b"timeout_seconds, registered_by, registered_at) "
                 b"VALUES (%s, %s, %s, %s, %s, %s, %s) "
-                b"ON CONFLICT (repo_root, name) DO UPDATE SET argv_json = EXCLUDED.argv_json, "
+                b"ON CONFLICT (owner_role, repo_root, name) DO UPDATE SET "
+                b"argv_json = EXCLUDED.argv_json, "
                 b"repo_key = EXCLUDED.repo_key, "
                 b"timeout_seconds = EXCLUDED.timeout_seconds, "
                 b"registered_by = EXCLUDED.registered_by, "

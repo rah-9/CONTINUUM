@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Stateful property testing of the effect ledger (I1, I2, I4, I5, R5, R6, U2, U3).
 
 Hypothesis drives random interleavings of:

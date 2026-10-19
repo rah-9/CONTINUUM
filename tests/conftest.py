@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Shared fixtures. Every test gets an isolated PostgreSQL schema.
 
 Set ``CONTINUUM_TEST_DATABASE_URL`` to point at a disposable database.

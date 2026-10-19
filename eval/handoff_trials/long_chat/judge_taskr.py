@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Hidden judge for the long-chat trial: one test per requirement the user stated over 30
 messages. Run against a finished project: TRIAL_PROJ=<project dir> pytest judge_taskr.py
 

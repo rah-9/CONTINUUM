@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """File-backed mock service core.
 
 State lives in one JSON file guarded by a file lock (flock, or msvcrt on Windows) so ground truth

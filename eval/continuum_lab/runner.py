@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Continuum Lab runner: paired B0/C1 experiments over tasks x faults x modes x seeds.
 
 Usage::

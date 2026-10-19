@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Mock object store: put/head with exact content SHA-256 (not an ETag)."""
 
 from __future__ import annotations

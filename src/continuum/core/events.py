@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Event types, typed payloads and the canonical event envelope (docs/04 section 1).
 
 Every event payload is validated against its Pydantic model before it is

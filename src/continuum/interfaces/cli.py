@@ -1,8 +1,11 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """``continuum`` command-line interface. All output is JSON."""
 
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import logging
 import os
@@ -75,6 +78,17 @@ def build_parser() -> argparse.ArgumentParser:
     hk.add_argument("app")
     hk.add_argument("payload", nargs="?")
 
+    adm = sub.add_parser("admin", help="operator only: give people their own isolated "
+                                       "coding memory in one database (D-040)")
+    asub = adm.add_subparsers(dest="admin_cmd", required=True)
+    for name, text in (("grant", "let a PostgreSQL role use Continuum (sees only its own)"),
+                       ("revoke", "remove a role's access (its sessions stay)")):
+        a = asub.add_parser(name, help=text)
+        a.add_argument("role")
+    ra = asub.add_parser("reassign", help="move sessions and checks to another role")
+    ra.add_argument("old_role")
+    ra.add_argument("new_role")
+    asub.add_parser("users", help="roles with sessions or access (no content)")
     coding = sub.add_parser("coding", help="coding-session continuity across models and chats")
     csub = coding.add_subparsers(dest="coding_cmd", required=True)
     checks = csub.add_parser("checks", help="human-only: register or list repository checks")
@@ -119,6 +133,18 @@ def build_parser() -> argparse.ArgumentParser:
     imp.add_argument("--repo", default=".")
     imp.add_argument("--source", default="transcript")
     imp.add_argument("--chat")
+    fg = csub.add_parser("forget", help="human-only: erase a session completely (chat, notes, "
+                                        "check output), or every closed session older than "
+                                        "N days; leaves a content-free tombstone")
+    fg.add_argument("session", nargs="?")
+    fg.add_argument("--older-than-days", type=int)
+    fg.add_argument("--include-active", action="store_true",
+                    help="with --older-than-days: also erase sessions still active")
+    fg.add_argument("--actor", required=True, help="your (human) id")
+    fg.add_argument("--reason", required=True)
+    fg.add_argument("--yes", action="store_true", help="confirm: erasure cannot be undone")
+    er = csub.add_parser("erasures", help="list erasure tombstones (no content)")
+    er.add_argument("--limit", type=int, default=50)
     rcl = csub.add_parser("recall", help="search everything the session remembers")
     rcl.add_argument("query")
     rcl.add_argument("--repo", default=".")
@@ -179,8 +205,12 @@ def main(argv: list[str] | None = None) -> int:
         code = _main(argv)
         sys.stdout.flush()  # buffered output reaches a closed pipe here, not at exit
         return code
-    except BrokenPipeError:
+    except OSError as exc:
         # the reader went away (e.g. `continuum coding brief | head`): not an error.
+        # Windows reports a write into a closed pipe as EINVAL, not EPIPE.
+        if not (isinstance(exc, BrokenPipeError)
+                or (os.name == "nt" and exc.errno == errno.EINVAL)):
+            raise
         # Point stdout at devnull so the interpreter's final flush cannot raise again.
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         return 0
@@ -263,6 +293,18 @@ def _main(argv: list[str] | None = None) -> int:
                 run_stdio(sdk)
             case "coding":
                 return _coding(sdk, args)
+            case "admin":
+                from continuum.coding import access
+
+                match args.admin_cmd:
+                    case "grant":
+                        _print(access.grant(sdk.store, args.role))
+                    case "revoke":
+                        _print(access.revoke(sdk.store, args.role))
+                    case "reassign":
+                        _print(access.reassign(sdk.store, args.old_role, args.new_role))
+                    case "users":
+                        _print(access.users(sdk.store))
     except ContinuumError as exc:
         _print({"error": str(exc), "code": exc.code})
         return 2
@@ -316,6 +358,22 @@ def _coding(sdk: Continuum, args: argparse.Namespace) -> int:
             _print(coding.capture(args.repo, read_transcript(args.transcript),
                                   source=args.source, chat_id=args.chat or args.transcript,
                                   history=True))
+        case "forget":
+            if (args.session is None) == (args.older_than_days is None):
+                _print({"error": "give a SESSION or --older-than-days N", "code": "usage"})
+                return 2
+            if not args.yes:
+                _print({"error": "erasure cannot be undone; repeat with --yes",
+                        "code": "confirmation_required"})
+                return 2
+            if args.session:
+                _print(coding.forget(args.session, actor=args.actor, reason=args.reason))
+            else:
+                _print(coding.forget_older_than(args.older_than_days, actor=args.actor,
+                                                reason=args.reason,
+                                                include_active=args.include_active))
+        case "erasures":
+            _print(coding.erasures(args.limit))
         case "recall":
             _print(coding.recall(args.query, session_id=args.session,
                                  repo_path=None if args.session else args.repo,

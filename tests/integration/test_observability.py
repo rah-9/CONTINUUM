@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Structured JSON tracing, timeline replay and trace export (NFR tracing, R11, I8)."""
 
 import io

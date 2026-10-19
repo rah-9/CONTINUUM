@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Task definition model shared by the Continuum runtime (C1) and the baseline (B0)."""
 
 from __future__ import annotations

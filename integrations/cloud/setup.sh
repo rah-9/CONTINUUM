@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 # Environment setup script for ephemeral cloud agent containers (Claude Code on
 # the web, Codex cloud, CI agents) and fresh Linux/macOS machines. Installs
 # Continuum so `continuum mcp` and the `continuum coding` CLI are on PATH.

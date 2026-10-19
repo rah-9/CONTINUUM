@@ -32,3 +32,7 @@ Read `docs/00-README.md`, then `docs/01-PRD.md` and the specification(s) relevan
 - No unauthorized or duplicate logical write is possible in included deterministic fixtures; human risk overrides are explicitly recorded.
 - No stale projection, wrong evidence fingerprint, silent usage-zero substitution or real tool call from replay.
 - Changed docs stay mutually consistent; summary states exact tests run and remaining limitations.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](LICENSE)._

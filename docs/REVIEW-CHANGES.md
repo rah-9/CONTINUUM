@@ -45,3 +45,7 @@ Reviewed: 2026-10-13. Scope: 8 docs + AGENTS.md.
 - MCP tool schema semantics and untrusted annotations: https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-11-25/server/tools.mdx
 
 All claims about external systems must be validated again when concrete production connectors are added.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Transcript extraction is structural, so it works across apps and future versions."""
 
 import json
@@ -73,6 +75,7 @@ def test_codex_rollout_without_injected_context_or_duplicates(tmp_path):
     msgs = [Message(m.role, m.text) for m in
             read_transcript(_jsonl(tmp_path / "rollout.jsonl", CODEX))]
     assert msgs == [Message("user", "Add the CLI command."),
+                    Message("action", "run: ls"),
                     Message("agent", "The CLI is added; tests pass.")]
 
 
@@ -114,3 +117,67 @@ def test_a_turn_end_reads_only_the_newest_part_of_a_long_transcript(tmp_path):
     assert (tail[-1].role, tail[-1].text) == ("agent", "final report")
     assert 0 < len(tail) < 30 and "old request 0 " not in tail[0].text
     assert len(read_transcript(path)) == 501
+
+
+def test_tool_calls_become_one_line_actions_with_their_outcome(tmp_path):
+    """What the agent did, in every supported shape; failures come from the call's result."""
+    claude = [
+        {"type": "assistant", "uuid": "a1", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "Fixing the parser."},
+            {"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "/r/a.py"}},
+            {"type": "tool_use", "id": "t2", "name": "Edit",
+             "input": {"file_path": "/r/a.py", "old_string": "x", "new_string": "y"}},
+            {"type": "tool_use", "id": "t3", "name": "Bash", "input": {"command": "pytest -q"}},
+            {"type": "tool_use", "id": "t4", "name": "TodoWrite", "input": {"todos": []}},
+            {"type": "tool_use", "id": "t5", "name": "mcp__continuum__coding_note",
+             "input": {"text": "x"}}]}},
+        {"type": "user", "uuid": "u1", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t3", "is_error": True,
+             "content": "Exit code 1\nFAILED test_a"}]}},
+        {"type": "assistant", "uuid": "a2", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t6", "name": "Bash", "input": {"command": "pytest -q"}}]}},
+    ]
+    msgs = read_transcript(_jsonl(tmp_path / "c.jsonl", claude))
+    acts = [(m.text, m.failed) for m in msgs if m.role == "action"]
+    assert acts == [("read: /r/a.py", False), ("edit: /r/a.py", False),
+                    ("run: pytest -q", True), ("run: pytest -q", False)]   # repeats are kept
+    assert len({m.ident for m in msgs}) == len(msgs)                          # exact identity
+
+    codex = [
+        {"type": "response_item", "timestamp": "t1", "payload": {
+            "type": "function_call", "name": "shell", "call_id": "c1",
+            "arguments": json.dumps({"command": ["bash", "-lc", "make test"]})}},
+        {"type": "response_item", "timestamp": "t2", "payload": {
+            "type": "function_call_output", "call_id": "c1",
+            "output": json.dumps({"output": "boom", "metadata": {"exit_code": 2}})}},
+        {"type": "response_item", "timestamp": "t3", "payload": {
+            "type": "custom_tool_call", "name": "apply_patch", "call_id": "c2",
+            "input": "*** Begin Patch\n*** Update File: src/x.py\n@@\n*** Add File: "
+                     "src/y.py\n*** End Patch"}},
+        {"type": "response_item", "timestamp": "t4", "payload": {
+            "type": "local_shell_call", "call_id": "c3",
+            "action": {"type": "exec", "command": ["git", "status"]}}},
+        {"type": "response_item", "timestamp": "t5", "payload": {
+            "type": "function_call_output", "call_id": "c3", "output": "Exit code: 0"}},
+    ]
+    acts = [(m.text, m.failed) for m in read_transcript(_jsonl(tmp_path / "x.jsonl", codex))]
+    assert acts == [("run: make test", True), ("edit: src/x.py, src/y.py", False),
+                    ("run: git status", False)]
+
+    gemini = tmp_path / "g.json"
+    gemini.write_text(json.dumps([{"role": "model", "parts": [
+        {"text": "searching"}, {"functionCall": {"name": "search_file_content",
+                                                "args": {"pattern": "def parse"}}},
+        {"functionCall": {"name": "write_file", "args": {"file_path": "p.py"}}}]}]))
+    assert [m.text for m in read_transcript(gemini)] == [
+        "searching", "search: def parse", "edit: p.py"]
+
+
+def test_long_commands_are_one_bounded_line():
+    from continuum.coding.transcript import describe_action
+
+    text = describe_action("Bash", {"command": "echo " + "x" * 1000 + "\n\nls"})
+    assert text is not None and len(text) <= 306 and "\n" not in text
+    assert describe_action("WebFetch", {"url": "https://e.x/a"}) == "fetch: https://e.x/a"
+    assert describe_action("Task", {"description": "find callers"}) == "delegate: find callers"
+    assert describe_action("weird_tool", "not json") == "tool: weird_tool"

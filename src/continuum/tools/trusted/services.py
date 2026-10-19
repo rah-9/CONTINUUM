@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Service client contracts that trusted tools call.
 
 Concrete clients (Continuum Lab mocks, or future real connectors) implement

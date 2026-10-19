@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Hidden judge for requirements the user stated ONLY in model A's chat (never registered
 as checks, never in the code before Part 2):
 

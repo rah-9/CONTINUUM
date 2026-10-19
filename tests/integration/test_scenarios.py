@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Continuity scenarios (docs/MEMORY-ALGORITHM.md §5): one test per way real work moves
 between models, chats, apps and machines. Each drives the same entry points the apps use
 (hook payloads, MCP-equivalent service calls, the CLI) against PostgreSQL and real git."""
@@ -189,7 +191,8 @@ def test_s3_hooks_fire_repeatedly_and_concurrently_without_duplicates(coding, re
     # second "yes" must not be lost), and REQ_2 via another source is kept in the journal.
     # every agent text message of the transcript is kept, not only the turn's last one
     assert [(e["payload_json"]["role"], e["payload_json"]["text"][:12]) for e in captured] == [
-        ("user", REQ_1[:12]), ("agent", "Reading lib/"), ("user", REQ_2[:12]),
+        ("user", REQ_1[:12]), ("agent", "Reading lib/"), ("action", "tool: Read"),
+        ("user", REQ_2[:12]),
         ("agent", "done"), ("user", REQ_1[:12]), ("user", REQ_2[:12])]
     # in order: #1 REQ_1, #2 REQ_2 (the copy from another source is not repeated),
     # #3 REQ_1 again: the latest message
@@ -459,3 +462,93 @@ def test_s14_both_sides_of_the_chat_are_kept_exactly_through_an_outage(coding, r
     decisions = " ".join(d["text"] for d in brief["agent_notes"]["reported_decisions"])
     assert "recursive-descent" in decisions and "unicode identifiers" in decisions
     assert any("line number" in i["text"] for i in brief["user_requests"]["ledger"])
+
+
+def test_s15_the_next_model_sees_what_the_previous_agent_did_and_what_failed(
+        coding, repo, tmp_path):
+    """A debugging chat ends mid-way: the agent edited a file, the tests failed, and the
+    chat ended. The next model learns which files were touched, which commands ran, that
+    the last test run failed, and secrets in commands are redacted, from the app's own
+    record (hooks only; the agent never called Continuum)."""
+    root = str(repo)
+
+    def use(i, name, args, *, text=None):
+        content = ([{"type": "text", "text": text}] if text else []) + [
+            {"type": "tool_use", "id": f"t{i}", "name": name, "input": args}]
+        return {"type": "assistant", "uuid": f"a{i}", "timestamp": f"2026-10-19T10:00:{i:02d}Z",
+                "message": {"role": "assistant", "content": content}}
+
+    def result(i, error):
+        return {"type": "user", "uuid": f"r{i}", "timestamp": f"2026-10-19T10:00:{i:02d}Z",
+                "message": {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": f"t{i}", "is_error": error,
+                     "content": "Exit code 1" if error else "ok"}]}}
+
+    records = [
+        {"type": "user", "uuid": "u1", "timestamp": "2026-10-19T10:00:00Z",
+         "message": {"role": "user", "content": "The invoice totals are off by a cent. Fix it."}},
+        use(1, "Read", {"file_path": f"{root}/billing/totals.py"}, text="Looking at totals."),
+        result(1, False),
+        use(2, "Bash", {"command": "pytest -q tests/test_totals.py"}), result(2, True),
+        use(3, "Edit", {"file_path": f"{root}/billing/totals.py", "old_string": "a",
+                        "new_string": "b"}), result(3, False),
+        use(4, "Bash", {"command": "curl -H 'Authorization: Bearer sk-live-abcdef1234567890' "
+                                   "https://api.example.com/rates"}), result(4, False),
+        use(5, "Write", {"file_path": "/home/someone/.claude/memory.md", "content": "x"}),
+        result(5, False),
+        use(6, "Bash", {"command": "pytest -q tests/test_totals.py"}), result(6, True),
+        {"type": "user", "uuid": "u2", "timestamp": "2026-10-19T10:00:30Z",
+         "message": {"role": "user", "content": "stop here, the next model will continue"}},
+    ]
+    transcript = tmp_path / "chat.jsonl"
+    transcript.write_text("".join(json.dumps(r) + "\n" for r in records))
+    for event in ("UserPromptSubmit", "Stop", "SessionEnd"):
+        hooks.handle("claude-code", {"hook_event_name": event, "cwd": root,
+                                     "transcript_path": str(transcript)}, coding)
+    sid = coding.latest_active(root)
+    brief = coding.brief(sid)
+    work, md = brief["work_log"], brief["markdown"]
+    assert work["edited"] == ["billing/totals.py"] and work["edited_outside_repo"] == 1
+    assert work["read"] == ["billing/totals.py"]
+    assert [(c["command"][:6], c["failed"]) for c in work["commands"]] == [
+        ("pytest", True), ("curl -", False), ("pytest", True)]
+    assert work["still_failing"] == ["pytest -q tests/test_totals.py"]
+    assert any("pytest -q tests/test_totals.py" in a and "failed" in a
+               for a in brief["attention"])
+    assert "## What the previous agent did" in md and "`billing/totals.py`" in md
+    assert "sk-live-abcdef1234567890" not in json.dumps(brief)      # redacted at capture
+    # the user's side is unchanged by the actions in between
+    assert _said(brief)[0].startswith("The invoice totals are off")
+    # the same transcript again (every hook re-reads it) adds nothing
+    again = coding.capture(root, __import__("continuum.coding.transcript",
+                                            fromlist=["x"]).read_transcript(transcript),
+                           source="claude-code", history=True)
+    assert again["captured"] == 0
+    # a later successful run clears the alarm
+    records += [use(7, "Bash", {"command": "pytest -q tests/test_totals.py"}),
+                result(7, False)]
+    transcript.write_text("".join(json.dumps(r) + "\n" for r in records))
+    hooks.handle("claude-code", {"hook_event_name": "Stop", "cwd": root,
+                                 "transcript_path": str(transcript)}, coding)
+    assert coding.brief(sid)["work_log"]["still_failing"] == []
+
+
+def test_s16_the_same_short_answer_in_two_apps_is_two_answers(coding, repo):
+    """'yes' in Claude Code, and later 'yes' in Codex to a new question: two answers, each
+    paired with its own question, whatever order the apps' transcripts were imported in."""
+    root = str(repo)
+    claude = [Message("user", "Build the export.", "u1", "2026-10-19T10:00:00+00:00"),
+              Message("agent", "Should I also drop the `old_export` table?", "a1",
+                      "2026-10-19T10:01:00+00:00"),
+              Message("user", "yes", "u2", "2026-10-19T10:02:00+00:00")]
+    codex = [Message("user", "Continue the export work.", "c1", "2026-10-19T11:00:00+00:00"),
+             Message("agent", "Should I gzip the `nightly_dump` files?", "c2",
+                     "2026-10-19T11:01:00+00:00"),
+             Message("user", "yes", "c3", "2026-10-19T11:02:00+00:00"),
+             Message("user", "Now add the CSV header row.", "c4", "2026-10-19T11:03:00+00:00")]
+    # Codex's transcript is imported first: journal order is not conversation order
+    coding.capture(root, codex, source="codex", chat_id="cx", history=True)
+    coding.capture(root, claude, source="claude-code", chat_id="cc", history=True)
+    md = coding.brief(coding.latest_active(root))["markdown"]
+    assert '"Should I also drop the `old_export` table?" → "yes"' in md
+    assert '"Should I gzip the `nightly_dump` files?" → "yes"' in md

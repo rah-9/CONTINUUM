@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Safety matrix: kill at every write-ahead/commit boundary, then resume (docs/02 s9).
 
 After each injected crash the run is resumed (as a new controller) until it is

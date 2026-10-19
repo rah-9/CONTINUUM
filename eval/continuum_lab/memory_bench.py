@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Memory benchmark: does what the user said in a long chat reach the next model?
 
 Generates realistic coding conversations of N user messages, each followed by the agent's
@@ -19,6 +21,7 @@ Run: ``python -m continuum_lab.memory_bench`` (needs PostgreSQL; prints a table)
 
 from __future__ import annotations
 
+import json
 import random
 import subprocess
 import tempfile
@@ -126,6 +129,108 @@ class Fact:
 class Conversation:
     turns: list[tuple[str, str]] = field(default_factory=list)  # (user, agent report)
     facts: list[Fact] = field(default_factory=list)
+    # per turn, the agent's tool calls: (tool, argument, failed)
+    actions: list[list[tuple[str, str, bool]]] = field(default_factory=list)
+
+
+EDIT_KEEP = 15  # the brief lists the newest 15 edited files (brief.WORK_EDITED)
+
+
+def plan_actions(conv: Conversation, seed: int) -> None:
+    """Give every agent turn the tool calls a coding agent makes: read and edit files, run
+    tests (sometimes failing, usually fixed a turn later). Half the conversations end with
+    the last test run failing (it must be flagged); in all of them earlier failures that
+    were fixed must not be (no false alarm)."""
+    rng = random.Random(seed * 7919 + len(conv.turns))
+    used: set[str] = set()
+    files = [f"src/{_token(rng, used)}.py" for _ in range(max(6, len(conv.turns) // 2))]
+    pending: str | None = None            # a failing test command not yet fixed
+    fixed: list[str] = []
+    edits: list[str] = []
+    for i in range(len(conv.turns)):
+        calls: list[tuple[str, str, bool]] = []
+        for _ in range(rng.randint(0, 2)):
+            calls.append(("Read", rng.choice(files), False))
+        if rng.random() < 0.6:
+            f = rng.choice(files)
+            calls.append(("Edit", f, False))
+            edits.append(f)
+        if pending is not None and rng.random() < 0.9:
+            calls.append(("Bash", pending, False))   # the fix: same command, now passing
+            fixed.append(pending)
+            pending = None
+        elif pending is None and rng.random() < 0.25 and i < len(conv.turns) - 3:
+            pending = f"pytest -q tests/test_{_token(rng, used)}.py"
+            calls.append(("Bash", pending, True))
+        else:
+            calls.append(("Bash", "ruff check .", False))
+        conv.actions.append(calls)
+    if pending is not None:                  # never fixed: resolve it, for a clean baseline
+        conv.actions[-1].append(("Bash", pending, False))
+        fixed.append(pending)
+    if seed % 2 == 0:                        # end on an open failure
+        last = f"pytest -q tests/test_{_token(rng, used)}.py"
+        conv.actions[-1].append(("Bash", last, True))
+        conv.facts.append(Fact("open_failure", last, len(conv.turns)))
+    newest: list[str] = []
+    for f in reversed(edits):
+        if f not in newest:
+            newest.append(f)
+    conv.facts += [Fact("edited_file", f, 0) for f in newest[:EDIT_KEEP]]
+    conv.facts += [Fact("false_alarm", c, 0) for c in dict.fromkeys(fixed)]
+
+
+def transcript_records(conv: Conversation, turns: list[int], app: str) -> list[dict[str, Any]]:
+    """The app's own transcript of the given turns, in Claude Code or Codex format. Times
+    come from the turn's position in the whole conversation (one clock across apps)."""
+    out: list[dict[str, Any]] = []
+    k = 0
+
+    def stamp() -> str:
+        nonlocal k
+        k += 1
+        s = i * 20 + k
+        return f"2026-10-19T{s // 3600 % 24:02d}:{s // 60 % 60:02d}:{s % 60:02d}Z"
+
+    for i in turns:
+        (user, report), calls, k = conv.turns[i], conv.actions[i], 0
+        if app == "codex":
+            out.append({"timestamp": stamp(), "type": "response_item", "payload": {
+                "type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": user}]}})
+            for j, (tool, arg, failed) in enumerate(calls):
+                cid = f"c{i}_{j}"
+                args = {"command": ["bash", "-lc", arg]} if tool == "Bash" else (
+                    {"path": arg} if tool == "Read" else None)
+                item = ({"type": "custom_tool_call", "name": "apply_patch", "call_id": cid,
+                         "input": f"*** Begin Patch\n*** Update File: {arg}\n*** End Patch"}
+                        if tool == "Edit" else
+                        {"type": "function_call", "name": "shell" if tool == "Bash"
+                         else "read_file", "call_id": cid, "arguments": json.dumps(args)})
+                out.append({"timestamp": stamp(), "type": "response_item", "payload": item})
+                out.append({"timestamp": stamp(), "type": "response_item", "payload": {
+                    "type": "function_call_output", "call_id": cid,
+                    "output": f"Exit code: {1 if failed else 0}"}})
+            out.append({"timestamp": stamp(), "type": "response_item", "payload": {
+                "type": "message", "role": "assistant",
+                "content": [{"type": "output_text", "text": report}]}})
+            continue
+        out.append({"type": "user", "uuid": f"u{i}", "timestamp": stamp(),
+                    "message": {"role": "user", "content": user}})
+        for j, (tool, arg, failed) in enumerate(calls):
+            tid = f"t{i}_{j}"
+            args = {"command": arg} if tool == "Bash" else {"file_path": arg}
+            out.append({"type": "assistant", "uuid": f"a{i}_{j}", "timestamp": stamp(),
+                        "message": {"role": "assistant", "content": [
+                            {"type": "tool_use", "id": tid, "name": tool, "input": args}]}})
+            out.append({"type": "user", "uuid": f"r{i}_{j}", "timestamp": stamp(),
+                        "message": {"role": "user", "content": [
+                            {"type": "tool_result", "tool_use_id": tid, "is_error": failed,
+                             "content": "Exit code 1" if failed else "ok"}]}})
+        out.append({"type": "assistant", "uuid": f"a{i}", "timestamp": stamp(),
+                    "message": {"role": "assistant",
+                                "content": [{"type": "text", "text": report}]}})
+    return out
 
 
 def _token(rng: random.Random, used: set[str]) -> str:
@@ -240,6 +345,16 @@ def score(markdown: str, conv: Conversation) -> dict[str, Any]:
         1 for f in stale if f.probe in markdown and (
             f.stale is None or f.stale not in markdown
             or markdown.rfind(f.stale) < markdown.rfind(f.probe)))
+    if conv.actions:
+        attention = markdown.split("## Attention", 1)[-1].split("\n## ", 1)[0] \
+            if "## Attention" in markdown else ""
+        work = markdown.split("## What the previous agent did", 1)[-1].split("\n## ", 1)[0]
+        edited = [f for f in conv.facts if f.kind == "edited_file"]
+        out["edited_file"] = (sum(1 for f in edited if f"`{f.probe}`" in work), len(edited))
+        opened = [f for f in conv.facts if f.kind == "open_failure"]
+        out["open_failure"] = (sum(1 for f in opened if f.probe in attention), len(opened))
+        alarms = [f for f in conv.facts if f.kind == "false_alarm"]
+        out["false_alarms"] = (sum(1 for f in alarms if f.probe in attention), len(alarms))
     noise = [f for f in conv.facts if f.kind == "noise" and f.probe not in last_two]
     out["noise_leaks"] = (sum(1 for f in noise if f.probe in markdown), len(noise))
     out["tokens"] = len(markdown) // 4
@@ -262,18 +377,35 @@ def _git(root: Path, *args: str) -> None:
 
 
 def run_one(coding: Any, seed: int, n: int, workdir: Path, *,
-            verbose: bool = False) -> dict[str, Any]:
-    """Capture one conversation turn by turn, as the hooks do, and score the brief."""
+            verbose: bool = False, mode: str = "live") -> dict[str, Any]:
+    """Capture one conversation turn by turn, as the hooks do, and score the brief.
+
+    ``live``: each turn's prompt and report (prompt and notify hooks). ``transcript``: after
+    each turn the app's growing Claude Code transcript, with tool calls, is re-imported (the
+    Stop hook). ``two_apps``: the same, but the chat moves between Claude Code and Codex
+    every few turns, each app with its own transcript."""
     from continuum.coding.brief import compact
-    from continuum.coding.transcript import Message
+    from continuum.coding.transcript import Message, extract
 
     conv = generate(seed, n, verbose=verbose)
-    repo = workdir / f"repo_{seed}_{n}_{int(verbose)}"
+    repo = workdir / f"repo_{seed}_{n}_{int(verbose)}_{mode}"
     repo.mkdir()
     _git(repo, "init", "-q")
-    for user, report in conv.turns:
-        coding.capture(str(repo), [Message("user", user), Message("agent", report)],
-                       source="bench", chat_id=f"chat-{seed}")
+    if mode == "live":
+        for user, report in conv.turns:
+            coding.capture(str(repo), [Message("user", user), Message("agent", report)],
+                           source="bench", chat_id=f"chat-{seed}")
+    else:
+        plan_actions(conv, seed)
+        apps = ("claude-code", "codex") if mode == "two_apps" else ("claude-code",)
+        block = random.Random(seed).randint(3, 6)
+        owner = [apps[(i // block) % len(apps)] for i in range(len(conv.turns))]
+        for i in range(1, len(conv.turns) + 1):
+            app = owner[i - 1]
+            records = transcript_records(conv, [j for j in range(i) if owner[j] == app],
+                                         app)
+            coding.capture(str(repo), extract(records), source=app,
+                           chat_id=f"{app}-{seed}", history=True)
     md = compact(coding.brief(coding.latest_active(str(repo))))["markdown"]
     new = score(md, conv)
     old = score(legacy_v080([u for u, _ in conv.turns]), conv)

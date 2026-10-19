@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """SDK, CLI, loopback HTTP API and MCP facade over pre-registered tasks (R10)."""
 
 import json
@@ -144,3 +146,18 @@ def test_doctor_reports_installation_health(sdk):
     assert report["database"]["ok"] and report["schema"]["ok"] and report["tasks"]["ok"]
     assert report["live_models"]["A"]["deployable"] is False  # placeholders are rejected
     assert report["ok"] is True
+
+
+def test_doctor_passes_without_runtime_tasks(schema, tmp_path):
+    """A coding-continuity install has no pre-registered tasks; that is healthy. A task
+    file that does not load is a fault."""
+    settings = Settings(database_url=DSN, db_schema=schema, home=tmp_path / "home",
+                        config_dir=tmp_path / "config")
+    with Continuum(settings) as sdk:
+        sdk.init_db()
+        report = sdk.doctor()
+        assert (report["tasks"]["ok"], report["tasks"]["count"], report["ok"]) == (True, 0, True)
+    (tmp_path / "config" / "tasks").mkdir(parents=True)
+    (tmp_path / "config" / "tasks" / "broken.yaml").write_text("task_id: [unclosed")
+    with Continuum(settings) as sdk:
+        assert sdk.doctor()["ok"] is False

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Thin LiteLLM transport for live providers (opt-in; may incur cost).
 
 One adapter covers several provider configurations. Exact model IDs and

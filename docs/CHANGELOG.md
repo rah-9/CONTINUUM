@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.0.0rc1 — unreleased
+
+Release candidate for client delivery: privacy, licensing, portability and packaging.
+
+### Added
+- **Erasure and retention (D-039, schema v5).** `continuum coding forget SESSION` and `continuum coding forget --older-than-days N` remove a session's events and row in one transaction and leave a content-free tombstone (`coding_erasures`, immutable). Human-only: CLI with `--yes`, never MCP. `continuum coding erasures` lists them. History outside an erasure stays immutable.
+- **Several people, one database (D-040).** Each person connects with their own PostgreSQL role; row-level security shows each role only its own sessions, events, checks and tombstones. Operator commands `continuum admin grant|revoke|reassign|users`. A role without access gets `no_access` naming the fix.
+- **What the previous agent did (D-041).** Tool calls in the app's transcript (Claude Code, Codex, Gemini) are kept as one-line actions with a failed mark. The brief lists edited files, recent commands and files read; Attention flags a failing command among the agent's last three. On the real 30-message transcript: 52 of 52 tool calls kept, in order, none duplicated.
+- **Benchmark modes `transcript` and `two_apps`.** Turns re-imported from growing app transcripts with tool calls, and a chat that moves between Claude Code and Codex. Every memory kind 98–100% at 10–160 messages; edited files and open failures 100%; no false alarms. Pinned in `test_nf6`.
+- **Proprietary licensing.** `LICENSE`, `NOTICE`, SPDX headers in every source file, package metadata (`Private :: Do Not Upload`) and a notice in every document. `tests/unit/test_license.py` keeps it complete.
+- **CI on Windows and macOS** in addition to Linux.
+- **Trial 6, a real debugging handoff** (`eval/handoff_trials/debug_handoff/`). Model A (Sonnet in Claude Code, hooks only) diagnosed the bug without fixing it; the user's extra facts and constraints were only in the chat. Haiku, Sonnet and Opus each scored 7/7 with Continuum, 4/7 without.
+- **Release packaging.** Version 1.0.0rc1. A private release workflow on version tags builds the wheel and sdist, smoke-tests the installed wheel against PostgreSQL, and attaches them with `SHA256SUMS` to a GitHub release (no public index). `SECURITY.md` (reporting, supported versions, controls) and `docs/UPGRADING.md`.
+- **Upgrade test from a real 0.9 database** (`tests/fixtures/schema_v4_continuum_0_9.sql`): sessions, chat and checks survive, and erasure, per-person checks and capture work on the upgraded data.
+
+### Fixed
+- **A long message starting with "OK" is not an answer.** The user's "OK, I'm out of time. Stop here, …" was shown as the reply to the agent's open question (Trial 6). Only short messages count as replies now.
+- **`continuum doctor` on a coding-only install.** It reported failure because no runtime tasks were registered. Only task files that do not load are a fault now.
+- **Answers across apps.** A "yes" was paired with the question before it in journal order, so a transcript imported later (another app) could lose the pairing. It now uses conversation order.
+- **Repeated words in another app.** The same words from two capture routes were always treated as one message, so a later "yes" typed in another app vanished from the brief. They are one message only when captured within 30 seconds.
+- **Windows:** CLI output into a pipe the reader already closed raised `OSError: Invalid argument` (Windows' form of a broken pipe). It is now handled like a broken pipe.
+
 ## 0.9.0 — 2026-10-18
 
 Long chats and every model (D-037). Measured in `docs/MEMORY-QUALITY.md`.
@@ -290,3 +312,7 @@ First implementation of the v1 MVP (spec 0.3).
 - `continuum_lab` (`eval/`): ground-truth mock services (deduped, observable and opaque modes, with scripted faults), 15 tasks, the plan-following fake agent, the B0 baseline, fault injection, the matrix runner (`continuum-lab`), metrics (Wilson and paired bootstrap) and the Markdown report.
 - Tests: unit and property, integration, contract (live tests opt-in) and chaos (every crash boundary; real-process lease races and hard kills).
 - CI workflow with a PostgreSQL service, ruff, mypy `--strict`, all test layers and a lab smoke run.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

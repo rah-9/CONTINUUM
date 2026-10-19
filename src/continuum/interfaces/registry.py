@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Pre-registered task specs and model routing loaded from ``config/``.
 
 ``config/tasks/*.yaml`` entries name a trusted factory (``module:function``)

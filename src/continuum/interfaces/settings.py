@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Runtime settings from environment variables (secrets never come from files in git)."""
 
 from __future__ import annotations

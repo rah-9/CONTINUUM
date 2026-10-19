@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Observe a working tree: identity, fingerprint and code map, for any kind of project.
 
 Git repositories: the fingerprint is the git tree of the working copy's *content*

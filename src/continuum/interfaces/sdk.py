@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Python SDK: ``start``, ``resume``, ``status``, ``resolve_action`` (R10)."""
 
 from __future__ import annotations
@@ -109,7 +111,9 @@ class Continuum:
             checks["schema"] = {"ok": False, "hint": "run `continuum db-init`",
                                 "error": type(exc).__name__}
         tasks = self.registry.task_ids()
-        checks["tasks"] = {"ok": bool(tasks), "count": len(tasks),
+        # No pre-registered tasks is a valid install (coding continuity needs none);
+        # task files that do not load are a fault.
+        checks["tasks"] = {"ok": not self.registry.errors, "count": len(tasks),
                            "invalid_files": {str(path): why for path, why
                                              in self.registry.errors.items()},
                            "config_dir": str(self.settings.config_dir.resolve())}

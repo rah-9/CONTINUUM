@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Opt-in live provider contract tests. These call real APIs and may cost money.
 
 Run with ``CONTINUUM_LIVE=1 pytest -m live`` after filling verified profiles in

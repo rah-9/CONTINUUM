@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Run one human-registered check: argv without a shell, bounded in time and output.
 
 * The command is resolved like a shell would (``shutil.which`` honours PATHEXT, so

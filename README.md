@@ -38,6 +38,7 @@ written down so it can be rerun. Details: [real model trials](docs/HANDOFF-TRIAL
 | 5. **A 30-message chat**, requirements in messages 8, 15, 21 and 27 | Sonnet in Claude Code, 30 turns, hooks only | Haiku (2 runs) | **13/13, 13/13** | 9/13 |
 | | | Sonnet | **13/13** | 9/13 |
 | | | Opus | **13/13** | 9/13 |
+| 6. **Debugging handoff**: A found the root cause; the user's extra facts and constraints were only in the chat | Sonnet in Claude Code, 3 turns, hooks only, no code changed | Haiku / Sonnet / Opus | **7/7** each | 4/7 each |
 
 **What the baselines did.**
 - **Without Continuum:** every B kept what was already in the code. None of them learned what was still to do, and each said it could not tell what was planned.
@@ -69,6 +70,8 @@ and still delivered the wrong thing.
 - Claude Code's internal request copies were read as extra messages
 - a weaker model read the user's "stop here" (said to the previous model) as its own instruction, and stalled on an old open question
 - `continuum … | head` crashed
+- a long final message starting with "OK" was shown as the answer to the agent's open question
+- a "yes" typed in a second app lost its question, or was dropped as a copy of an earlier "yes" (found by the two-app benchmark)
 
 **Not yet measured:** GPT models (Codex), because the environment these trials ran in has no
 OpenAI access. The GPT → Claude runbook is in [`eval/handoff_trials/`](eval/handoff_trials/README.md).
@@ -235,3 +238,18 @@ Each change follows [`docs/06-DEV-WORKFLOW.md`](docs/06-DEV-WORKFLOW.md):
 5. CI runs the same gates against PostgreSQL 16, plus a lab smoke run.
 
 Results are reported honestly: unknown cost is never zero, pauses are not successes, and fake-model results are not presented as live evidence.
+
+## Releases, security and upgrades
+
+- **Releases** are private: tagging `v<version>` builds the wheel and sdist, checks that the wheel installs and works on its own, and attaches both (with `SHA256SUMS`) to a GitHub release in this repository (`.github/workflows/release.yml`). Nothing is published to a public index.
+- **Security:** how to report a vulnerability, supported versions and the security controls are in [SECURITY.md](SECURITY.md).
+- **Upgrading:** the schema migrates itself; back up first. See [docs/UPGRADING.md](docs/UPGRADING.md).
+- **Several people, one database:** per-person isolation with PostgreSQL roles, plus erasure and retention, in [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+## License
+
+Proprietary software. All rights reserved. Use, copying and distribution are permitted only under a separate written agreement with the copyright holder ([`LICENSE`](LICENSE), [`NOTICE`](NOTICE)). The package is marked `Private :: Do Not Upload`, so public package indexes refuse it.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](LICENSE)._

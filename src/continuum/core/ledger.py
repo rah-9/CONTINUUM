@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Logical action identity and state machine (docs/04 sections 2-3).
 
 A logical action is one intended business operation, identified by a trusted
