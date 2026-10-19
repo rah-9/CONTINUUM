@@ -26,6 +26,16 @@ Schema v4 → v5. Automatic; no data is rewritten.
 | **`continuum doctor`** no longer fails when no runtime tasks are registered. | Nothing. |
 | **Plugin version** `1.0.0rc1` (Claude Code). | Re-install or update the plugin from the marketplace, then restart Claude Code. |
 
+**If Continuum connects as a role that does not own the schema** (for example, the tables were
+created by `postgres` and Continuum logs in as `continuum`): run the migration with the owner's
+login, then give the existing sessions to the role Continuum uses, or they will look empty to it:
+
+```bash
+CONTINUUM_DATABASE_URL=postgresql://postgres@db/continuum continuum db-init
+CONTINUUM_DATABASE_URL=postgresql://postgres@db/continuum continuum admin reassign postgres continuum
+CONTINUUM_DATABASE_URL=postgresql://postgres@db/continuum continuum admin grant continuum
+```
+
 Re-running `continuum coding setup` in a repository is not required. It is safe (idempotent)
 and refreshes the agent rules in `AGENTS.md`.
 
