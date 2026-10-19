@@ -16,30 +16,62 @@ Continuum itself uses **no LLM**. Memory is your own words (captured by your app
 
 > Docs: [how well the memory works](docs/MEMORY-QUALITY.md) · [the memory algorithm](docs/MEMORY-ALGORITHM.md) · [how it runs and connects](docs/OPERATIONS.md) · [coding handoff guide](docs/CODING-HANDOFF.md) · [real handoff trials](docs/HANDOFF-TRIALS.md) · [verification](docs/VERIFICATION.md) · [specification](docs/00-README.md) (read in order) · [decisions](docs/DECISIONS.md) · [changelog](docs/CHANGELOG.md) · [project journal](docs/PROJECT-JOURNAL.md) · [agent contract](AGENTS.md)
 
-## Measured with real models
+## What has been measured
 
-These are Sonnet → Opus handoffs on a copy of this repository, judged by hidden acceptance tests. Model A built and committed Part 1. Two of the user's requirements existed **only in A's chat**. Model B was told only *"continue where we left off"* ([details](docs/HANDOFF-TRIALS.md)):
+Every number below comes from a test or a trial in this repository, with the method
+written down so it can be rerun. Details: [real model trials](docs/HANDOFF-TRIALS.md) and
+[how well the memory works](docs/MEMORY-QUALITY.md).
 
-| Model B (Opus) | correct result | chat-only requirements kept | work tokens* | files read |
+### Real model switches
+
+**Setup.**
+- Model A works and then stops.
+- Model B, in a brand-new chat, is told only *"continue where we left off"*.
+- Hidden acceptance tests that neither model sees judge the result.
+- The hard part is always the same: some of the user's requirements exist **only in A's chat**.
+
+| Trial | Model A | Model B | with Continuum | without |
 |---|---|---|---|---|
-| **with Continuum** (2 runs) | **4/4 both runs** | **2/2** | **~14–17k** | 3–4 |
-| without (2 runs) | 1/4 both runs | 0/2 | ~21–29k | 12–14+ |
+| 1. Easy handoff (everything is in the code) | Sonnet | Opus | 7/7 | 7/7 |
+| 2–3. Requirements only in chat | Sonnet, records notes | Opus (2 runs) | **4/4, 4/4** | 1/4, 1/4 |
+| 4. App switch after an abrupt end | Sonnet in Claude Code, **never used Continuum** (hooks only) | Opus, set up like another app | **4/4** in 1.8 min | 1/4 in 5.1 min |
+| 5. **A 30-message chat**, requirements in messages 8, 15, 21 and 27 | Sonnet in Claude Code, 30 turns, hooks only | Haiku (2 runs) | **13/13, 13/13** | 9/13 |
+| | | Sonnet | **13/13** | 9/13 |
+| | | Opus | **13/13** | 9/13 |
 
-\*Total tokens minus the ~54k that any agent spends before doing anything.
+**What the baselines did.**
+- **Without Continuum:** every B kept what was already in the code. None of them learned what was still to do, and each said it could not tell what was planned.
+- **With Continuum:** every B followed the repository's rules on its own (`coding_resume` first) and finished the job.
 
-**A 30-message chat** (v0.9.0):
-- Model A worked in real Claude Code with only the hooks; requirements for the remaining work were stated in messages 8, 15, 21 and 27.
-- Haiku, Sonnet and Opus each continued from it. Each scored **13/13 with Continuum and 9/13 without**.
-- In a benchmark of chats with 10–160 messages, **100%** of planted requirements, changes of mind and answers reach the next model, against 15% for v0.8.0 at 40 messages. The brief costs 0.7k–3k tokens. Details: [`docs/MEMORY-QUALITY.md`](docs/MEMORY-QUALITY.md).
+**Cost.** In Trial 5, model A's chat had reached **~135k tokens per call** by message 30. The
+Continuum brief carried the same requirements in **~2.1k tokens**. In Trials 2–3, Continuum's
+B used ~14–17k work tokens and read 3–4 files. Without it, B used ~21–29k, read 12+ files
+and still delivered the wrong thing.
 
-**Switching apps after an abrupt end** (v0.8.0): model A in real Claude Code never used Continuum (only its hooks were installed), and its chat ended mid-task. Model B was configured like another app (rules + MCP, no hooks). B finished it **4/4, with both chat-only requirements**, in 1.8 min. The baseline scored 1/4 in 5.1 min.
+### Memory, measured without a model
 
-Without Continuum, Opus never learned that Part 2 existed. Reaching a correct result would take another explanation turn plus the work itself: about 35–45k work tokens, against ~14k with Continuum.
+| Question | Result |
+|---|---|
+| Does what the user said **anywhere in a long chat** reach the next model? (benchmark, 20 chats per length, requirements, changes of mind, answers and decisions planted at random turns, held-out phrasings) | **100%** of every kind at 10, 20, 40, 80 and 160 messages, with **0** pasted-log noise. The v0.8.0 brief kept 15% at 40 messages and 4% at 160. |
+| How big is the brief? | 0.8k tokens at 10 messages, 1.2k at 40, 1.8k at 80, 3.0k at 160 |
+| Are **both sides** of the chat kept exactly? (the real 30-message transcript replayed through Claude Code's hook sequence) | your messages **30/30**, Claude's messages **47/47**: none missing, none duplicated, in order, also when the hooks failed for the first 4 turns or for every turn |
+| Does a hook ever break the app? | No. The database was down for the first minutes of Trial 5: model A was unaffected, and every message was recovered from the transcript afterwards. |
+| Runtime safety (912 paired fault-injection cells) | **0** duplicate side effects (baseline 140), **0** false completions, **100%** of verified progress kept after crashes (baseline 73%) |
 
-The trials also found three defects in Continuum, all fixed:
-- every `continuum` in paths and commands was redacted, because the default DB password is that word
+### Defects the trials found (all fixed, each with a regression test)
+
+- every `continuum` in paths and commands was redacted (the default DB password is that word)
 - decision reasons were clipped mid-sentence
 - every commit falsely flagged verified work as changed
+- the brief kept only the newest messages, losing requirements from the middle of long chats
+- a second "yes" or "continue" in one chat was dropped
+- only Claude's final message per turn was kept; its explanations and caveats were lost
+- Claude Code's internal request copies were read as extra messages
+- a weaker model read the user's "stop here" (said to the previous model) as its own instruction, and stalled on an old open question
+- `continuum … | head` crashed
+
+**Not yet measured:** GPT models (Codex), because the environment these trials ran in has no
+OpenAI access. The GPT → Claude runbook is in [`eval/handoff_trials/`](eval/handoff_trials/README.md).
 
 ## Quickstart
 
@@ -68,18 +100,19 @@ Tables are created automatically on first use.
 
 ## Coding continuity: what the next model gets
 
-The agent calls `coding_resume(repo_path, agent=<model id>)` first in every chat. In Claude Code the brief is also put into the chat by a hook before the first turn. It is a **compact brief**: Markdown plus the task ids it needs, about 1–3k tokens however long the session is. Pass `detail="full"` for the JSON; `coding_recall(query)` searches everything older.
+The agent calls `coding_resume(repo_path, agent=<model id>)` first in every chat. In Claude Code the brief is also put into the chat by a hook before the first turn. It is a **compact brief**: Markdown plus the task ids it needs, about 1–3k tokens however long the session is (measured: 1.2k at 40 messages, 3.0k at 160). Pass `detail="full"` for the JSON; `coding_recall(query)` searches everything older.
 
 | In the brief | Source | Trust |
 |---|---|---|
-| **What the user asked**, verbatim, from every chat and app | captured by the app's hooks | the user's words; newest wins |
+| **What the user asked**: every requirement, change of mind and answered question from the whole chat, numbered in order; the most recent message whole | captured by the app's hooks, consolidated without a model | the user's words; the higher number wins |
 | Attention: gaps and changes (no capture, uncheckpointed code, failing checks, moved session) | computed | fact |
 | Code now: branch, HEAD, changed files, content fingerprint | observed at resume | fact |
 | **Code touched in this session:** files, +/- lines, functions defined | observed from git since the session started | fact |
 | Commits since the last checkpoint | observed from git | fact |
 | Check results, valid only if they ran on the current code and definition | `CheckRan` evidence | fact |
 | Tasks, verified or not, and whether any need re-verification | evidence vs the current code | fact |
-| Decisions, context, blockers, next steps, checkpoint summaries, the last agent report | written by the previous agent | claim, kept whole |
+| Choices and caveats the previous agent reported, and its last message | captured from the agent's own replies | claim |
+| Decisions, context, blockers, next steps, checkpoint summaries | written by the previous agent | claim, kept whole |
 
 **"Done" means proven.** `coding_complete_task` is refused unless the task's human-registered checks passed **on the current code**. The fingerprint is the *content* of the working tree, not its commit history, so committing doesn't count as a change and editing does. Agents cannot register or change checks. Secrets are redacted before storage. The full guide is [`docs/CODING-HANDOFF.md`](docs/CODING-HANDOFF.md).
 
@@ -147,7 +180,7 @@ API keys come only from the environment. They are redacted before anything is st
 
 ## Verified
 
-350 tests across these layers:
+362 tests across these layers:
 - unit
 - integration
 - contract (OpenAI and Anthropic request rules)
@@ -159,6 +192,7 @@ API keys come only from the environment. They are redacted before anything is st
 - brief quality
 - continuity scenarios (app switch, another checkout, abrupt end, long sessions, secrets in chat; see [`docs/MEMORY-ALGORITHM.md`](docs/MEMORY-ALGORITHM.md) §5)
 - long-chat memory quality (planted requirements in chats of 10–160 messages, pinned at ≥95% recall and zero noise)
+- exact preservation of both sides of the chat through hook outages
 
 Every requirement maps to tests in [`tests/traceability.yaml`](tests/traceability.yaml), and every defect found has a regression test. Results are in [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
 
@@ -166,6 +200,7 @@ Every requirement maps to tests in [`tests/traceability.yaml`](tests/traceabilit
 make check                                  # ruff + mypy --strict + all tests (needs PostgreSQL)
 continuum-lab run --suite safety --out results/safety    # B0 vs Continuum, 912 paired cells
 eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-switch trial
+python -m continuum_lab.memory_bench                      # long-chat memory benchmark
 ```
 
 ## Repository layout
@@ -175,15 +210,18 @@ src/continuum/
   core/          runtime, store (events + projections), leases, ledger, reconciliation,
                  verification, sessions/handoff, budgets, redaction, schema.sql
   coding/        coding continuity: service, repo observer (content fingerprint, code
-                 map), brief, check runner
+                 map), memory (conversation consolidation), brief, transcript parser,
+                 app hooks, setup, check runner
   models/ tools/ verify/ interfaces/ (SDK, CLI, loopback HTTP, MCP)
 eval/
-  continuum_lab/   B0-vs-Continuum fault-injection lab
-  handoff_trials/  real model-switch trials (setup, prompts, hidden tests, judge)
-integrations/    AGENT_RULES.md, Claude Code plugin, configs for Cursor, VS Code, Codex,
+  continuum_lab/   B0-vs-Continuum fault-injection lab; memory_bench (long-chat memory)
+  handoff_trials/  real model-switch trials: export_feature, long_chat (30 messages),
+                   hidden judges, transcript replay
+integrations/    AGENT_RULES.md, Claude Code plugin (skill, hooks, commands), configs for Cursor, VS Code, Codex,
                  Windsurf, Gemini CLI, Cline, Claude Desktop; cloud/setup.sh
-docs/            00–07 spec, OPERATIONS, CODING-HANDOFF, HANDOFF-TRIALS, VERIFICATION,
-                 MODEL-SWITCHING, DECISIONS, CHANGELOG, PROJECT-JOURNAL
+docs/            00–07 spec, MEMORY-QUALITY, MEMORY-ALGORITHM, OPERATIONS, CODING-HANDOFF,
+                 HANDOFF-TRIALS, VERIFICATION, MODEL-SWITCHING, DECISIONS, CHANGELOG,
+                 PROJECT-JOURNAL
 tests/           unit/ integration/ contract/ property/ chaos/ nonfunctional/
 ```
 

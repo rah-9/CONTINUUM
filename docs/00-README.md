@@ -1,7 +1,7 @@
 # Continuum — specification index
 
-**Spec version:** 0.7 (2026-10-18: PostgreSQL backend, D-001; MCP plugin surface, D-022; coding-session continuity, D-028/D-029; content fingerprint and code map, D-034/D-035; capture across apps and checkouts, D-036)  
-**Status:** v0.8.0 implementation in `src/`, `eval/` and `tests/`; see `CHANGELOG.md`, `VERIFICATION.md` and `HANDOFF-TRIALS.md`
+**Spec version:** 0.8 (2026-10-19: conversation consolidation and two-sided capture, D-037/D-038; PostgreSQL backend, D-001; MCP plugin surface, D-022; coding-session continuity, D-028/D-029; content fingerprint and code map, D-034/D-035; capture across apps and checkouts, D-036)  
+**Status:** v0.9.0 implementation in `src/`, `eval/` and `tests/`; see `CHANGELOG.md`, `VERIFICATION.md`, `HANDOFF-TRIALS.md` and `MEMORY-QUALITY.md`
 
 **Purpose:** keep multi-step agent progress in runtime-owned, model-independent state. After an interruption or model handoff, reuse *valid verified work* and reconcile any uncertain external effect **before** new side-effecting work.
 
