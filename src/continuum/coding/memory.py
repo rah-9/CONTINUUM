@@ -296,8 +296,13 @@ def _shown(turn: Turn, number: dict[int, int], limit: int, *,
 
 
 def _preceding_question(user: Turn, turns: list[Turn]) -> str | None:
-    """The question in the agent message directly before this user message, if any."""
-    before = [t for t in turns if t.seq < user.seq]
+    """The question in the agent message directly before this user message, if any.
+
+    "Before" is conversation order (``turns`` is sorted by when messages were written),
+    not journal order: a transcript imported later (another app, a missed hook) has
+    higher journal numbers for messages written earlier."""
+    index = next((i for i, t in enumerate(turns) if t is user), None)
+    before = turns[:index] if index is not None else [t for t in turns if t.seq < user.seq]
     for t in reversed(before):
         if t.role == "user":
             return None

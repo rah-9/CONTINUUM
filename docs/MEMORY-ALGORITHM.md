@@ -46,7 +46,7 @@ One append-only journal per session (`coding_events`, gapless `seq`, immutable; 
 | `NoteRecorded` | agent | decision, context, blocker, next_step (claims) |
 | `CheckpointCaptured` | agent | summary (claim) + observed state (fact) |
 | `CheckRan` | Continuum, running a human-registered check | exit, redacted output tail, fingerprint before the run |
-| `ChatCaptured` | the app's hooks, transcript import, CLI | `role` user/agent, text, source app, chat id, dedupe `key` |
+| `ChatCaptured` | the app's hooks, transcript import, CLI | `role` user/agent/action, text, source app, chat id, dedupe `key`; actions carry `failed` |
 | `SessionClosed` | agent or human | reason |
 
 Sessions carry `repo_root` (the checkout in use) and `repo_key` (the normalized remote).
@@ -105,12 +105,21 @@ walk(node):                                       # depth <= 8
   if node.role in {user, human}            and has content|parts: emit user text
   if node.role in {assistant, model, ...}  and has content|parts: emit agent text
   if node.type in {user_message, agent_message} and node.message is text: emit
+  agent content parts of type tool_use, Gemini functionCall parts, and Codex
+      function_call / local_shell_call / custom_tool_call items: emit an action
   else walk every child object/list
 text of content = str, or the str / text|input_text|output_text parts of a list
-                  (tool calls, tool results, reasoning, images are not conversation)
+                  (tool results, reasoning, images are not conversation)
+action = one line: "edit: <path(s)>" (edit/write tools, apply_patch file headers),
+         "read: <path>", "run: <first line of the command> … (+n lines)",
+         "search: <pattern>", "fetch: <url>", "delegate: <description>", "tool: <name>";
+         bookkeeping tools (todo lists, plan mode, questions, Continuum's own) are skipped
+failed = the call's result is an error (Claude Code is_error) or a non-zero exit code
+         (Codex output), matched by call id across the transcript
 user text      -> remove harness-injected blocks (<system-reminder>, <environment_context>,
                   <user_instructions>, command wrappers, ...) and harness-only messages
-drop empty messages and immediate duplicates (an item and its event)
+drop empty messages and immediate duplicates (an item and its event); actions repeat
+                  for real (the tests run twice) and are never collapsed
 ```
 
 Records: when a transcript identifies its messages (Claude Code `uuid`, Codex `timestamp`),
@@ -120,9 +129,9 @@ keeps its transcript id and timestamp.
 Storing (`service.capture`), in one transaction under the session row lock:
 
 ```
-from a transcript: every user message and every agent text message (tool calls and tool
-                   output are not conversation); from a live turn (prompt / notify): the
-                   user's words and the turn's final agent message
+from a transcript: every user message, every agent text message and every action (tool
+                   output is not kept); from a live turn (prompt / notify): the user's
+                   words and the turn's final agent message
 text = redact(text)        # known secrets, URL credentials, well-known token formats
 key  = sha256(source, chat, role, text)
   + "@" + id hash          if the transcript gave the message an id: exact identity, so a
@@ -167,6 +176,10 @@ consolidate(turns):                                     # every captured message
           question, small talk, short reply             -> dropped
           anything else                                 -> statement, strength 0
       at most 6 candidates per message
+  a short reply's question is the agent message before it in conversation order (by
+      transcript time), not journal order: another app's transcript may be imported later
+  the same words from two capture routes (a hook and an import) within 30 seconds are one
+      message; the same words later or in another app are a new one
   identical sentences: keep the newest occurrence
   fill the ledger by (strength, newer) within 4,400 chars + 50 per message beyond 40
       (cap 10,000); show it in conversation order with message numbers
@@ -179,6 +192,7 @@ consolidate(turns):                                     # every captured message
 | Attention | rules in 3.5 | a few lines |
 | What the user asked | consolidation above: first request, ledger, most recent message (with the question it answers) | latest 2,000 chars; ledger 4,400–10,000 chars |
 | Reported choices and caveats | decision sentences from captured agent reports (claims) | 8–14 items, 260 chars each |
+| What the previous agent did | its actions: files edited (inside the repository, newest first), commands with failed marks, files read; recorded by the app, not verified | 15 files, 8 commands, 8 reads |
 | Verified facts | current code, commits since the last checkpoint, latest check per name | 50 files, 10 commits |
 | Code map | files changed since the session's base commit (git) or modified since it started (mtime, outside git), +/- lines, enclosing context, names defined | 40 files (15 in Markdown), 8 names each |
 | Tasks | all, with verified / needs re-verification | — |
@@ -201,6 +215,9 @@ forge the brief's own headings. MCP returns the Markdown plus task ids (compact)
   none): read the mapped files first.
 - Verified tasks whose code or check definition changed: re-verify them.
 - A check failing on the current code.
+- One of the previous agent's last 3 commands failed and was not re-run successfully
+  (from its recorded actions): check whether that failure is still open. Older failures
+  are not flagged: on a real transcript they were experiments the agent had moved past.
 - The session moved to another checkout; the branch differs from where it started.
 
 ### 3.6 Restoring memory at the start of a chat

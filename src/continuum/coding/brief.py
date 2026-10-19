@@ -33,6 +33,12 @@ MD_COMMITS = 10
 MD_MAP_FILES = 15
 REPORT_CHARS = 1500
 STALE_DAYS = 3
+SAME_MESSAGE_SECONDS = 30    # one message seen by two capture routes (seconds apart)
+# What the previous agent did (its tool calls, as the app recorded them).
+WORK_EDITED = 15
+WORK_COMMANDS = 8
+WORK_READ = 8
+RECENT_COMMANDS = 3      # a failure among these is flagged in Attention
 
 
 def _clip(text: str, limit: int) -> str:
@@ -201,6 +207,7 @@ class SessionView:
                     for name, c in sorted(self.registered_checks.items())},
             },
             "user_requests": memory,
+            "work_log": self.work_log(),
             "attention": self.attention(memory),
             "tasks": tasks,
             "agent_notes": agent_notes,
@@ -210,18 +217,81 @@ class SessionView:
     def _user_requests(self) -> dict[str, Any]:
         """The conversation's memory for the next model (``memory.consolidate``)."""
         turns: list[Turn] = []
-        first_source: dict[str, tuple[str, str | None]] = {}
+        routes: dict[str, list[tuple[tuple[str, str | None], datetime]]] = {}
         for c in self.chat:
+            if c["role"] not in ("user", "agent"):
+                continue
             if c["role"] == "user":
-                # the same words captured by two routes (hook and import): keep the first
-                origin = first_source.setdefault(c["text"], (c["source"], c["chat"]))
-                if origin != (c["source"], c["chat"]):
+                # One message captured by two routes (a hook and an import) has the same
+                # words at the same moment: keep the first. The same words typed later, in
+                # another app ("yes" to a new question), are a new message.
+                route, when = (c["source"], c["chat"]), c["when"]
+                earlier = routes.setdefault(c["text"], [])
+                if any(r != route and abs((when - w).total_seconds()) <= SAME_MESSAGE_SECONDS
+                       for r, w in earlier):
                     continue
+                earlier.append((route, when))
             turns.append(Turn(c["seq"], c["role"], c["text"], c["at"], c["source"], c["chat"]))
         body = consolidate(turns)
         body["trust"] = ("the user's own words, captured by the user's app (hook or "
                          "transcript import): requirements; a newer message wins")
         return body
+
+    def _relative(self, path: str) -> str:
+        root = self.repo_root.rstrip("/\\")
+        for prefix in (root + "/", root + "\\"):
+            if path.startswith(prefix):
+                return path[len(prefix):]
+        return path
+
+    def work_log(self) -> dict[str, Any]:
+        """What the previous agents did, from their tool calls as the user's app recorded
+        them: files edited and read, commands run and whether they failed. Recorded, not
+        verified: the code map and checks say what the code is now."""
+        actions = [c for c in self.chat if c["role"] == "action"]
+        outside = 0
+        edited: dict[str, None] = {}
+        read: dict[str, None] = {}
+        commands: list[dict[str, Any]] = []
+        other = 0
+        for a in actions:
+            verb, _, what = a["text"].partition(": ")
+            if verb == "edit":
+                for path in what.split(", "):
+                    rel = self._relative(path)
+                    if _absolute(rel):          # e.g. the app's own memory files
+                        outside += 1
+                        continue
+                    edited.pop(rel, None)
+                    edited[rel] = None                    # newest last
+            elif verb == "read":
+                read.pop(self._relative(what), None)
+                read[self._relative(what)] = None
+            elif verb == "run":
+                commands.append({"command": what, "failed": a["failed"], "at": a["at"],
+                                 "n": len(commands) + 1})
+            else:
+                other += 1
+        # The agent's last few commands that failed and were not run again successfully:
+        # older failures were usually experiments it moved past (seen in a real transcript).
+        recent = commands[-RECENT_COMMANDS:]
+        last: dict[str, dict[str, Any]] = {}
+        for c in recent:
+            last[c["command"]] = c
+        failing = [c for c in last.values() if c["failed"]]
+        files = list(reversed(edited))
+        seen = list(reversed(read))
+        return {
+            "actions": len(actions),
+            "edited": files[:WORK_EDITED], "edited_total": len(files),
+            "read": seen[:WORK_READ], "read_total": len(seen),
+            "commands": commands[-WORK_COMMANDS:], "commands_total": len(commands),
+            "still_failing": [c["command"] for c in failing],
+            "edited_outside_repo": outside,
+            "other_tools": other,
+            "trust": "the agent's tool calls as recorded by the user's app: what it did, "
+                     "not whether it worked (checks and the code map are the facts)",
+        }
 
     def _last_report(self) -> dict[str, Any] | None:
         reports = [c for c in self.chat if c["role"] == "agent"]
@@ -248,6 +318,12 @@ class SessionView:
         elif users and (not steps or users[-1]["seq"] > steps[-1]["seq"]):
             out.append("The user's most recent message is newer than the last recorded next "
                        "step: it says what to do now.")
+        work = self.work_log()
+        if work["still_failing"]:
+            shown = "; ".join(f"`{_line(c, 120)}`" for c in work["still_failing"][-3:])
+            out.append(f"Among the previous agent's last {RECENT_COMMANDS} commands, these "
+                       f"failed (recorded by the app): {shown}. Check whether that failure is "
+                       "still open before building on its work.")
         last_cp = self.checkpoints[-1] if self.checkpoints else None
         mapped = bool(self.session_changes and self.session_changes.get("files"))
         if mapped and (last_cp is None or last_cp["fingerprint"] != self.current.fingerprint):
@@ -342,6 +418,7 @@ def build_view(session: dict[str, Any], events: list[dict[str, Any]], current: R
                                   "chars_omitted": p.get("chars_omitted", 0), "at": at,
                                   "seq": e["seq"], "key": str(p.get("key", "")),
                                   "sent_at": p.get("sent_at"),
+                                  "failed": bool(p.get("failed", False)),
                                   "occurred_at": e["occurred_at"]})
             case "SessionClosed":
                 view.closed_reason = p["reason"]
@@ -446,6 +523,7 @@ def render_markdown(view: SessionView, d: dict[str, Any] | None = None) -> str:
         if changes["total_files"] > MD_MAP_FILES:
             lines.append(f"- … {changes['total_files'] - MD_MAP_FILES} more "
                          "(`detail=\"full\"`)")
+    lines += _render_work(d["work_log"])
     lines += ["", "## Tasks", ""]
     if not d["tasks"]:
         lines.append("_No tasks recorded. Plan them with coding_add_task._")
@@ -483,6 +561,34 @@ def render_markdown(view: SessionView, d: dict[str, Any] | None = None) -> str:
                       f"{r['at']}; a claim): {_line(r['text'], REPORT_CHARS)}"]
     lines += ["", "## Rules", ""] + [f"- {r}" for r in RULES]
     return "\n".join(lines) + "\n"
+
+
+def _absolute(path: str) -> bool:
+    return path.startswith(("/", "~")) or (len(path) > 2 and path[1] == ":")
+
+
+def _render_work(w: dict[str, Any]) -> list[str]:
+    """The previous agent's work, from the app's record of its tool calls."""
+    if not w["actions"]:
+        return []
+    lines = ["", f"## What the previous agent did ({w['actions']} recorded tool call(s); "
+                 "recorded by the app, not verified)", ""]
+    if w["edited"]:
+        more = w["edited_total"] - len(w["edited"])
+        lines.append("- Edited (newest first): " + ", ".join(
+            f"`{_line(f, 100)}`" for f in w["edited"]) + (f", … {more} more" if more else ""))
+    if w.get("edited_outside_repo"):
+        lines.append(f"- {w['edited_outside_repo']} edit(s) outside the repository "
+                     "(e.g. the app's own files) not listed")
+    if w["commands"]:
+        lines.append(f"- Commands ({w['commands_total']} run; newest last):")
+        lines += [f"  - `{_line(c['command'], 240)}`" + (" — **failed**" if c["failed"] else "")
+                  for c in w["commands"]]
+    if w["read"]:
+        more = w["read_total"] - len(w["read"])
+        lines.append("- Read (newest first): " + ", ".join(
+            f"`{_line(f, 100)}`" for f in w["read"]) + (f", … {more} more" if more else ""))
+    return lines
 
 
 def _render_memory(m: dict[str, Any]) -> list[str]:

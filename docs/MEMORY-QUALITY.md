@@ -23,7 +23,7 @@ method is described so it can be rerun. The algorithm itself is in
   - **Model-dependent:** following the rules and reading the brief correctly.
   - **What the trials found:** the weakest model (Haiku) exposed two places where the brief could be misread. Both were fixed (§4), and Haiku then scored 13/13 in two runs.
   - **Not measured:** GPT models, because this environment has no OpenAI access.
-- **Both sides of the chat.** Your messages and everything the agent writes (except tool calls and tool output) are kept exactly. On the real 30-message transcript: 30/30 and 47/47, none missing, none duplicated, in order, even when the hooks failed (§2).
+- **Both sides of the chat, and what the agent did.** Your messages, everything the agent writes, and each of its tool calls (as a one-line action with a failed mark; tool output is not kept) are kept exactly. On the real 30-message transcript: 30/30 messages, 47/47 agent messages, 52/52 tool calls, none missing, none duplicated, in order, even when the hooks failed (§2).
 - **The model-switch notice.**
   - Continuum cannot remove an app's own dialog. That dialog is part of the closed-source app.
   - It makes the dialog harmless. Accepting a new chat costs nothing in memory, because the new chat receives the brief automatically in Claude Code, or through `coding_resume` elsewhere.
@@ -38,7 +38,8 @@ replayed through the exact hook sequence Claude Code produced
 
 | hooks failing (database down) | your messages | Claude's messages | missing | duplicated | order |
 |---|---|---|---|---|---|
-| never | 30 / 30 | 47 / 47 | 0 | 0 | as written |
+| never (v1.0, with 52 / 52 tool calls) | 30 / 30 | 47 / 47 | 0 | 0 | as written |
+| never (v0.9) | 30 / 30 | 47 / 47 | 0 | 0 | as written |
 | first 4 turns | 30 / 30 | 47 / 47 | 0 | 0 | as written |
 | every turn (recovered at session end) | 30 / 30 | 47 / 47 | 0 | 0 | as written |
 
@@ -89,6 +90,24 @@ development:
 ² **Verbose chats** add paragraphs of discussion that compete for the budget. With a fixed
 budget, recall at 160 messages fell to 23–78%. The budget now grows by 50 characters per
 message beyond 40 and is capped at about 2.5k tokens of ledger. This is the measured capacity limit.
+
+**Transcripts with tool calls, and a chat that moves between two apps (v1.0).** Two more
+modes re-import each turn from the apps' own growing transcripts, as the Stop hook does, with
+the agent's reads, edits and test runs (a quarter of which fail and are usually fixed a turn
+later). In `two_apps` the chat moves between Claude Code and Codex every 3–6 turns. 10
+conversations per row:
+
+| messages | mode | every memory kind above | edited files | open failure flagged | false alarms | tokens (max) |
+|---|---|---|---|---|---|---|
+| 10 | transcript / two apps | 1.00 / 1.00 | 1.00 | 1.00 | 0 | 951 |
+| 40 | transcript / two apps | 1.00 / 1.00 | 1.00 | 1.00 | 0 | 1,439 |
+| 80 | transcript / two apps | ≥ 0.98 / ≥ 0.98 (answers) | 1.00 | 1.00 | 0 | 2,031 |
+| 160, verbose | transcript / two apps | 1.00 / 1.00 | 1.00 | 1.00 | 0 | 3,277 |
+
+The two-app mode found two bugs, fixed in v1.0. A "yes" lost its question when the other
+app's transcript was imported later. And a "yes" typed in the second app was dropped as a
+copy of an earlier "yes" from the first app. Before the fixes, answers scored 0.69 at 160
+messages.
 
 `tests/nonfunctional/test_nonfunctional.py::test_nf6_long_chat_memory_quality` pins this:
 any change that drops recall below 95% or lets noise through fails the build.

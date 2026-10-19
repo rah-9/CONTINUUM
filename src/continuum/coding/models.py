@@ -94,13 +94,15 @@ class CheckRan(_P):
     modified_tree: bool = False
 
 
-ChatRole = Literal["user", "agent"]
+ChatRole = Literal["user", "agent", "action"]
 
 
 class ChatCaptured(_P):
     """A chat message captured by a hook or a transcript import, never written by a model
     tool call. ``user`` messages are the user's own words (requirements); ``agent``
-    messages are a model's report (a claim). ``key`` makes re-imports idempotent."""
+    messages are a model's report (a claim); ``action`` is one of the agent's tool calls as
+    the app recorded it ("run: pytest -q", ``failed`` from its result). ``key`` makes
+    re-imports idempotent."""
 
     role: ChatRole
     text: str
@@ -112,6 +114,7 @@ class ChatCaptured(_P):
     # Stored so re-imports stay idempotent; never shown twice.
     alias: bool = False
     sent_at: str | None = None   # the transcript's timestamp for the message, if any
+    failed: bool = False         # actions: the app recorded an error result
 
 
 class SessionClosed(_P):
