@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Milestone verification, drift detection and cascading invalidation (R7, I3, I7).
 
 Only this component records ``MilestoneVerified``. A verifier passes only with

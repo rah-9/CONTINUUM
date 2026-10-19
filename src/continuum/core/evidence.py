@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Run workspace, content-addressed blobs and milestone fingerprints.
 
 * All workspace paths are confined to the run directory (no traversal, no

@@ -1,0 +1,5 @@
+Our test suite fails since this morning: `test_invoice_eu` in tests/test_totals.py. Find the root cause, but don't fix anything yet, just tell me what is wrong and where. FYI, the EU supplier feed also sends larger amounts with a space as thousands separator, like "1 234,50".
+---
+Thanks. One more thing from our accountant: VAT must be rounded half-up on each line, not on the invoice total. Check what the code does today and tell me. Still don't change any code.
+---
+OK, I'm out of time. Stop here, the next model will fix it all. Constraints for the fix: keep the signature of invoice_total(lines, vat_rate) unchanged, and add regression tests named test_regression_*.

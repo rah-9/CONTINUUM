@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Controller lease and fencing epoch per run (docs/03 section 4, R3, I6).
 
 * Acquisition is a single atomic upsert: it succeeds only if no lease exists,

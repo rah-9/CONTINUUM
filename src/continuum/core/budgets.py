@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Aggregate hard budgets and active-time accounting (R9, docs/03 time budget).
 
 Budgets are run-wide: a model handoff never resets them. Active time counts

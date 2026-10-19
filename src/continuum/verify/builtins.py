@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Built-in, parameterised deterministic verifiers.
 
 Each instance is configured by a task definition and registered under its

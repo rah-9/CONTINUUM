@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Audit regressions for coding-session continuity (v0.6.1).
 
 Each test reproduces a defect found by the full-codebase audit before it was fixed.

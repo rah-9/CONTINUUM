@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """The 15 initial Continuum Lab tasks (docs/07 section 5).
 
 Three families of five. Every task has 1-3 fixed milestones, deterministic

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """``continuum coding setup``: make a repository continuous across apps in one command.
 
 Writes only project files, idempotently (re-running changes nothing):

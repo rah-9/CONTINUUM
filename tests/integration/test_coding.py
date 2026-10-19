@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Coding-session continuity: real coding work carries across models and chats (C1-C8)."""
 
 import subprocess
@@ -220,7 +222,8 @@ def test_c11_shell_only_agents_use_the_same_protocol_via_cli(schema, repo, tmp_p
            "CONTINUUM_HOME": str(tmp_path / "home")}
 
     def cli(*args, ok=True):
-        out = subprocess.run([exe, *args], env=env, capture_output=True, text=True)
+        out = subprocess.run([exe, *args], env=env, capture_output=True, text=True,
+                             encoding="utf-8")  # what we write, on every OS
         assert (out.returncode == 0) == ok, out.stderr + out.stdout
         return out.stdout
 

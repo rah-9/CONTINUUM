@@ -380,3 +380,54 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 - Matching live and transcript messages by text alone: it loses repeated words, which was the v0.8 bug.
 - Re-ordering stored events: the journal is immutable.
 
+## D-039 — Erasure is a human act that leaves a content-free record
+
+**Context.** A client must be able to delete what a session captured (privacy requests, retention policies), but the journal is append-only by trigger (invariant 3), and no model may remove memory.
+
+**Decision.**
+- **Schema v5.** The `coding_events` trigger allows DELETE only when the transaction set `continuum.erasure = on`. UPDATE and TRUNCATE are never allowed.
+- **`continuum coding forget`** (CLI only, `--yes` required) locks the session, deletes its events and row, and appends a tombstone to the immutable `coding_erasures` table, all in one transaction.
+- **The tombstone holds no content:** session id, repository path hash, event count, `human:<actor>`, redacted reason, time.
+- **Retention** (`--older-than-days`) erases closed sessions untouched for N days; active ones only on request.
+
+**Rejected.**
+- Redacting events in place: it changes history, and a partial redaction is hard to prove complete.
+- Disabling the trigger during erasure: it is schema-wide, so a concurrent writer could change history meanwhile.
+- An MCP tool: models must not erase memory.
+
+## D-040 — Several people share a database, isolated by PostgreSQL roles and row-level security
+
+**Context.** A client deploys one database for a team. Each person's chat is personal data, and an application-level filter is one bug away from showing it to a colleague.
+
+**Decision.**
+- **Identity is the PostgreSQL role.** Each person logs in as their own role; Continuum stores no users or passwords.
+- **Ownership column.** `coding_sessions`, `coding_checks` and `coding_erasures` carry `owner_role` (default `current_user`). Events are visible exactly when their session is (policy on the session row), so the immutable event rows needed no change.
+- **RLS policies** `owner_role = current_user` for reads and writes. A role cannot insert a row for another role, move its own row to another role, or see that another's row exists.
+- **The schema owner is the operator.** RLS does not apply to it, so retention and support work across people. Repository lookups add the same filter explicitly, so the operator's own coding stays separate.
+- **Checks are per person** (primary key includes `owner_role`).
+- **`continuum admin grant|revoke|reassign|users`**, CLI only, refused (`not_operator`) unless the caller owns the schema.
+
+**Rejected.**
+- A `user_id` setting in the client: any client could claim to be anyone.
+- A schema per person: migrations, retention and support multiply, and the operator loses one place to administer.
+- FORCE RLS on the owner: retention and erasure for everyone would need a second privileged path.
+
+## D-041 — Remember what the agent did, from the app's record of its tool calls
+
+**Context.** The brief carried what the user said and what the agent said, but not what it did. In a debugging handoff the most useful fact is often "the last test run failed", and the files touched outside git (or before a commit) were only in the code map.
+
+**Decision.**
+- **Transcripts' tool calls become `ChatCaptured` events with role `action`:** one redacted line ("edit: billing/totals.py", "run: pytest -q", first line only for heredocs), with `failed` taken from the call's recorded result. Same identity rules as messages (transcript ids), so re-imports add nothing.
+- **A brief section "What the previous agent did"**, labelled as recorded by the app and not verified: edited files inside the repository (newest first), recent commands with failures marked, files read. Bounded.
+- **Attention flags a failure among the agent's last 3 commands** that was not re-run successfully. Older failures are not flagged (on the real Trial 5 transcript they were experiments the agent had moved past).
+- **Fixes found by the new two-app benchmark:**
+  - A short answer is paired with the question before it in conversation order, not journal order.
+  - The same words from two capture routes count as one message only within 30 seconds; a "yes" typed later in another app is a new answer.
+
+**Rejected.**
+- Storing tool output: size, secrets, and it is the code map's and the checks' job to say what is true now.
+- Treating actions as facts: the app records the call; whether it worked is only known from a check.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

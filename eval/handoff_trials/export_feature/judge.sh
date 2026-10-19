@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 # Judge a finished project: the two registered checks plus the hidden chat-only judge.
 #   judge.sh PROJECT_DIR
 set -euo pipefail

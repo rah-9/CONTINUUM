@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Deterministic plan-following fake agent, shared by Continuum (C1) and baseline (B0).
 
 The same policy runs under both configurations; only the context differs:

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Wire a lab task definition to a Continuum runtime with fake models."""
 
 from __future__ import annotations

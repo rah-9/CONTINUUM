@@ -19,7 +19,7 @@ Secondary correctness issue: an agent's self-report must not substitute for inde
 
 **In v1:** one run at a time per ownership lease; milestone-driven workflow; PostgreSQL append-only events and transactional projections; read/write tool gateway; durable action identity and retries; unknown-action reconciliation; deterministic verifiers; two-provider handoff supported and three independently tested provider configurations as benchmark goal; Python SDK/CLI; minimal localhost HTTP access; a thin local stdio MCP task-delegation facade; local mocks and integrated Continuum Lab.
 
-**Out of v1:** generic planning, multi-agent coordination, arbitrary external MCP servers, hosted multi-tenancy, vector DB, long-term chat memory, dashboard, multi-host/distributed database deployment, distributed orchestration, sandboxed arbitrary code/shell execution (running a *human-registered* coding check under R13 is not arbitrary execution: no model supplies a command), live side-effect replay, native IDE/browser extensions and remote MCP tool **discovery/hosting**. (Shipping MCP *client configuration* so agents can launch the local stdio server is in scope.) Document their future interface boundaries only; do not implement speculatively.
+**Out of v1:** generic planning, multi-agent coordination, arbitrary external MCP servers, hosted multi-tenancy (several people sharing one self-hosted database, each isolated by their own PostgreSQL role, is in scope: R15), vector DB, long-term chat memory, dashboard, multi-host/distributed database deployment, distributed orchestration, sandboxed arbitrary code/shell execution (running a *human-registered* coding check under R13 is not arbitrary execution: no model supplies a command), live side-effect replay, native IDE/browser extensions and remote MCP tool **discovery/hosting**. (Shipping MCP *client configuration* so agents can launch the local stdio server is in scope.) Document their future interface boundaries only; do not implement speculatively.
 
 Tools run as **trusted, explicitly registered Python adapters** with schema validation, allowlists and fixed endpoints. Arbitrary tool code supplied by a model is disallowed.
 
@@ -63,6 +63,12 @@ Tools run as **trusted, explicitly registered Python adapters** with schema vali
 
 **R13 Coding-session continuity:** a coding session is an append-only journal per repository (`coding_sessions`/`coding_events`, docs/03), independent of any model's chat history. Continuum observes the repository itself to fingerprint the code: inside git, the tree of the working copy's *content* (tracked files on disk plus untracked, non-ignored files), so committing identical content is not a change; outside git, file hashes. A task is *verified* only when every check it names was registered by a human, passed on the current fingerprint, and still has the same definition; an agent's own claim of success is recorded as unverified. The resume brief separates verified facts from agent notes (claims), is bounded however long the session runs, and includes an observed code map of the files the session changed, so the next model need not re-read the repository. Continuum itself calls no LLM to build it. Checks run as fixed argv lists without a shell, with a timeout, in the repository root; output is redacted before persistence. Agents may start, resume, add tasks, record notes and checkpoints, run registered checks and complete tasks; they may never register or change checks.
 
+**R14 Erasure and retention:** a human can erase a coding session completely (every event and the session row) with `continuum coding forget`, or every closed session older than N days. The erasure is one transaction with an immutable, content-free tombstone (who, when, why, how many events). History stays append-only otherwise: UPDATE and TRUNCATE are always refused, DELETE only inside an erasure. Erasure is never an MCP tool (D-039).
+
+**R15 Per-person isolation:** several people may share one database. Each connects as their own PostgreSQL role and sees, changes and erases only their own coding sessions, events, checks and tombstones, enforced by row-level security. The schema owner administers access (`continuum admin grant|revoke|reassign|users`), retention and support (D-040).
+
+**R16 What the agent did:** the agent's tool calls in the app's transcript (Claude Code, Codex, Gemini) are journaled as one-line actions with their failure status and shown in the brief as recorded, not verified. A failure among the agent's last commands is flagged (D-041).
+
 ## 5. Non-functional requirements
 
 - PostgreSQL row locks (`FOR NO KEY UPDATE` on the run row) + `lock_timeout`, short transactions, no DB lock held over model or tool network calls. A single machine is supported; no cross-host guarantee.
@@ -96,3 +102,7 @@ Target **15–20 checkable tasks**, three provider configurations, two or more r
 ## 8. Delivery checkpoints
 
 Week 1: state/event transactions, lease and ledger. Week 2: gateway, reconciliation and verifiers with fake agents. Week 3: model adapter and cross-provider handoff. Week 4: CLI/local API, fault injection, baseline and report. See `06-DEV-WORKFLOW.md` for exact acceptance tests.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

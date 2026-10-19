@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Switching models across vendors, versions and chats must just work (D-023).
 
 Every test drives the real LiteLLM adapter against provider-faithful emulators

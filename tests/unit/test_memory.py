@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Conversation consolidation (coding/memory.py): rules and invariants."""
 
 from hypothesis import given, settings
@@ -61,6 +63,23 @@ def test_short_answers_are_paired_with_the_question_they_answer():
     assert item["kind"] == "answer" and "v1_exports" in item["text"] and '"yes"' in item["text"]
     latest = consolidate(turns[:3])["latest"]
     assert latest["text"] == "yes" and "v1_exports" in latest["in_reply_to"]
+
+
+def test_a_long_message_starting_with_ok_is_not_an_answer():
+    """Trial 6: "OK, I'm out of time. Stop here, ..." was shown as the reply to the agent's
+    open question."""
+    turns = _chat(("user", "Find the bug."),
+                  ("agent", "Found it. Should the VAT be rounded per line or on the total?"),
+                  ("user", "OK, I'm out of time. Stop here, the next model will fix it all. "
+                           "Keep the signature unchanged."))
+    latest = consolidate(turns)["latest"]
+    assert "in_reply_to" not in latest and latest["ends_chat"]
+    assert "in_reply_to" in consolidate(_chat(*turns_of(turns[:2]), ("user", "ok, do it")))[
+        "latest"]
+
+
+def turns_of(turns):
+    return [(t.role, t.text) for t in turns]
 
 
 def test_agent_decisions_are_kept_as_claims():

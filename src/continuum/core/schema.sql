@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-INSERT INTO schema_meta (key, value) VALUES ('schema_version', '4')
+INSERT INTO schema_meta (key, value) VALUES ('schema_version', '5')
   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- TRUNCATE would bypass the row-level immutability trigger.
@@ -232,9 +232,21 @@ CREATE TABLE IF NOT EXISTS coding_events (
   PRIMARY KEY (session_id, seq)
 );
 
+-- Schema v5: history stays append-only, with one audited exception. A human-requested
+-- erasure (`continuum coding forget`) deletes a whole session inside a transaction that
+-- set continuum.erasure = 'on' locally and records a content-free tombstone. Updates are
+-- never allowed; deletes outside such a transaction are rejected.
+CREATE OR REPLACE FUNCTION continuum_coding_events_guard() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' AND current_setting('continuum.erasure', true) = 'on' THEN
+    RETURN OLD;
+  END IF;
+  RAISE EXCEPTION 'coding events are append-only (erasure only via continuum coding forget)';
+END;
+$$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS coding_events_immutable ON coding_events;
 CREATE TRIGGER coding_events_immutable BEFORE UPDATE OR DELETE ON coding_events
-  FOR EACH ROW EXECUTE FUNCTION continuum_events_immutable();
+  FOR EACH ROW EXECUTE FUNCTION continuum_coding_events_guard();
 DROP TRIGGER IF EXISTS coding_events_no_truncate ON coding_events;
 CREATE TRIGGER coding_events_no_truncate BEFORE TRUNCATE ON coding_events
   FOR EACH STATEMENT EXECUTE FUNCTION continuum_events_immutable();
@@ -270,6 +282,68 @@ ALTER TABLE coding_sessions ADD COLUMN IF NOT EXISTS repo_key TEXT;  -- NULL: no
 ALTER TABLE coding_checks ADD COLUMN IF NOT EXISTS repo_key TEXT;
 CREATE INDEX IF NOT EXISTS idx_coding_sessions_key ON coding_sessions(repo_key, status);
 CREATE INDEX IF NOT EXISTS idx_coding_checks_key ON coding_checks(repo_key, name);
+
+-- Schema v5: what was erased, by whom, when and why. No content: the session id, a digest
+-- of the repository path, and how many events were removed. Append-only.
+CREATE TABLE IF NOT EXISTS coding_erasures (
+  erasure_id     TEXT PRIMARY KEY,
+  session_id     TEXT NOT NULL,
+  repo_digest    TEXT NOT NULL,
+  events_erased  BIGINT NOT NULL,
+  erased_by      TEXT NOT NULL,
+  reason         TEXT NOT NULL,
+  erased_at      TIMESTAMPTZ NOT NULL
+);
+DROP TRIGGER IF EXISTS coding_erasures_immutable ON coding_erasures;
+CREATE TRIGGER coding_erasures_immutable BEFORE UPDATE OR DELETE ON coding_erasures
+  FOR EACH ROW EXECUTE FUNCTION continuum_events_immutable();
 -- Captured chat messages are deduplicated by their key (re-imports are idempotent).
 CREATE INDEX IF NOT EXISTS idx_coding_events_capture_key ON coding_events
   (session_id, (payload_json->>'key')) WHERE type = 'ChatCaptured';
+
+-- Schema v5: one database, many people (D-040). Each person connects as their own
+-- PostgreSQL role; a session, a check and a tombstone belong to the role that created them,
+-- and row-level security shows every other role only its own rows. Events are visible
+-- exactly when their session is. The schema owner (the operator who ran db-init) is not
+-- subject to RLS and administers everyone; superusers always bypass RLS.
+ALTER TABLE coding_sessions ADD COLUMN IF NOT EXISTS owner_role TEXT NOT NULL
+  DEFAULT current_user;
+ALTER TABLE coding_checks ADD COLUMN IF NOT EXISTS owner_role TEXT NOT NULL
+  DEFAULT current_user;
+ALTER TABLE coding_erasures ADD COLUMN IF NOT EXISTS owner_role TEXT NOT NULL
+  DEFAULT current_user;
+CREATE INDEX IF NOT EXISTS idx_coding_sessions_owner ON coding_sessions(owner_role, status);
+-- Two people may register a check with the same name for the same path.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint c JOIN pg_attribute a
+        ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+      WHERE c.conrelid = 'coding_checks'::regclass AND c.contype = 'p'
+        AND a.attname = 'owner_role') THEN
+    ALTER TABLE coding_checks DROP CONSTRAINT IF EXISTS coding_checks_pkey;
+    ALTER TABLE coding_checks ADD CONSTRAINT coding_checks_pkey
+      PRIMARY KEY (owner_role, repo_root, name);
+  END IF;
+END;
+$$;
+
+ALTER TABLE coding_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE coding_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE coding_checks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE coding_erasures ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS coding_sessions_own ON coding_sessions;
+CREATE POLICY coding_sessions_own ON coding_sessions
+  USING (owner_role = current_user) WITH CHECK (owner_role = current_user);
+DROP POLICY IF EXISTS coding_checks_own ON coding_checks;
+CREATE POLICY coding_checks_own ON coding_checks
+  USING (owner_role = current_user) WITH CHECK (owner_role = current_user);
+DROP POLICY IF EXISTS coding_erasures_own ON coding_erasures;
+CREATE POLICY coding_erasures_own ON coding_erasures
+  USING (owner_role = current_user) WITH CHECK (owner_role = current_user);
+-- The subquery is itself filtered by the sessions policy.
+DROP POLICY IF EXISTS coding_events_own ON coding_events;
+CREATE POLICY coding_events_own ON coding_events
+  USING (EXISTS (SELECT 1 FROM coding_sessions s WHERE s.session_id = coding_events.session_id))
+  WITH CHECK (EXISTS (SELECT 1 FROM coding_sessions s
+                      WHERE s.session_id = coding_events.session_id));

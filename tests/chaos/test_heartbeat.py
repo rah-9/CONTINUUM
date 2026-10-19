@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """A background heartbeat keeps ownership through a tool call longer than the lease TTL."""
 
 import time

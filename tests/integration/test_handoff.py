@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Model failure handling, fallbacks, capability limits (R8, U4, W3)."""
 
 from continuum.core.state import RunStatus

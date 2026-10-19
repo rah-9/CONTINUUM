@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Event store atomicity, fencing, immutability and rebuild (I1, I2, I6)."""
 
 import psycopg

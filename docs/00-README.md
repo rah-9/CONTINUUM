@@ -48,3 +48,7 @@ For any conflict: **04 governs effects/retries; 03 governs persisted state; 02 g
 ## Repo layout note
 
 This file and `01`–`07` live in `docs/`; `AGENTS.md` is at the repo root. `docs/DECISIONS.md` records implementation decisions and `docs/CHANGELOG.md` contract changes.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

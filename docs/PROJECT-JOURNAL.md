@@ -174,6 +174,20 @@ Every feature is judged by one question: *does it keep valid work and prevent un
 - **Capture** keeps repeated messages.
 - **New docs and commands:** `docs/MEMORY-QUALITY.md` answers how well memory works and what to do about an app's model-switch notice; `/continuum:handoff`.
 
+### Phase 11: v1.0.0rc1, ready for a client
+
+- **Privacy:** human-only erasure with content-free tombstones, and retention by age (D-039, schema v5).
+- **Several people, one database:** each PostgreSQL role sees only its own memory, enforced by row-level security; the operator administers access (D-040).
+- **What the agent did:** its tool calls, from the app's own transcript, with failures, in the brief and Attention (D-041).
+- **New benchmark modes:** transcripts with tool calls, and a chat moving between two apps. They found two cross-app bugs in answer handling, both fixed.
+- **Real debugging handoff (Trial 6):** Haiku, Sonnet and Opus each 7/7 with Continuum, 4/7 without.
+- **Delivery:**
+  - CI on Linux, Windows and macOS (two Windows bugs found and fixed)
+  - proprietary licensing throughout
+  - a private release workflow with a wheel smoke test
+  - SECURITY.md, UPGRADING.md
+  - an upgrade test from a real 0.9 database
+
 ## 4. Evidence so far
 
 Results are from the deterministic fake-model safety matrix: 15 tasks × 6 faults × 3 connector modes × 2 seeds, 912 paired cells. They test **modeled** safety properties only. They are not claims about live providers. The full report is in `lab-reports/`.
@@ -227,3 +241,7 @@ These are ordered by value to the core idea. Each item should become its own bra
 - Ledger, state and recovery behaviour change only after a failing test.
 - `make check` (ruff, mypy `--strict`, all tests) must pass locally. CI repeats it against PostgreSQL plus a lab smoke run. Merge only on green.
 - Results are reported honestly: unknown cost is never zero, pauses are never successes, and fake-model results are never presented as live evidence.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

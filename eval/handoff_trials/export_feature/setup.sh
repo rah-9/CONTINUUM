@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 # Prepare the export-feature handoff trial.
 #   setup.sh WORKDIR
 # Copies this repository's HEAD into WORKDIR/proj (the project the agents work on),

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Local stdio MCP server: Continuum as a plugin for any MCP-capable coding agent.
 
 Any agent that speaks MCP (Claude Code, Cursor, VS Code, Codex, Claude Desktop,

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Second-pass audit regressions (v0.6.3). Each test failed before its fix."""
 
 import asyncio
@@ -122,8 +124,11 @@ def test_q3_edits_inside_a_dirty_submodule_change_the_fingerprint(tmp_path):
 def test_q4_non_utf8_file_names_are_fingerprinted_and_never_crash(tmp_path):
     repo = _repo(tmp_path / "g")
     name = os.path.join(os.fsencode(repo), b"caf\xe9.txt")
-    with open(name, "wb") as fh:
-        fh.write(b"one")
+    try:
+        with open(name, "wb") as fh:
+            fh.write(b"one")
+    except OSError:  # macOS (APFS) refuses such names, so they cannot occur there
+        pytest.skip("this file system rejects non-UTF-8 file names")
     before = observe(repo).fingerprint
     with open(name, "wb") as fh:
         fh.write(b"two")

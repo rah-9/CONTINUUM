@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Continuum Lab: release safety gates on deterministic fixtures (docs/01 s6, docs/07 s9)."""
 
 import pytest

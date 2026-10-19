@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Diagnostic replay is side-effect free (R11, I8)."""
 
 from continuum.core.state import RunStatus

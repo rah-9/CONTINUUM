@@ -171,6 +171,49 @@ chat, model A was carrying ~135k tokens of history per call.
 - **Defects in the harness:** the judge first assumed a bare `export` prints to stdout, which the user never asked for. It now tests only what was asked (`export --out`).
 - **Resilience:** PostgreSQL was down for A's first minutes. The hooks logged timeouts, A was unaffected, and every message was recovered from the transcript afterwards.
 
+## Trial 6: a debugging handoff, continued by three different models
+
+**Setup** (`eval/handoff_trials/debug_handoff/`):
+- **The project** is a small invoicing library with one failing test (`test_invoice_eu`).
+- **Model A (Sonnet)** worked in real Claude Code over three turns, with only the hooks installed. It never used Continuum.
+  - **Turn 1:** find the root cause, don't fix anything. The user adds a fact: the EU feed also writes amounts with a space as thousands separator ("1 234,50").
+  - **Turn 2:** the accountant's rule. VAT is rounded half-up on each line, not on the total. Check what the code does today, still without changing code.
+  - **Turn 3:** stop here; the next model fixes it all. Keep the signature of `invoice_total(lines, vat_rate)` and add regression tests named `test_regression_*`.
+- **A's work:** it diagnosed correctly and changed no code. Its root cause, the VAT analysis and the constraints existed only in its chat.
+
+**Model B** ran in a new chat, in another checkout of the same repository (same remote), with *"Continue the work on this repository."*:
+- **With Continuum:** Claude Code's session-start hook put the brief into the chat.
+- **Without Continuum:** no hooks.
+
+Each B got its own copy of A's journal, and A's chat files were moved out of reach (leak guard:
+none). A hidden judge (`judge.py`, 7 criteria) checked the result:
+- the diagnosed bug
+- the space format
+- existing behaviour kept
+- per-line half-up VAT
+- the signature
+- named regression tests
+- all tests passing
+
+| Model B | with Continuum | without | cost with / without | time with / without |
+|---|---|---|---|---|
+| Haiku | **7/7** | 4/7 | $0.01 / $0.01 | 39 s / 22 s |
+| Sonnet | **7/7** | 4/7 | $0.08 / $0.05 | 24 s / 17 s |
+| Opus | **7/7** | 4/7 | $0.33 / $0.13 | 68 s / 26 s |
+
+**Without Continuum,** every model found and fixed the visible bug from the failing test. None
+knew about the space format, the VAT rule or the test naming, because those were only in the
+chat. They were cheaper and faster because they did only part of the job. The rest would cost
+the user another explanation, and, unnoticed, wrong invoices.
+
+**With Continuum,** the brief (~1.4k tokens) carried the user's three messages, A's last report
+with its root cause and fix plan, and A's commands. Every model fixed all of it and wrote 4–7
+regression tests with the requested names.
+
+**What this trial found:**
+- **In the brief:** the user's last message ("OK, I'm out of time. Stop here, …") was labelled as a reply to A's open question, because it starts with "OK". Fixed: only short messages count as replies (`test_a_long_message_starting_with_ok_is_not_an_answer`).
+- **In the harness:** the first judging ran under a Python without pytest, so "regression tests" and "all tests pass" failed for every run. The runner now uses the project's environment, and all runs were re-judged.
+
 ## Defects the trials found in Continuum (all fixed, with regression tests)
 
 1. **Corrupting redaction.** The README's local database password is the word
@@ -220,3 +263,7 @@ The realistic trial is packaged in [`eval/handoff_trials/`](../eval/handoff_tria
 setup script, exact prompts, hidden acceptance tests, chat-requirement judge, and a judging
 script. It reproduces the verdicts above (`judge.sh` gives 4/4 for the Continuum runs and 1/4
 for the baselines).
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

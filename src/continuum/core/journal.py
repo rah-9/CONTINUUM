@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Fenced event appends shared by the controller's components.
 
 Every component that changes durable state goes through one ``RunJournal``,

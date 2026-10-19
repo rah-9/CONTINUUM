@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Coding-session continuity: a coding agent's work survives model switches and new chats.
 
 The journal is runtime-owned and append-only; repository state is observed by

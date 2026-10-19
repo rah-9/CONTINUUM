@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Unknown-action reconciliation through the full runtime (R5, R6, U2, U3, I4)."""
 
 import pytest

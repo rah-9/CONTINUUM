@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Minimal localhost HTTP API (R10). Loopback only; no production auth in v1.
 
 POST /runs                                     start a pre-registered task

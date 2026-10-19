@@ -1,0 +1,9 @@
+Continuum
+Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
+
+Proprietary and confidential. Use, copying and distribution are permitted only under a
+separate written agreement with the copyright holder. See LICENSE.
+
+This product depends on third-party open-source components (among them pydantic,
+psycopg, psycopg-pool, jsonschema, PyYAML and, optionally, mcp, fastapi, uvicorn and
+litellm), each under its own license.

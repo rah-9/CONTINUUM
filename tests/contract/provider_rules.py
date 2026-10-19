@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Provider-faithful request validation and replies for switching tests.
 
 These emulate the request rules real providers enforce (and reject with HTTP 400),

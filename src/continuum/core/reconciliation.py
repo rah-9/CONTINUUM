@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Unknown-action reconciliation (docs/04 section 6, R5, I4).
 
 Decision table, applied per ``unknown`` action using its **trusted** manifest:

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Deterministic fake model adapters for tests and Continuum Lab safety matrices."""
 
 from __future__ import annotations

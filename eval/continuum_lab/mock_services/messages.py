@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Mock messaging: immutable sends per (recipient, slot); query shows latest send."""
 
 from __future__ import annotations

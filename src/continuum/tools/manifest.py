@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Trusted tool manifests and the trusted-tool contract (docs/04 section 5).
 
 Tools are explicitly registered Python adapters. Their manifests are trusted

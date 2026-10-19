@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Verifier contract and registry (docs/02 section 7, R7).
 
 A verifier receives a read-only view of the task, workspace artifacts and the
