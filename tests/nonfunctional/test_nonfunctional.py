@@ -250,19 +250,23 @@ def test_nf5_coding_observation_cost(tmp_path):
     for d in range(20):
         (root / f"pkg{d}" / "m0.py").write_text("changed\n")
         (root / f"pkg{d}" / "new.py").write_text("new\n")
+    from continuum.coding import snapshot
+
     calls: list[str] = []
-    real = repo._git
+    real = snapshot.git
 
     def counting(r: Path, *args: str, **kwargs: object) -> bytes | None:
         calls.append(args[0])
         return real(r, *args, **kwargs)  # type: ignore[arg-type]
 
+    snapshot.git = counting  # type: ignore[assignment]
     repo._git = counting  # type: ignore[assignment]
     try:
         started = time.perf_counter()
         state = repo.observe(root)
         elapsed = time.perf_counter() - started
     finally:
+        snapshot.git = real  # type: ignore[assignment]
         repo._git = real  # type: ignore[assignment]
     print(f"\nNF5 coding observe: 2,000 files, {len(state.changed_files)} changed: "
           f"{elapsed * 1000:.0f} ms, {len(calls)} git calls")
@@ -295,7 +299,8 @@ def test_nf6_long_chat_memory_quality(store, tmp_path):
     results = [run_one(coding, seed, 40, tmp_path, mode="two_apps") for seed in range(4)]
     both = summarize(results, "new")
     for kind in ("explicit", "revision", "answer", "agent_decision", "fresh2",
-                 "edited_file", "open_failure"):
+                 "edited_file", "open_failure", "output_recall", "update_correct",
+                 "faithful"):
         assert both[kind] >= 0.95, (kind, both[kind])
     assert both["false_alarms"] == 0 and both["noise_leaks"] == 0
     assert both["tokens_max"] <= 1800

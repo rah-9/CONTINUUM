@@ -246,8 +246,15 @@ def consolidate(turns: list[Turn]) -> dict[str, Any]:
     for c in candidates:
         seen[_norm(c["text"])] = c
     candidates = sorted(seen.values(), key=lambda c: (c["n"], c["pos"]))
-    # fill the budget: revisions/answers and strong cues first, newer before older
-    ranked = sorted(candidates, key=lambda c: (c["strength"], c["n"]), reverse=True)
+    # the most recent message (shown whole) can also replace an earlier requirement
+    latest_items = [{"n": number[latest.seq], "pos": i, "kind": found[0], "text": s}
+                    for i, s in enumerate(sentences(latest.text))
+                    if (found := classify(s)) is not None]
+    supersede(candidates + latest_items)
+    # fill the budget: revisions/answers and strong cues first, newer before older;
+    # requirements a later message replaced go last (they are shown only as history)
+    ranked = sorted(candidates, key=lambda c: (c.get("replaced_by") is None, c["strength"],
+                                               c["n"]), reverse=True)
     budget = ledger_budget(len(users))
     chosen, used = [], 0
     for c in ranked:
@@ -271,6 +278,60 @@ def consolidate(turns: list[Turn]) -> dict[str, Any]:
     represented = in_ledger | {r["n"] for r in out["recent"]} | {1, len(users)}
     out["omitted_messages"] = len(users) - len(represented)
     return out
+
+
+# What a change of mind replaces: "use B instead of A", "B rather than A", "change it
+# from A to B", "A is no longer needed", "not A anymore".
+_REPLACED = [re.compile(p, re.I) for p in (
+    r"\binstead of\s+(?:the\s+|using\s+|a\s+)?([^,.;!?]+)",
+    r"\brather than\s+(?:the\s+|using\s+|a\s+)?([^,.;!?]+)",
+    r"\b(?:change|switch|move|go|update)\w*\s+(?:it\s+|this\s+|that\s+)?from\s+"
+    r"(.+?)\s+to\b",
+    r"\b(?:replace|swap)\s+(?:the\s+)?(.+?)\s+with\b",
+    r"\bno longer\s+(?:use|need|want)\s+(?:the\s+)?([^,.;!?]+)",
+    r"\bnot\s+(.+?)\s+any\s?more\b",
+)]
+_WORD = re.compile(r"`[^`]+`|\d[\w.:/-]*|[A-Za-z][\w./-]{3,}")
+_COMMON = frozenset({"that", "this", "with", "from", "into", "what", "which", "there",
+                     "their", "they", "them", "then", "than", "have", "will", "would",
+                     "should", "could", "using", "make", "made", "just", "also", "please",
+                     "instead", "rather", "anymore", "longer", "need", "want", "thing",
+                     "things", "some", "more", "less"})
+
+
+def _key_terms(phrase: str) -> list[str]:
+    """The distinctive terms of what is being replaced: a value or identifier when there
+    is one ("port 4000" -> "4000"), else its content words."""
+    terms = [w.strip("`").lower() for w in _WORD.findall(phrase)]
+    terms = [w for w in terms if w and w not in _COMMON]
+    values = [w for w in terms if any(ch.isdigit() for ch in w) or ("`" in phrase
+              and f"`{w}`" in phrase.lower())]
+    return values or terms[:4]
+
+
+def supersede(candidates: list[dict[str, Any]]) -> None:
+    """Mark earlier requirements that a later change of mind replaces (``replaced_by``).
+
+    Deterministic: the later message must name what it replaces ("instead of A") and an
+    earlier ledger item must contain all of A's distinctive terms. Only the user's own
+    messages are candidates, so nothing a model or a tool wrote can replace a
+    requirement. An item is never deleted: it stays in the journal and in recall."""
+    for later in candidates:
+        if later["kind"] != "revision" and not any(r.search(later["text"])
+                                                   for r in _REPLACED):
+            continue
+        for pattern in _REPLACED:
+            for match in pattern.finditer(later["text"]):
+                terms = _key_terms(match.group(1))
+                if not terms:
+                    continue
+                for earlier in candidates:
+                    if earlier["n"] >= later["n"] or earlier.get("replaced_by"):
+                        continue
+                    low = earlier["text"].lower()
+                    if all(re.search(r"(?<![\w.])" + re.escape(term) + r"(?![\w])", low)
+                           for term in terms):
+                        earlier["replaced_by"] = later["n"]
 
 
 def readable(text: str) -> str:

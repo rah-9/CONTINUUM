@@ -12,11 +12,9 @@ versions. So this parser does not depend on one app's schema. It recognises the
 * ``{"type": "user_message" | "agent_message", "message": "..."}`` (Codex events)
 
 Text parts are ``str`` items or objects of type ``text``/``input_text``/``output_text``.
-Tool results, reasoning and images are not conversation and are skipped. Tool calls are
-kept as one-line *actions* ("edit: src/app.py", "run: pytest -q", with a ``failed`` flag
-from the call's result), so the next model knows what the previous one did, not only what
-it said: Claude Code ``tool_use`` parts, Codex ``function_call``/``local_shell_call``/
-``custom_tool_call`` items, Gemini ``functionCall`` parts.
+Tool calls, tool results, reasoning and images are not conversation: ``activity()`` reads
+the tool calls with their results, subagent calls and compaction from the same records
+(D-042), so a transcript catches up whatever a live hook missed.
 Text that harnesses inject into the user's turn (system reminders, environment
 context, instruction files) is removed, so only what the person typed remains.
 
@@ -26,9 +24,9 @@ skipped, never fatal: a newer format degrades to fewer messages, not to a crash.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
-import shlex
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,20 +57,7 @@ _INJECTED_PREFIXES = ("Caveat: The messages below were generated",
                       "<environment_context>", "<user_instructions>")
 
 
-Role = Literal["user", "agent", "action"]
-ACTION_ITEM_TYPES = frozenset({"function_call", "local_shell_call", "custom_tool_call"})
-ACTION_CHARS = 300
-# Bookkeeping tools that are not work on the code (and Continuum's own tools).
-_IGNORED_TOOLS = frozenset({"todowrite", "todoread", "exitplanmode", "enterplanmode",
-                            "askuserquestion", "update_plan", "toolsearch"})
-_EDIT_TOOLS = frozenset({"edit", "multiedit", "write", "notebookedit", "str_replace_editor",
-                         "str_replace_based_edit_tool", "create_file", "write_file",
-                         "replace", "edit_file", "apply_diff"})
-_READ_TOOLS = frozenset({"read", "read_file", "view", "open_file", "read_many_files"})
-_SEARCH_TOOLS = frozenset({"grep", "glob", "search", "search_file_content", "codebase_search",
-                           "file_search", "list_dir", "ls", "find"})
-_PATCH_FILE = re.compile(r"^\*\*\* (?:Update|Add|Delete) File: (.+)$", re.M)
-_EXIT_CODE = re.compile(r"(?:Exit code:?|exit_code\W+)\s*(-?\d+)")
+Role = Literal["user", "agent"]
 
 
 @dataclass(frozen=True)
@@ -85,127 +70,6 @@ class Message:
     # When the message was written, if the transcript says (ISO-8601): restores the true
     # order of messages recovered after a missed hook.
     at: str | None = None
-    # actions only: the app recorded the call as failed (an error result or exit code)
-    failed: bool = False
-    call_id: str | None = None
-
-
-def _one_line(text: str, limit: int = ACTION_CHARS) -> str:
-    text = " ".join(text.split())
-    return text if len(text) <= limit else text[:limit - 1] + "…"
-
-
-def _command_line(command: str) -> str:
-    """A command's first line: a heredoc's body is the agent's code, not the command."""
-    lines = [ln for ln in command.strip().splitlines() if ln.strip()]
-    head = _one_line(lines[0], 200) if lines else ""
-    return head + (f" … (+{len(lines) - 1} lines)" if len(lines) > 1 else "")
-
-
-def _command(value: Any) -> str | None:
-    if isinstance(value, list) and value and all(isinstance(v, str) for v in value):
-        if len(value) == 3 and value[0].rsplit("/", 1)[-1] in ("bash", "sh", "zsh") \
-                and value[1] in ("-c", "-lc"):
-            return str(value[2])                     # Codex wraps commands in `bash -lc`
-        return shlex.join(value)
-    return str(value) if isinstance(value, str) and value.strip() else None
-
-
-def describe_action(name: str, args: Any) -> str | None:
-    """One line saying what a tool call did, or None for bookkeeping calls."""
-    if isinstance(args, str):
-        try:
-            parsed = json.loads(args)
-        except ValueError:
-            parsed = {"input": args}
-        args = parsed if isinstance(parsed, dict) else {"input": args}
-    if not isinstance(args, dict):
-        args = {}
-    low = name.lower()
-    if low in _IGNORED_TOOLS or "continuum" in low or low.startswith("coding_"):
-        return None
-    path = next((args[k] for k in ("file_path", "path", "notebook_path", "filePath",
-                                   "target_file", "absolute_path") if isinstance(args.get(k), str)),
-                None)
-    patch = args.get("input") if isinstance(args.get("input"), str) else args.get("patch")
-    if isinstance(patch, str) and "*** Begin Patch" in patch:
-        files = _PATCH_FILE.findall(patch)
-        return "edit: " + _one_line(", ".join(f.strip() for f in files) or "(patch)")
-    command = _command(args.get("command", args.get("cmd")))
-    if command is not None and low not in _SEARCH_TOOLS:
-        return "run: " + _command_line(command)
-    if low in _EDIT_TOOLS and path:
-        return "edit: " + _one_line(path)
-    if low in _READ_TOOLS and path:
-        return "read: " + _one_line(path)
-    if low in _SEARCH_TOOLS:
-        what = next((args[k] for k in ("pattern", "query", "glob", "path")
-                     if isinstance(args.get(k), str)), "")
-        return "search: " + _one_line(what or name)
-    if isinstance(args.get("url"), str):
-        return "fetch: " + _one_line(args["url"])
-    if low in ("task", "agent") and isinstance(args.get("description"), str):
-        return "delegate: " + _one_line(args["description"])
-    return "tool: " + _one_line(name + (f" {path}" if path else ""))
-
-
-def _action_of(node: dict[str, Any]) -> Message | None:
-    """A tool call in any of the shapes the supported apps write."""
-    kind = node.get("type")
-    if kind == "tool_use" and isinstance(node.get("name"), str):
-        text = describe_action(node["name"], node.get("input"))
-        call = node.get("id")
-    elif kind == "local_shell_call":
-        action = node.get("action")
-        command = _command(action.get("command")) if isinstance(action, dict) else None
-        text = None if command is None else "run: " + _command_line(command)
-        call = node.get("call_id")
-    elif kind in ("function_call", "custom_tool_call") and isinstance(node.get("name"), str):
-        text = describe_action(node["name"], node.get("arguments", node.get("input")))
-        call = node.get("call_id")
-    elif isinstance(node.get("functionCall"), dict):     # Gemini
-        fc = node["functionCall"]
-        text = describe_action(str(fc.get("name", "")), fc.get("args"))
-        call = fc.get("id")
-    else:
-        return None
-    if text is None:
-        return None
-    return Message("action", text, call_id=call if isinstance(call, str) else None)
-
-
-def _failed_calls(records: list[Any]) -> set[str]:
-    """Ids of tool calls whose recorded result is an error or a non-zero exit code."""
-    failed: set[str] = set()
-
-    def visit(node: Any, depth: int) -> None:
-        if depth > MAX_DEPTH:
-            return
-        if isinstance(node, list):
-            for item in node:
-                visit(item, depth + 1)
-            return
-        if not isinstance(node, dict):
-            return
-        kind = node.get("type")
-        if kind == "tool_result" and isinstance(node.get("tool_use_id"), str):
-            if node.get("is_error") is True:
-                failed.add(node["tool_use_id"])
-            return
-        if kind in ("function_call_output", "custom_tool_call_output") \
-                and isinstance(node.get("call_id"), str):
-            output = node.get("output")
-            text = output if isinstance(output, str) else json.dumps(output)
-            code = _EXIT_CODE.search(text[:2000])
-            if code is not None and int(code.group(1)) != 0:
-                failed.add(node["call_id"])
-            return
-        for value in node.values():
-            if isinstance(value, dict | list):
-                visit(value, depth + 1)
-
-    visit(records, 0)
-    return failed
 
 
 def clean_user_text(text: str) -> str:
@@ -260,16 +124,6 @@ def _walk(node: Any, depth: int = 0) -> Iterator[Message]:
         text = _text_of(body)
         if text is not None:
             yield Message(role, text)
-        if role == "agent" and isinstance(body, list):
-            for part in body:
-                action = _action_of(part) if isinstance(part, dict) else None
-                if action is not None:
-                    yield action
-        return
-    if node.get("type") in ACTION_ITEM_TYPES:
-        action = _action_of(node)
-        if action is not None:
-            yield action
         return
     event = node.get("type")
     if isinstance(event, str) and event in EVENT_TYPES and isinstance(node.get("message"), str):
@@ -290,7 +144,6 @@ def extract(records: Iterable[Any]) -> list[Message]:
     # When a transcript identifies its messages, records without an id are copies (Claude
     # Code writes request/cache blobs of messages it already logged), not new messages.
     identified = any(i is not None for i in ids) and len(records) > 1
-    failed = _failed_calls(records)
     for record, rid in zip(records, ids, strict=True):
         if identified and rid is None:
             continue
@@ -300,14 +153,10 @@ def extract(records: Iterable[Any]) -> list[Message]:
             text = clean_user_text(msg.text) if msg.role == "user" else msg.text.strip()
             if not text:
                 continue
-            # the same message logged twice (Codex: item and event). Actions repeat for
-            # real (running the tests twice), so they are never collapsed.
-            if msg.role != "action" and out and out[-1].role == msg.role \
-                    and out[-1].text == text:
+            # the same message logged twice (Codex: item and event)
+            if out and out[-1].role == msg.role and out[-1].text == text:
                 continue
-            out.append(Message(msg.role, text, None if rid is None else f"{rid}/{k}", stamp,
-                               failed=msg.call_id is not None and msg.call_id in failed,
-                               call_id=msg.call_id))
+            out.append(Message(msg.role, text, None if rid is None else f"{rid}/{k}", stamp))
     return out
 
 
@@ -341,6 +190,10 @@ def _records(data: bytes) -> list[Any]:
 def read_transcript(path: str | Path, *, tail_bytes: int = MAX_READ_BYTES) -> list[Message]:
     """Messages of a transcript file. Very large files are read from their newest part
     (older turns were captured by earlier hook calls)."""
+    return extract(_read_records(path, tail_bytes))
+
+
+def _read_records(path: str | Path, tail_bytes: int = MAX_READ_BYTES) -> list[Any]:
     file = Path(path)
     size = file.stat().st_size
     limit = min(tail_bytes, MAX_READ_BYTES)
@@ -349,4 +202,193 @@ def read_transcript(path: str | Path, *, tail_bytes: int = MAX_READ_BYTES) -> li
             fh.seek(size - limit)
             fh.readline()  # drop the partial first line
         data = fh.read()
-    return extract(_records(data))
+    return _records(data)
+
+
+# ---- tool activity (D-042) -----------------------------------------------------------
+
+def _result_text(content: Any) -> str:
+    from continuum.coding.activity import text_of_output
+
+    return text_of_output(content)
+
+
+def _claude_records(record: dict[str, Any], app: str, chat: str | None,
+                    stamp: str | None, results: dict[str, dict[str, Any]]
+                    ) -> Iterator[dict[str, Any]]:
+    from continuum.coding import activity as act
+
+    message = record.get("message")
+    agent_id = record.get("agentId") if record.get("isSidechain") is True else None
+    if record.get("isCompactSummary") is True and isinstance(message, dict):
+        summary = _text_of(message.get("content"))
+        if summary:
+            yield {"v": act.ENVELOPE_VERSION, "app": app, "chat": chat, "phase": "compact",
+                   "when": "after", "trigger": None, "summary": summary, "at": stamp}
+        return
+    if record.get("type") == "system" and record.get("subtype") == "compact_boundary":
+        raw_meta = record.get("compactMetadata")
+        meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
+        yield {"v": act.ENVELOPE_VERSION, "app": app, "chat": chat, "phase": "compact",
+               "when": "before", "trigger": meta.get("trigger"), "summary": None,
+               "at": stamp}
+        return
+    if not isinstance(message, dict) or not isinstance(message.get("content"), list):
+        return
+    for part in message["content"]:
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") == "tool_use" and isinstance(part.get("name"), str):
+            call_id = part.get("id") if isinstance(part.get("id"), str) else None
+            yield _start(app, chat, part["name"], part.get("input"), call_id, stamp,
+                         agent_id if isinstance(agent_id, str) else None)
+        elif part.get("type") == "tool_result" and isinstance(part.get("tool_use_id"), str):
+            extra = record.get("toolUseResult")
+            results[part["tool_use_id"]] = {
+                "content": part.get("content"), "is_error": part.get("is_error") is True,
+                "extra": extra if isinstance(extra, dict) else None, "at": stamp}
+
+
+def _start(app: str, chat: str | None, tool: str, tool_input: Any, call_id: str | None,
+           stamp: str | None, agent_id: str | None = None) -> dict[str, Any]:
+    from continuum.coding import activity as act
+
+    if isinstance(tool_input, str):
+        with contextlib.suppress(ValueError):
+            tool_input = json.loads(tool_input)
+    info = act.classify(tool, tool_input)
+    return {"v": act.ENVELOPE_VERSION, "app": app, "chat": chat, "phase": "start",
+            "call_key": act.call_key(call_id, chat, tool, None if call_id else tool_input),
+            "call_id": call_id, "tool": tool, "kind": info["kind"], "server": info["server"],
+            "effect": info["effect"], "skill": act.skill_of(tool, tool_input),
+            "agent_id": agent_id, "input": tool_input, "at": stamp}
+
+
+def _finish(start: dict[str, Any], *, output: str, is_error: bool, exit_code: int | None,
+            interrupt: bool, stamp: str | None) -> dict[str, Any]:
+    from continuum.coding import activity as act
+
+    status = act.status_of(is_error=is_error, text=output, interrupt=interrupt,
+                           exit_code=exit_code)
+    return {**{k: start[k] for k in ("v", "app", "chat", "call_key", "call_id", "tool",
+                                      "kind", "server", "effect", "skill", "agent_id")},
+            "phase": "finish", "status": status, "exit_code": exit_code,
+            "duration_ms": None, "output": output,
+            "error": output[:2000] if status in ("error", "denied") else None, "at": stamp}
+
+
+def activity(records: list[Any], *, app: str, chat: str | None) -> list[dict[str, Any]]:
+    """Tool calls with their results, subagent calls and compaction, in order, as
+    envelopes (``activity.from_hook``'s shape), from Claude Code transcripts (including
+    sidechains), Codex rollouts and Gemini chats. The app's call ids pair a call with its
+    result, so importing the same transcript twice, or after the live hooks, adds nothing.
+    """
+    from continuum.coding import activity as act
+
+    starts: list[dict[str, Any]] = []
+    other: list[dict[str, Any]] = []
+    results: dict[str, dict[str, Any]] = {}
+    codex_out: dict[str, dict[str, Any]] = {}
+    gemini_pending: list[dict[str, Any]] = []
+    # Claude Code also writes uuid-less request/cache copies of records it logged
+    uuids = any(isinstance(r, dict) and r.get("uuid") for r in records)
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if uuids and "message" in record and not record.get("uuid"):
+            continue
+        stamp = record.get("timestamp") if isinstance(record.get("timestamp"), str) else None
+        payload = record.get("payload") if isinstance(record.get("payload"), dict) else None
+        if payload is not None:                                       # Codex rollout
+            kind = payload.get("type")
+            if record.get("type") == "compacted":
+                other.append({"v": act.ENVELOPE_VERSION, "app": app, "chat": chat,
+                              "phase": "compact", "when": "after", "trigger": None,
+                              "summary": payload.get("message"), "at": stamp})
+            elif kind in ("function_call", "custom_tool_call") and isinstance(
+                    payload.get("name"), str):
+                starts.append(_start(app, chat, payload["name"], payload.get(
+                    "arguments", payload.get("input")), payload.get("call_id"), stamp))
+            elif kind == "local_shell_call":
+                action = payload.get("action") if isinstance(payload.get("action"),
+                                                             dict) else {}
+                starts.append(_start(app, chat, "local_shell",
+                                     {"command": action.get("command")},
+                                     payload.get("call_id"), stamp))
+            elif kind in ("function_call_output", "custom_tool_call_output") and isinstance(
+                    payload.get("call_id"), str):
+                codex_out.setdefault(payload["call_id"], {})["output"] = payload.get("output")
+                codex_out[payload["call_id"]].setdefault("at", stamp)
+            elif kind == "exec_command_end" and isinstance(payload.get("call_id"), str):
+                entry = codex_out.setdefault(payload["call_id"], {})
+                entry["exec"] = payload
+                entry["at"] = stamp
+            elif kind == "patch_apply_end" and isinstance(payload.get("call_id"), str):
+                entry = codex_out.setdefault(payload["call_id"], {})
+                entry["patch"] = payload
+                entry["at"] = stamp
+            continue
+        if isinstance(record.get("message"), dict) or record.get("type") == "system":
+            if record.get("isMeta") is not True:
+                for env in _claude_records(record, app, chat, stamp, results):
+                    (starts if env["phase"] == "start" else other).append(env)
+            continue
+        role = record.get("role")
+        parts = record.get("parts")
+        if role in ("model", "user") and isinstance(parts, list):         # Gemini chat
+            for part in parts:
+                if not isinstance(part, dict):
+                    continue
+                if isinstance(part.get("functionCall"), dict):
+                    fc = part["functionCall"]
+                    env = _start(app, chat, str(fc.get("name", "tool")), fc.get("args"),
+                                 fc.get("id") if isinstance(fc.get("id"), str) else None,
+                                 stamp)
+                    starts.append(env)
+                    gemini_pending.append(env)
+                elif isinstance(part.get("functionResponse"), dict):
+                    fr = part["functionResponse"]
+                    match = next((s for s in gemini_pending if (
+                        fr.get("id") and s["call_id"] == fr.get("id")) or (
+                        not fr.get("id") and s["tool"] == fr.get("name"))), None)
+                    if match is not None:
+                        gemini_pending.remove(match)
+                        response = fr.get("response")
+                        text = _result_text(response)
+                        error = isinstance(response, dict) and bool(response.get("error"))
+                        other.append(_finish(match, output=text, is_error=error,
+                                             exit_code=act.exit_code_of(response),
+                                             interrupt=False, stamp=stamp))
+    found: list[dict[str, Any]] = []
+    for env in starts:
+        found.append(env)
+        cid = env["call_id"]
+        if cid and cid in results:
+            r = results[cid]
+            extra = r["extra"] or {}
+            text = _result_text(r["content"])
+            if extra.get("stderr") and isinstance(extra.get("stderr"), str):
+                text += "\n[stderr]\n" + extra["stderr"]
+            found.append(_finish(env, output=text, is_error=r["is_error"],
+                               exit_code=act.exit_code_of(extra) or act.exit_code_of(text),
+                               interrupt=extra.get("interrupted") is True, stamp=r["at"]))
+        elif cid and cid in codex_out:
+            r = codex_out[cid]
+            exec_end = r.get("exec") or {}
+            patch = r.get("patch") or {}
+            text = (exec_end.get("aggregated_output") or exec_end.get("stdout")
+                    or _result_text(r.get("output")))
+            code = exec_end.get("exit_code") if isinstance(exec_end.get("exit_code"),
+                                                           int) else act.exit_code_of(
+                r.get("output"))
+            failed = patch.get("success") is False
+            found.append(_finish(env, output=str(text or ""), is_error=failed,
+                               exit_code=code, interrupt=False, stamp=r.get("at")))
+    return found + [o for o in other if o["phase"] != "start"]
+
+
+def read_all(path: str | Path, *, tail_bytes: int = MAX_READ_BYTES, app: str = "transcript",
+             chat: str | None = None) -> tuple[list[Message], list[dict[str, Any]]]:
+    """Messages and tool activity of a transcript, from one read of the file."""
+    records = _read_records(path, tail_bytes)
+    return extract(records), activity(records, app=app, chat=chat)

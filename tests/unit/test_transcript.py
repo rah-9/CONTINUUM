@@ -75,7 +75,6 @@ def test_codex_rollout_without_injected_context_or_duplicates(tmp_path):
     msgs = [Message(m.role, m.text) for m in
             read_transcript(_jsonl(tmp_path / "rollout.jsonl", CODEX))]
     assert msgs == [Message("user", "Add the CLI command."),
-                    Message("action", "run: ls"),
                     Message("agent", "The CLI is added; tests pass.")]
 
 
@@ -119,65 +118,97 @@ def test_a_turn_end_reads_only_the_newest_part_of_a_long_transcript(tmp_path):
     assert len(read_transcript(path)) == 501
 
 
-def test_tool_calls_become_one_line_actions_with_their_outcome(tmp_path):
-    """What the agent did, in every supported shape; failures come from the call's result."""
-    claude = [
-        {"type": "assistant", "uuid": "a1", "message": {"role": "assistant", "content": [
-            {"type": "text", "text": "Fixing the parser."},
-            {"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "/r/a.py"}},
-            {"type": "tool_use", "id": "t2", "name": "Edit",
-             "input": {"file_path": "/r/a.py", "old_string": "x", "new_string": "y"}},
-            {"type": "tool_use", "id": "t3", "name": "Bash", "input": {"command": "pytest -q"}},
-            {"type": "tool_use", "id": "t4", "name": "TodoWrite", "input": {"todos": []}},
-            {"type": "tool_use", "id": "t5", "name": "mcp__continuum__coding_note",
-             "input": {"text": "x"}}]}},
-        {"type": "user", "uuid": "u1", "message": {"role": "user", "content": [
+def _acts(envs):
+    return [(e["phase"], e.get("tool"), e.get("status"), e.get("effect")) for e in envs]
+
+
+def test_claude_code_tool_calls_with_results_subagents_and_compaction():
+    """Every tool call with its result (D-042), paired by the app's call id."""
+    from continuum.coding.transcript import activity
+
+    records = [
+        {"type": "assistant", "uuid": "a1", "timestamp": "t1", "message": {
+            "role": "assistant", "content": [
+                {"type": "text", "text": "Fixing the parser."},
+                {"type": "tool_use", "id": "t1", "name": "Read",
+                 "input": {"file_path": "/r/a.py"}},
+                {"type": "tool_use", "id": "t2", "name": "Bash",
+                 "input": {"command": "pytest -q"}},
+                {"type": "tool_use", "id": "t3", "name": "mcp__github__create_issue",
+                 "input": {"title": "bug"}},
+                {"type": "tool_use", "id": "t4", "name": "Skill",
+                 "input": {"skill": "pdf"}}]}},
+        {"type": "user", "uuid": "u1", "timestamp": "t2", "toolUseResult": {
+            "stdout": "", "stderr": "1 failed", "interrupted": False},
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "tool_use_id": "t2", "is_error": True,
+              "content": "Exit code 1\nFAILED test_a"}]}},
+        {"type": "user", "uuid": "u2", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "def f(): ..."},
             {"type": "tool_result", "tool_use_id": "t3", "is_error": True,
-             "content": "Exit code 1\nFAILED test_a"}]}},
-        {"type": "assistant", "uuid": "a2", "message": {"role": "assistant", "content": [
-            {"type": "tool_use", "id": "t6", "name": "Bash", "input": {"command": "pytest -q"}}]}},
+             "content": "The user doesn't want to proceed with this tool use."}]}},
+        {"type": "assistant", "uuid": "s1", "isSidechain": True, "agentId": "ag1",
+         "message": {"role": "assistant", "content": [
+             {"type": "tool_use", "id": "t5", "name": "Grep", "input": {"pattern": "x"}}]}},
+        {"type": "system", "subtype": "compact_boundary", "uuid": "c0",
+         "compactMetadata": {"trigger": "auto", "preTokens": 150000}},
+        {"type": "user", "uuid": "c1", "isCompactSummary": True, "message": {
+            "role": "user", "content": "Summary: parser fixed, tests pending."}},
+        {"type": "api-request-blob", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t9", "name": "Bash", "input": {"command": "rm -rf"}}]}},
     ]
-    msgs = read_transcript(_jsonl(tmp_path / "c.jsonl", claude))
-    acts = [(m.text, m.failed) for m in msgs if m.role == "action"]
-    assert acts == [("read: /r/a.py", False), ("edit: /r/a.py", False),
-                    ("run: pytest -q", True), ("run: pytest -q", False)]   # repeats are kept
-    assert len({m.ident for m in msgs}) == len(msgs)                          # exact identity
+    envs = activity(records, app="claude-code", chat="c")
+    acts = _acts(envs)
+    assert ("start", "Read", None, "read") in acts and ("finish", "Read", "ok", "read") in acts
+    assert ("finish", "Bash", "error", "write") in acts
+    assert ("finish", "mcp__github__create_issue", "denied", "external") in acts
+    assert ("start", "Skill", None, "read") in acts
+    assert not any(e.get("call_id") == "t9" for e in envs)        # request copies skipped
+    [bash] = [e for e in envs if e.get("tool") == "Bash" and e["phase"] == "finish"]
+    assert "FAILED test_a" in bash["output"] and "1 failed" in bash["output"]
+    [grep] = [e for e in envs if e.get("tool") == "Grep"]
+    assert grep["agent_id"] == "ag1"                               # a subagent's own call
+    compact = [e for e in envs if e["phase"] == "compact"]
+    assert [c["when"] for c in compact] == ["before", "after"]
+    assert compact[1]["summary"].startswith("Summary: parser fixed")
+    skill = next(e for e in envs if e.get("tool") == "Skill")
+    assert skill["kind"] == "skill" and skill["skill"] == "pdf"
+    again = activity(records, app="claude-code", chat="c")
+    assert [e.get("call_key") for e in again] == [e.get("call_key") for e in envs]
+
+
+def test_codex_and_gemini_tool_calls_with_results():
+    from continuum.coding.transcript import activity
 
     codex = [
         {"type": "response_item", "timestamp": "t1", "payload": {
             "type": "function_call", "name": "shell", "call_id": "c1",
             "arguments": json.dumps({"command": ["bash", "-lc", "make test"]})}},
-        {"type": "response_item", "timestamp": "t2", "payload": {
-            "type": "function_call_output", "call_id": "c1",
-            "output": json.dumps({"output": "boom", "metadata": {"exit_code": 2}})}},
+        {"type": "event_msg", "timestamp": "t2", "payload": {
+            "type": "exec_command_end", "call_id": "c1", "exit_code": 2,
+            "aggregated_output": "boom"}},
         {"type": "response_item", "timestamp": "t3", "payload": {
             "type": "custom_tool_call", "name": "apply_patch", "call_id": "c2",
-            "input": "*** Begin Patch\n*** Update File: src/x.py\n@@\n*** Add File: "
-                     "src/y.py\n*** End Patch"}},
-        {"type": "response_item", "timestamp": "t4", "payload": {
-            "type": "local_shell_call", "call_id": "c3",
-            "action": {"type": "exec", "command": ["git", "status"]}}},
+            "input": "*** Begin Patch\n*** Update File: src/x.py\n*** End Patch"}},
+        {"type": "event_msg", "timestamp": "t4", "payload": {
+            "type": "patch_apply_end", "call_id": "c2", "success": True, "changes": {}}},
         {"type": "response_item", "timestamp": "t5", "payload": {
-            "type": "function_call_output", "call_id": "c3", "output": "Exit code: 0"}},
+            "type": "function_call", "name": "shell", "call_id": "c3",
+            "arguments": json.dumps({"command": ["git", "push", "origin", "main"]})}},
+        {"type": "compacted", "timestamp": "t6", "payload": {"message": "summary"}},
     ]
-    acts = [(m.text, m.failed) for m in read_transcript(_jsonl(tmp_path / "x.jsonl", codex))]
-    assert acts == [("run: make test", True), ("edit: src/x.py, src/y.py", False),
-                    ("run: git status", False)]
-
-    gemini = tmp_path / "g.json"
-    gemini.write_text(json.dumps([{"role": "model", "parts": [
-        {"text": "searching"}, {"functionCall": {"name": "search_file_content",
-                                                "args": {"pattern": "def parse"}}},
-        {"functionCall": {"name": "write_file", "args": {"file_path": "p.py"}}}]}]))
-    assert [m.text for m in read_transcript(gemini)] == [
-        "searching", "search: def parse", "edit: p.py"]
-
-
-def test_long_commands_are_one_bounded_line():
-    from continuum.coding.transcript import describe_action
-
-    text = describe_action("Bash", {"command": "echo " + "x" * 1000 + "\n\nls"})
-    assert text is not None and len(text) <= 306 and "\n" not in text
-    assert describe_action("WebFetch", {"url": "https://e.x/a"}) == "fetch: https://e.x/a"
-    assert describe_action("Task", {"description": "find callers"}) == "delegate: find callers"
-    assert describe_action("weird_tool", "not json") == "tool: weird_tool"
+    envs = activity(codex, app="codex", chat="th")
+    acts = _acts(envs)
+    assert ("finish", "shell", "error", "write") in acts           # exit 2
+    assert ("finish", "apply_patch", "ok", "write") in acts
+    assert ("start", "shell", None, "external") in acts             # git push: no result
+    assert not any(e.get("call_id") == "c3" and e["phase"] == "finish" for e in envs)
+    [out] = [e for e in envs if e.get("call_id") == "c1" and e["phase"] == "finish"]
+    assert out["output"] == "boom" and out["exit_code"] == 2
+    gemini = [{"role": "model", "parts": [
+        {"functionCall": {"name": "run_shell_command", "args": {"command": "npm test"}}}]},
+        {"role": "user", "parts": [{"functionResponse": {
+            "name": "run_shell_command", "response": {"output": "ok", "exit_code": 0}}}]}]
+    assert _acts(activity(gemini, app="gemini-cli", chat=None)) == [
+        ("start", "run_shell_command", None, "write"),
+        ("finish", "run_shell_command", "ok", "write")]

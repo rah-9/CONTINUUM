@@ -221,7 +221,7 @@ U9_continuity_across_apps_machines_and_abrupt_ends:
   - tests/unit/test_redaction.py::test_well_known_credentials_are_redacted_even_when_not_in_the_environment
   - tests/unit/test_integrations.py::test_apps_journal_the_chat_through_the_hook_command
   - tests/integration/test_scenarios.py::test_s16_the_same_short_answer_in_two_apps_is_two_answers
-  - tests/unit/test_transcript.py::test_tool_calls_become_one_line_actions_with_their_outcome
+  - tests/unit/test_transcript.py::test_claude_code_tool_calls_with_results_subagents_and_compaction
 R14_erasure_and_retention:
   - tests/integration/test_privacy.py::test_forget_erases_everything_and_leaves_a_content_free_tombstone
   - tests/integration/test_privacy.py::test_history_still_cannot_be_changed_or_deleted_outside_an_erasure
@@ -237,7 +237,13 @@ R15_per_person_isolation:
   - tests/integration/test_isolation.py::test_access_is_managed_only_by_the_operator
   - tests/integration/test_isolation.py::test_admin_cli
 R16_agent_actions_remembered:
-  - tests/unit/test_transcript.py::test_tool_calls_become_one_line_actions_with_their_outcome
-  - tests/unit/test_transcript.py::test_long_commands_are_one_bounded_line
-  - tests/integration/test_scenarios.py::test_s15_the_next_model_sees_what_the_previous_agent_did_and_what_failed
+  - tests/unit/test_transcript.py::test_claude_code_tool_calls_with_results_subagents_and_compaction
+  - tests/unit/test_transcript.py::test_codex_and_gemini_tool_calls_with_results
+  - tests/unit/test_activity.py::test_claude_code_and_codex_hooks
+  - tests/unit/test_activity.py::test_gemini_and_cursor_hooks
+  - tests/unit/test_activity.py::test_tools_of_every_app_are_classified
+  - tests/unit/test_activity.py::test_shell_commands_are_classified_by_what_they_can_reach
+  - tests/unit/test_activity.py::test_snapshots_give_the_exact_diff_of_any_change
+  - tests/integration/test_scenarios.py::test_s15b_a_crashed_chat_leaves_unknown_outcomes_for_the_next_chat
+  - tests/integration/test_scenarios.py::test_s15_everything_the_agent_did_is_journaled_with_results_and_impact
   - tests/nonfunctional/test_nonfunctional.py::test_nf6_long_chat_memory_quality
