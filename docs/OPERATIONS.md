@@ -96,6 +96,27 @@ All durable state lives in PostgreSQL. The schema is executable in `src/continuu
 
 Upgrades: re-running `continuum db-init` adds new constraints and indexes to an existing database idempotently.
 
+## Data retention and erasure (coding sessions)
+
+Coding sessions hold what people typed, and a client may ask for it to be deleted. History
+is append-only, so erasure is a separate, deliberate, human-only operation (D-039):
+
+```bash
+# one session (prints confirmation_required without --yes)
+continuum coding forget cs_123 --actor alice --reason "client request #42" --yes
+# retention: every closed session untouched for 90 days
+continuum coding forget --older-than-days 90 --actor ops --reason "90-day retention" --yes
+# what was erased, when, by whom (no content)
+continuum coding erasures
+```
+
+- **What is removed:** every event of the session and its row. Nothing of its content is left in Continuum's tables.
+- **What is kept:** a tombstone in `coding_erasures` with the session id, a hash of the repository path, the event count, the person and the reason (redacted). Tombstones are immutable.
+- **How the guard works:** the `coding_events` trigger refuses every UPDATE and DELETE unless the transaction has set `continuum.erasure = on`, which only `forget` does, inside the same transaction that writes the tombstone. The setting is transaction-local. TRUNCATE is always refused.
+- **Retention** erases closed sessions only, unless `--include-active` is given. Schedule it with cron or a task scheduler.
+- **Not covered:** PostgreSQL backups and WAL archives keep their copies until they expire; set their retention to match. Runtime run events (`continuum run`) are not personal chat data and are not erased by this command.
+- **Never an MCP tool.** No model can erase memory.
+
 ## Running in production-like settings (v1 limits)
 
 - One host, one database. Several controller processes on that host are safe; leases and epochs fence them.

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0rc1 — unreleased
+
+Release candidate for client delivery: privacy, licensing, portability and packaging.
+
+### Added
+- **Erasure and retention (D-039, schema v5).** `continuum coding forget SESSION` and `continuum coding forget --older-than-days N` remove a session's events and row in one transaction and leave a content-free tombstone (`coding_erasures`, immutable). Human-only: CLI with `--yes`, never MCP. `continuum coding erasures` lists them. History outside an erasure stays immutable.
+- **Proprietary licensing.** `LICENSE`, `NOTICE`, SPDX headers in every source file, package metadata (`Private :: Do Not Upload`) and a notice in every document. `tests/unit/test_license.py` keeps it complete.
+- **CI on Windows and macOS** in addition to Linux.
+
 ## 0.9.0 — 2026-10-18
 
 Long chats and every model (D-037). Measured in `docs/MEMORY-QUALITY.md`.

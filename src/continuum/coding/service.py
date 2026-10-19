@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -666,6 +666,67 @@ class CodingContinuity:
                  "timeout_seconds": r["timeout_seconds"],
                  "registered_by": r["registered_by"],
                  "registered_for": r["repo_root"]} for r in rows]
+
+    # ===== human-only: erasure and retention (never MCP) ===============================
+
+    def forget(self, session_id: str, *, actor: str, reason: str) -> dict[str, Any]:
+        """Erase a coding session completely: every journal event (captured chat, notes,
+        check output) and the session row, in one transaction. A content-free tombstone
+        records who erased which session, when and why (D-039).
+
+        Human-only (CLI); the journal is otherwise append-only, enforced by a trigger that
+        admits deletes only inside a transaction that set ``continuum.erasure``."""
+        if not actor.strip() or not reason.strip():
+            raise SpecValidationError("erasure needs a human actor id and a reason")
+        who = HUMAN_PREFIX + " ".join(actor.split())[:120]
+        why = _clean(self.redactor.text(" ".join(reason.split())))[:MAX_TEXT]
+        with self.store.connection() as conn:
+            try:
+                row = conn.execute(
+                    b"SELECT repo_root FROM coding_sessions WHERE session_id = %s FOR UPDATE",
+                    (session_id,)).fetchone()
+                if row is None:
+                    raise NotFoundError(f"coding session {session_id} not found")
+                conn.execute(b"SELECT set_config('continuum.erasure', 'on', true)")
+                erased = conn.execute(b"DELETE FROM coding_events WHERE session_id = %s",
+                                      (session_id,)).rowcount
+                conn.execute(b"DELETE FROM coding_sessions WHERE session_id = %s",
+                             (session_id,))
+                erasure_id = self.ids.new("erase")
+                conn.execute(
+                    b"INSERT INTO coding_erasures (erasure_id, session_id, repo_digest, "
+                    b"events_erased, erased_by, reason, erased_at) "
+                    b"VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (erasure_id, session_id, "sha256:" + sha256_hex(row["repo_root"]),
+                     erased, who, why, self.clock.now()))
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+        return {"erasure_id": erasure_id, "session_id": session_id, "events_erased": erased}
+
+    def forget_older_than(self, days: int, *, actor: str, reason: str,
+                          include_active: bool = False) -> dict[str, Any]:
+        """Retention: erase sessions whose last write is older than ``days``. Closed
+        sessions only, unless ``include_active``. Each is erased like ``forget``."""
+        if days < 1:
+            raise SpecValidationError("retention must be at least 1 day")
+        cutoff = self.clock.now() - timedelta(days=days)
+        statuses = ["closed", "active"] if include_active else ["closed"]
+        with self.store.read() as q:
+            rows = q._all("SELECT session_id FROM coding_sessions WHERE updated_at < %s "
+                          "AND status = ANY(%s) ORDER BY updated_at", (cutoff, statuses))
+        done = [self.forget(r["session_id"], actor=actor, reason=reason) for r in rows]
+        return {"sessions_erased": len(done),
+                "events_erased": sum(d["events_erased"] for d in done),
+                "erasures": [d["erasure_id"] for d in done]}
+
+    def erasures(self, limit: int = 50) -> list[dict[str, Any]]:
+        """The tombstones: what was erased, by whom, when and why (no content)."""
+        with self.store.read() as q:
+            rows = q._all("SELECT * FROM coding_erasures ORDER BY erased_at DESC LIMIT %s",
+                          (max(1, min(limit, 500)),))
+        return [{**r, "erased_at": _iso(r["erased_at"])} for r in rows]
 
     # ===== human-only =================================================================
 
