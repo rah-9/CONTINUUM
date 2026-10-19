@@ -193,7 +193,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-INSERT INTO schema_meta (key, value) VALUES ('schema_version', '4')
+INSERT INTO schema_meta (key, value) VALUES ('schema_version', '5')
   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- TRUNCATE would bypass the row-level immutability trigger.
@@ -285,9 +285,21 @@ CREATE TABLE IF NOT EXISTS coding_events (
   PRIMARY KEY (session_id, seq)
 );
 
+-- Schema v5: history stays append-only, with one audited exception. A human-requested
+-- erasure (`continuum coding forget`) deletes a whole session inside a transaction that
+-- set continuum.erasure = 'on' locally and records a content-free tombstone. Updates are
+-- never allowed; deletes outside such a transaction are rejected.
+CREATE OR REPLACE FUNCTION continuum_coding_events_guard() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' AND current_setting('continuum.erasure', true) = 'on' THEN
+    RETURN OLD;
+  END IF;
+  RAISE EXCEPTION 'coding events are append-only (erasure only via continuum coding forget)';
+END;
+$$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS coding_events_immutable ON coding_events;
 CREATE TRIGGER coding_events_immutable BEFORE UPDATE OR DELETE ON coding_events
-  FOR EACH ROW EXECUTE FUNCTION continuum_events_immutable();
+  FOR EACH ROW EXECUTE FUNCTION continuum_coding_events_guard();
 DROP TRIGGER IF EXISTS coding_events_no_truncate ON coding_events;
 CREATE TRIGGER coding_events_no_truncate BEFORE TRUNCATE ON coding_events
   FOR EACH STATEMENT EXECUTE FUNCTION continuum_events_immutable();
@@ -323,6 +335,21 @@ ALTER TABLE coding_sessions ADD COLUMN IF NOT EXISTS repo_key TEXT;  -- NULL: no
 ALTER TABLE coding_checks ADD COLUMN IF NOT EXISTS repo_key TEXT;
 CREATE INDEX IF NOT EXISTS idx_coding_sessions_key ON coding_sessions(repo_key, status);
 CREATE INDEX IF NOT EXISTS idx_coding_checks_key ON coding_checks(repo_key, name);
+
+-- Schema v5: what was erased, by whom, when and why. No content: the session id, a digest
+-- of the repository path, and how many events were removed. Append-only.
+CREATE TABLE IF NOT EXISTS coding_erasures (
+  erasure_id     TEXT PRIMARY KEY,
+  session_id     TEXT NOT NULL,
+  repo_digest    TEXT NOT NULL,
+  events_erased  BIGINT NOT NULL,
+  erased_by      TEXT NOT NULL,
+  reason         TEXT NOT NULL,
+  erased_at      TIMESTAMPTZ NOT NULL
+);
+DROP TRIGGER IF EXISTS coding_erasures_immutable ON coding_erasures;
+CREATE TRIGGER coding_erasures_immutable BEFORE UPDATE OR DELETE ON coding_erasures
+  FOR EACH ROW EXECUTE FUNCTION continuum_events_immutable();
 -- Captured chat messages are deduplicated by their key (re-imports are idempotent).
 CREATE INDEX IF NOT EXISTS idx_coding_events_capture_key ON coding_events
   (session_id, (payload_json->>'key')) WHERE type = 'ChatCaptured';

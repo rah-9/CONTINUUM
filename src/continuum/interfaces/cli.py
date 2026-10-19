@@ -121,6 +121,18 @@ def build_parser() -> argparse.ArgumentParser:
     imp.add_argument("--repo", default=".")
     imp.add_argument("--source", default="transcript")
     imp.add_argument("--chat")
+    fg = csub.add_parser("forget", help="human-only: erase a session completely (chat, notes, "
+                                        "check output), or every closed session older than "
+                                        "N days; leaves a content-free tombstone")
+    fg.add_argument("session", nargs="?")
+    fg.add_argument("--older-than-days", type=int)
+    fg.add_argument("--include-active", action="store_true",
+                    help="with --older-than-days: also erase sessions still active")
+    fg.add_argument("--actor", required=True, help="your (human) id")
+    fg.add_argument("--reason", required=True)
+    fg.add_argument("--yes", action="store_true", help="confirm: erasure cannot be undone")
+    er = csub.add_parser("erasures", help="list erasure tombstones (no content)")
+    er.add_argument("--limit", type=int, default=50)
     rcl = csub.add_parser("recall", help="search everything the session remembers")
     rcl.add_argument("query")
     rcl.add_argument("--repo", default=".")
@@ -318,6 +330,22 @@ def _coding(sdk: Continuum, args: argparse.Namespace) -> int:
             _print(coding.capture(args.repo, read_transcript(args.transcript),
                                   source=args.source, chat_id=args.chat or args.transcript,
                                   history=True))
+        case "forget":
+            if (args.session is None) == (args.older_than_days is None):
+                _print({"error": "give a SESSION or --older-than-days N", "code": "usage"})
+                return 2
+            if not args.yes:
+                _print({"error": "erasure cannot be undone; repeat with --yes",
+                        "code": "confirmation_required"})
+                return 2
+            if args.session:
+                _print(coding.forget(args.session, actor=args.actor, reason=args.reason))
+            else:
+                _print(coding.forget_older_than(args.older_than_days, actor=args.actor,
+                                                reason=args.reason,
+                                                include_active=args.include_active))
+        case "erasures":
+            _print(coding.erasures(args.limit))
         case "recall":
             _print(coding.recall(args.query, session_id=args.session,
                                  repo_path=None if args.session else args.repo,

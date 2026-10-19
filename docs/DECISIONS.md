@@ -380,6 +380,21 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 - Matching live and transcript messages by text alone: it loses repeated words, which was the v0.8 bug.
 - Re-ordering stored events: the journal is immutable.
 
+## D-039 — Erasure is a human act that leaves a content-free record
+
+**Context.** A client must be able to delete what a session captured (privacy requests, retention policies), but the journal is append-only by trigger (invariant 3), and no model may remove memory.
+
+**Decision.**
+- **Schema v5.** The `coding_events` trigger allows DELETE only when the transaction set `continuum.erasure = on`. UPDATE and TRUNCATE are never allowed.
+- **`continuum coding forget`** (CLI only, `--yes` required) locks the session, deletes its events and row, and appends a tombstone to the immutable `coding_erasures` table, all in one transaction.
+- **The tombstone holds no content:** session id, repository path hash, event count, `human:<actor>`, redacted reason, time.
+- **Retention** (`--older-than-days`) erases closed sessions untouched for N days; active ones only on request.
+
+**Rejected.**
+- Redacting events in place: it changes history, and a partial redaction is hard to prove complete.
+- Disabling the trigger during erasure: it is schema-wide, so a concurrent writer could change history meanwhile.
+- An MCP tool: models must not erase memory.
+
 ---
 
 _Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._
