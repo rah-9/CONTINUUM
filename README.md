@@ -38,6 +38,7 @@ written down so it can be rerun. Details: [real model trials](docs/HANDOFF-TRIAL
 | 5. **A 30-message chat**, requirements in messages 8, 15, 21 and 27 | Sonnet in Claude Code, 30 turns, hooks only | Haiku (2 runs) | **13/13, 13/13** | 9/13 |
 | | | Sonnet | **13/13** | 9/13 |
 | | | Opus | **13/13** | 9/13 |
+| 6. **Debugging handoff**: A found the root cause; the user's extra facts and constraints were only in the chat | Sonnet in Claude Code, 3 turns, hooks only, no code changed | Haiku / Sonnet / Opus | **7/7** each | 4/7 each |
 
 **What the baselines did.**
 - **Without Continuum:** every B kept what was already in the code. None of them learned what was still to do, and each said it could not tell what was planned.
@@ -69,6 +70,8 @@ and still delivered the wrong thing.
 - Claude Code's internal request copies were read as extra messages
 - a weaker model read the user's "stop here" (said to the previous model) as its own instruction, and stalled on an old open question
 - `continuum … | head` crashed
+- a long final message starting with "OK" was shown as the answer to the agent's open question
+- a "yes" typed in a second app lost its question, or was dropped as a copy of an earlier "yes" (found by the two-app benchmark)
 
 **Not yet measured:** GPT models (Codex), because the environment these trials ran in has no
 OpenAI access. The GPT → Claude runbook is in [`eval/handoff_trials/`](eval/handoff_trials/README.md).

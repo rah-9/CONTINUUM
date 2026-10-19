@@ -15,9 +15,10 @@ How Continuum is tested, what each layer proves, and the latest results. The req
 | Coding continuity | `tests/integration/test_coding.py`, `test_mcp_stdio.py`, `tests/unit/test_repo_observer.py` | functional, end-to-end over real MCP stdio | cross-model handoffs (C1–C11), content fingerprint, re-verification, redaction, shell-only agents |
 | Brief quality | `tests/integration/test_brief_quality.py` | functional + size bounds | the brief stays bounded however long the session (B1), commits since the last checkpoint (B2–B3), notes reach the next model whole (B4), the code map shows where the session worked (B5) |
 | Audit regression | `test_coding_hardening.py` (H1–H21), `test_core_hardening.py` (K1–K9), `test_pass2_hardening.py` (Q1–Q17) | security + robustness | every finding from three full-codebase audits stays fixed |
-| Continuity scenarios | `tests/integration/test_scenarios.py` (S1–S11), `tests/unit/test_transcript.py` | end-to-end through the apps' entry points (hook payloads, transcripts, MCP-equivalent calls, CLI) | app switch with an abrupt end and no agent notes, another checkout, repeated and concurrent hooks, a hook with the database down, long sessions with recall, non-git projects, secrets in chat, setup, schema upgrade ([MEMORY-ALGORITHM.md](MEMORY-ALGORITHM.md) §5) |
+| Continuity scenarios | `tests/integration/test_scenarios.py` (S1–S16), `tests/unit/test_transcript.py` | end-to-end through the apps' entry points (hook payloads, transcripts, MCP-equivalent calls, CLI) | app switch with an abrupt end and no agent notes, another checkout, repeated and concurrent hooks, a hook with the database down, long sessions with recall, non-git projects, secrets in chat, setup, schema upgrade ([MEMORY-ALGORITHM.md](MEMORY-ALGORITHM.md) §5) |
 | Memory quality | `continuum_lab.memory_bench`, `tests/nonfunctional::test_nf6_long_chat_memory_quality`, `tests/unit/test_memory.py` (with a Hypothesis property test) | planted-fact benchmark + invariants | what the user said anywhere in a 10–160-message chat reaches the next model: requirements, changes of mind, answers, agent decisions; no pasted noise; within budget ([MEMORY-QUALITY.md](MEMORY-QUALITY.md)) |
-| Portability | `tests/integration/test_portability.py` | cross-OS behaviour | UTF-8 output on any console, launch-directory independence, Windows check-command resolution |
+| Portability | `tests/integration/test_portability.py`; the whole unit, integration and contract suites in CI on Linux, Windows and macOS | cross-OS behaviour | UTF-8 output on any console, launch-directory independence, Windows check-command resolution, closed pipes on Windows |
+| Privacy and isolation | `tests/integration/test_privacy.py`, `test_isolation.py`, `test_upgrade.py` | security, with real PostgreSQL roles | erasure leaves no content and a tombstone; history is otherwise immutable; each role sees, changes and erases only its own memory; operator-only administration; a real 0.9 database upgrades without loss |
 | Regression | everywhere | regression | every defect found has a test, see below |
 | Experiment | `continuum-lab` | paired B0/C1 study | safety and progress metrics with uncertainty (`docs/lab-reports/`) |
 | Real handoff trials | `eval/handoff_trials/` | real models, hidden acceptance tests | transfer quality: does the next model finish the work correctly, at what token cost ([`HANDOFF-TRIALS.md`](HANDOFF-TRIALS.md)) |
@@ -50,6 +51,12 @@ eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-sw
 | Coding handoff test | Running the tests wrote `__pycache__`, changing the fingerprint, so a just-passed check never counted | `test_running_tests_does_not_change_the_fingerprint` |
 | Shell-agent CLI test | `checks add … --actor X -- cmd` lost `--actor` to argparse `REMAINDER` | `test_c11_shell_only_agents_use_the_same_protocol_via_cli` |
 | Shell-agent CLI test | CLI hit a missing table on a database from an older version | `test_ensure_schema_migrates_only_when_needed` |
+| Two-app benchmark (v1.0) | A "yes" was paired with its question by journal order, so a transcript imported later (another app) lost the pairing; the same words typed later in another app were dropped as a copy | `test_s16_the_same_short_answer_in_two_apps_is_two_answers`, `test_nf6_long_chat_memory_quality` |
+| Real debugging handoff, Trial 6 (v1.0) | "OK, I'm out of time. Stop here, …" was shown as the answer to the agent's open question | `test_a_long_message_starting_with_ok_is_not_an_answer` |
+| Real transcript replay (v1.0) | Old experiments' failed commands would be flagged as open failures; heredoc bodies flooded the command list | `test_s15_the_next_model_sees_what_the_previous_agent_did_and_what_failed` |
+| Windows CI (v1.0) | A write into a closed pipe raises `EINVAL` on Windows, not `BrokenPipeError`: a traceback instead of a clean exit | `test_p3_cli_output_into_a_closed_pipe_is_not_a_crash` (now on Windows) |
+| Windows CI (v1.0) | Tests decoded the CLI's UTF-8 output with the ANSI code page | `test_c11_shell_only_agents_use_the_same_protocol_via_cli` (on Windows) |
+| Wheel smoke test (v1.0) | `continuum doctor` failed on a coding-only install because no runtime tasks were registered | `test_doctor_passes_without_runtime_tasks` |
 | Replay of a real transcript (v0.9.0) | 27 of Claude's 47 messages kept (only the final one per turn; one per catch-up); Claude Code's uuid-less request copies read as messages | `test_s14_both_sides_of_the_chat_are_kept_exactly_through_an_outage`, `replay_capture.py` |
 | Memory benchmark (v0.9.0) | The brief kept the first and newest six messages: 15% of requirements reached the next model in 40-message chats, and answers to the agent's questions were lost | `test_nf6_long_chat_memory_quality` |
 | Real 30-message trial (v0.9.0) | A second identical message in one chat ("continue", "yes") was dropped at capture | `test_s13_repeated_words_in_one_chat_are_all_kept_and_reimports_add_nothing` |
@@ -67,9 +74,9 @@ eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-sw
 | Core audit (v0.6.2) | Transient verifier error treated as drift (run failed); one process re-entered a live lease; DNS rebinding; orphan run on a bad model alias; raw tracebacks from config/MCP/CLI; zero registry cost recorded as $0; secrets in rejection reasons; malformed provider responses; unvalidated blob refs | `tests/integration/test_core_hardening.py` (K1–K9) |
 | Full-codebase audit (v0.6.1) | 23 coding-layer issues: fail-open git fingerprint, diff drivers, no-HEAD staged changes, orphan sessions, closed-session check runs, `human:` spoofing, brief forging, schema downgrade, migration race, CLI `--`, rename parsing and others | `tests/integration/test_coding_hardening.py` (H1–H21) |
 
-## Latest results (2026-10-19)
+## Latest results (2026-10-19, v1.0.0rc1)
 
-- `make check`: ruff clean, `mypy --strict` clean. **362 passed**, 5 live tests skipped (opt-in). CI runs the same gates against PostgreSQL 16.
+- `make check`: ruff clean, `mypy --strict` clean. **383 passed**, 5 live tests skipped (opt-in). CI runs the same gates against PostgreSQL 16 on Linux, and the unit, integration and contract suites on Windows and macOS.
 - **Hardened schema:** the whole suite, including chaos, runs against the new CHECK constraints with zero violations. The runtime never writes a state the database considers invalid.
 - **Property search:** 150 random interleavings × 12 steps per connector mode (450 scenarios). All invariants held at every step.
 - **Non-functional baselines** (this container, PostgreSQL 16, fake models):
@@ -99,6 +106,8 @@ The goal is that the next model finishes the work correctly **without re-reading
 
 | **App switch after an abrupt end** (Trial 4): A never used Continuum, B in a Codex-style setup | **4/4** | **2/2** | not measured (cost $0.56, 1.8 min) | 16 tool calls |
 | baseline (Trial 4) | 1/4 | 0/2 | not measured (cost $0.63, 5.1 min) | 20 tool calls |
+| **Debugging handoff** (Trial 6): root cause and constraints only in A's chat, B = Haiku / Sonnet / Opus | **7/7** each | 3/3 chat-only requirements | brief ~1.4k tokens | 4–7 regression tests named as asked |
+| baseline (Trial 6) | 4/7 each | 0/3 | — | — |
 | **30-message chat** (Trial 5), B = Haiku / Sonnet / Opus | **13/13** each (Haiku in 2 runs) | **4/4** export requirements from messages 8–27 | brief ~2.1k tokens vs ~135k of history in A's chat | — |
 | baseline (Trial 5), Haiku / Sonnet / Opus | 9/13 each | 0/4 | — | — |
 
@@ -137,7 +146,7 @@ A full fenced runtime run (`inventory_upload_v1`, fake models) issues 271 SQL st
 - Fake and emulated providers prove protocol and safety properties, not a live model's reasoning quality. Live runs need verified profiles and keys.
 - Mock services prove the **modeled** connector contracts. A real connector needs its own contract test before its manifest is trusted.
 - Performance numbers are single-host baselines for regression detection, not capacity claims.
-- The real handoff trials are small (four Opus runs on one task, Sonnet → Opus). They show a clear direction, not a statistical result. A GPT → Claude trial is packaged in `eval/handoff_trials/` but has not run yet: it needs an OpenAI key and network access in the trial environment.
+- The real handoff trials are small: six trials, one or two runs per arm, with Haiku, Sonnet and Opus as the next model in Trials 5 and 6. Continuum scored full marks in every run and the baseline never did, but the token and time figures are not statistics. A GPT → Claude trial is packaged in `eval/handoff_trials/` but has not run yet: it needs an OpenAI key and network access in the trial environment.
 
 ---
 
