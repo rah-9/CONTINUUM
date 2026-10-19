@@ -1,6 +1,6 @@
 {
   "name": "continuum",
-  "version": "1.0.0rc1",
+  "version": "1.0.0rc2",
   "description": "Keep coding work continuous across models, chats and apps: hooks journal what you ask, the brief restores it in any new chat (or in Codex, Cursor ...), with verified checks. Also delegates multi-step tasks with an external-effect ledger.",
   "author": {
     "name": "Continuum maintainers"

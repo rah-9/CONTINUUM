@@ -35,17 +35,23 @@ Set up a repository once: `continuum coding setup .` writes [`AGENT_RULES.md`](A
 `AGENTS.md` (imported by `CLAUDE.md`), Claude Code hooks and `.mcp.json`. Checks are registered only
 by a person: `continuum coding checks add . tests --actor you -- pytest -q`.
 
-**Chat capture (hooks).** So that the next app knows what you asked, even if the previous agent
-never wrote it down:
+**Capture (hooks).** So that the next app knows what you asked *and what the agent did*
+(every tool call with its result, MCP tools, skills, subagents, the files each call changed),
+even if the previous agent never wrote anything down (D-042):
 
-| App | How |
-|---|---|
-| Claude Code | the plugin's `hooks/hooks.json`, or `continuum coding setup` (SessionStart also shows the brief) |
-| Codex CLI | `notify = ["continuum", "hook", "codex"]` in `~/.codex/config.toml` ([`codex/config.toml`](codex/config.toml)) |
-| any app with JSON hooks | run `continuum hook <app-name>`; it reads `prompt`, `transcript_path`, `cwd`, `last_assistant_message` |
-| apps without hooks | `continuum coding import <chat transcript>` or `continuum coding capture "<text>"` |
+| App | Events to hook to `continuum hook <app>` | Tested |
+|---|---|---|
+| Claude Code | all of them, installed by the plugin's `hooks/hooks.json` or `continuum coding setup`: SessionStart (prints the brief), UserPromptSubmit, PreToolUse / PostToolUse / PostToolUseFailure (matcher `*`), SubagentStop, Pre/PostCompact, Stop, SessionEnd | live (Trial 7) |
+| Codex CLI | `notify = ["continuum", "hook", "codex"]` in `~/.codex/config.toml` ([`codex/config.toml`](codex/config.toml)) for the chat; its PreToolUse / PostToolUse hooks for tool calls. The rollout file is also read at each turn end | recorded payloads and rollouts |
+| Gemini CLI | BeforeTool / AfterTool, plus its session hooks | recorded payloads |
+| Cursor | beforeShellExecution / afterShellExecution, beforeMCPExecution / afterMCPExecution, afterFileEdit, stop | recorded payloads |
+| any app with JSON hooks | `continuum hook <app-name>`; it reads `prompt`, `transcript_path`, `cwd`, `last_assistant_message`, and `tool_name` / `tool_input` / `tool_response` | — |
+| apps without hooks | `continuum coding import <chat transcript>` (also imports the transcript's tool calls) or `continuum coding capture "<text>"` | — |
 
-A hook always exits 0 and never blocks your app. `CONTINUUM_HOOKS=off` turns it off.
+A hook always exits 0, never waits for the database (it spools locally, about 100 ms) and
+never blocks your app, with one deliberate exception: while a call that could change
+something outside the repository has an unknown outcome, new external calls are denied
+until a person runs `continuum coding resolve`. `CONTINUUM_HOOKS=off` turns hooks off.
 
 The Claude Code plugin also adds `/continuum:handoff` (record decisions, a checkpoint and the
 next step before you switch model, chat or app) and `/continuum:resume`.

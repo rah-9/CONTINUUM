@@ -237,6 +237,10 @@ R15_per_person_isolation:
   - tests/integration/test_isolation.py::test_access_is_managed_only_by_the_operator
   - tests/integration/test_isolation.py::test_admin_cli
 R16_agent_actions_remembered:
+  - tests/integration/test_scenarios.py::test_s15c_background_subagents_reports_and_hidden_test_failures
+  - tests/unit/test_activity.py::test_outputs_that_report_failures_despite_exit_0
+  - tests/unit/test_activity.py::test_status_is_derived_not_guessed
+  - tests/unit/test_transcript.py::test_app_notifications_are_never_the_users_words
   - tests/unit/test_transcript.py::test_claude_code_tool_calls_with_results_subagents_and_compaction
   - tests/unit/test_transcript.py::test_codex_and_gemini_tool_calls_with_results
   - tests/unit/test_activity.py::test_claude_code_and_codex_hooks

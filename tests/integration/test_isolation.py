@@ -169,9 +169,12 @@ def test_the_operator_never_joins_someone_elses_session_by_accident(people, tmp_
 
 
 def test_access_is_managed_only_by_the_operator(people, schema):
-    with pytest.raises(access.NotOperatorError):
-        access.grant(Store(people.dsns["alice"], schema=schema, clock=people.op.clock,
-                           ids=RandomIds()), people.roles["eve"])
+    alice = Store(people.dsns["alice"], schema=schema, clock=people.op.clock, ids=RandomIds())
+    try:
+        with pytest.raises(access.NotOperatorError):
+            access.grant(alice, people.roles["eve"])
+    finally:
+        alice.close()
     eve = Store(people.dsns["eve"], schema=schema, clock=people.op.clock, ids=RandomIds())
     try:
         with pytest.raises(ContinuumError, match="continuum admin grant") as no:
