@@ -6,6 +6,8 @@ import json
 import tomllib
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 INTEGRATIONS = ROOT / "integrations"
 
@@ -30,11 +32,28 @@ def test_mcp_client_configs_launch_continuum_mcp():
     assert "/absolute/path" not in codex_text
 
 
+def _real_bash() -> str | None:
+    """bash, but not Windows' WSL launcher (System32\\bash.exe), which has no distro on CI."""
+    import os
+    import shutil
+
+    if os.name != "nt":
+        return shutil.which("bash")
+    git = shutil.which("git")
+    candidates = [Path(git).resolve().parents[1] / "bin" / "bash.exe"] if git else []
+    candidates.append(Path(os.environ.get("PROGRAMFILES", r"C:\Program Files"))
+                      / "Git" / "bin" / "bash.exe")
+    return next((str(c) for c in candidates if c.is_file()), None)
+
+
 def test_cloud_setup_script_is_valid_bash():
     import subprocess
 
     script = INTEGRATIONS / "cloud" / "setup.sh"
-    subprocess.run(["bash", "-n", str(script)], check=True)
+    bash = _real_bash()
+    if bash is None:
+        pytest.skip("no bash on this machine (the script runs in Linux containers)")
+    subprocess.run([bash, "-n", str(script)], check=True)
     text = script.read_text()
     assert "uv tool install" in text and "--python 3.12" in text  # PEP 668 / old pythons
 

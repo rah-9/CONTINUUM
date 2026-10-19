@@ -68,6 +68,11 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: Install PostgreSQL (macOS runners no longer ship it)
+        if: runner.os == 'macOS'
+        run: |
+          brew install postgresql@16
+          echo "$(brew --prefix postgresql@16)/bin" >> "$GITHUB_PATH"
       - uses: ikalnytskyi/action-setup-postgres@v6
         id: postgres
         with:
