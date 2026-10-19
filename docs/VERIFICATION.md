@@ -50,6 +50,7 @@ eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-sw
 | Coding handoff test | Running the tests wrote `__pycache__`, changing the fingerprint, so a just-passed check never counted | `test_running_tests_does_not_change_the_fingerprint` |
 | Shell-agent CLI test | `checks add … --actor X -- cmd` lost `--actor` to argparse `REMAINDER` | `test_c11_shell_only_agents_use_the_same_protocol_via_cli` |
 | Shell-agent CLI test | CLI hit a missing table on a database from an older version | `test_ensure_schema_migrates_only_when_needed` |
+| Replay of a real transcript (v0.9.0) | 27 of Claude's 47 messages kept (only the final one per turn; one per catch-up); Claude Code's uuid-less request copies read as messages | `test_s14_both_sides_of_the_chat_are_kept_exactly_through_an_outage`, `replay_capture.py` |
 | Memory benchmark (v0.9.0) | The brief kept the first and newest six messages: 15% of requirements reached the next model in 40-message chats, and answers to the agent's questions were lost | `test_nf6_long_chat_memory_quality` |
 | Real 30-message trial (v0.9.0) | A second identical message in one chat ("continue", "yes") was dropped at capture | `test_s13_repeated_words_in_one_chat_are_all_kept_and_reimports_add_nothing` |
 | Real 30-message trial with Haiku (v0.9.0) | The user's "stop here" to the previous agent was labelled "the current instruction", and an old open question stalled the next model | `tests/unit/test_memory.py` (`ends_chat`), rule in `brief.RULES` |
@@ -68,7 +69,7 @@ eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-sw
 
 ## Latest results (2026-10-19)
 
-- `make check`: ruff clean, `mypy --strict` clean. **361 passed**, 5 live tests skipped (opt-in). CI runs the same gates against PostgreSQL 16.
+- `make check`: ruff clean, `mypy --strict` clean. **362 passed**, 5 live tests skipped (opt-in). CI runs the same gates against PostgreSQL 16.
 - **Hardened schema:** the whole suite, including chaos, runs against the new CHECK constraints with zero violations. The runtime never writes a state the database considers invalid.
 - **Property search:** 150 random interleavings × 12 steps per connector mode (450 scenarios). All invariants held at every step.
 - **Non-functional baselines** (this container, PostgreSQL 16, fake models):

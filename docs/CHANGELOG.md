@@ -15,6 +15,13 @@ Long chats and every model (D-037). Measured in `docs/MEMORY-QUALITY.md`.
 - **Attention flags a session idle for more than 3 days.**
 
 ### Fixed
+- **Everything the agent writes is kept**, not only its final message per turn: every agent text message in the transcript (tool calls and tool output excluded). On the real 30-message transcript the journal had 27 of Claude's 47 messages. It now has 47 of 47, plus your 30 of 30, none duplicated, in order, also when the hooks fail and catch up later (`replay_capture.py`, `test_s14`).
+- **Exact message identity.**
+  - Transcript messages are keyed by the transcript's own ids.
+  - Claude Code's uuid-less request/cache copies (`api-request-blob`) are no longer read as messages.
+  - A live-captured message and its transcript copy are recognised as one.
+  - Recovered messages are ordered by their transcript timestamps.
+- **Caveats** such as "Note: X is not handled yet" are recognised in the agent's reports.
 - **Repeated messages.** A second identical message in one chat ("yes", "continue") was dropped at capture as a duplicate. Keys now count occurrences: submitted prompts are all kept, and transcript re-imports still add nothing.
 - **Duplicate capture at turn end.** A hook payload carrying both a transcript and this turn's fields could store the turn twice. The turn's fields are now skipped when the transcript already ends with them.
 

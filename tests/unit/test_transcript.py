@@ -17,21 +17,23 @@ CLAUDE_CODE = [
     {"type": "user", "uuid": "u1", "sessionId": "s1", "message": {
         "role": "user", "content": "Build the rate fetcher. It must cache results "
                                    "for ten minutes."}},
-    {"type": "assistant", "message": {"role": "assistant", "content": [
+    {"type": "assistant", "uuid": "a1", "message": {"role": "assistant", "content": [
         {"type": "thinking", "thinking": "plan"},
         {"type": "text", "text": "I'll read the service first."},
         {"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "a.py"}}]}},
-    {"type": "user", "message": {"role": "user", "content": [
+    {"type": "user", "uuid": "u2", "message": {"role": "user", "content": [
         {"type": "tool_result", "tool_use_id": "t1", "content": "def f(): ..."}]}},
-    {"type": "assistant", "isSidechain": True, "message": {
+    {"type": "assistant", "uuid": "a2", "isSidechain": True, "message": {
         "role": "assistant", "content": [{"type": "text", "text": "subagent chatter"}]}},
-    {"type": "user", "message": {"role": "user", "content": [
+    {"type": "user", "uuid": "u3", "message": {"role": "user", "content": [
         {"type": "text", "text": "<system-reminder>todo list is empty</system-reminder>"
                                  "Also: round every amount to two decimals."}]}},
-    {"type": "user", "isCompactSummary": True, "message": {
+    {"type": "user", "uuid": "u4", "isCompactSummary": True, "message": {
         "role": "user", "content": "This session is being continued from a previous ..."}},
-    {"type": "assistant", "message": {"role": "assistant", "content": [
+    {"type": "assistant", "uuid": "a3", "message": {"role": "assistant", "content": [
         {"type": "text", "text": "Part 1 done. Next: the cache."}]}},
+    {"type": "api-request-blob", "hash": "x1", "message": {"role": "user",
+                                                         "content": "Build the rate fetcher."}},
 ]
 
 CODEX = [
@@ -59,7 +61,7 @@ CODEX = [
 
 def test_claude_code_transcript_keeps_only_what_the_person_typed(tmp_path):
     msgs = read_transcript(_jsonl(tmp_path / "c.jsonl", CLAUDE_CODE))
-    assert [m for m in msgs if m.role == "user"] == [
+    assert [Message(m.role, m.text) for m in msgs if m.role == "user"] == [
         Message("user", "Build the rate fetcher. It must cache results for ten minutes."),
         Message("user", "Also: round every amount to two decimals.")]
     agent = [m.text for m in msgs if m.role == "agent"]
@@ -68,7 +70,8 @@ def test_claude_code_transcript_keeps_only_what_the_person_typed(tmp_path):
 
 
 def test_codex_rollout_without_injected_context_or_duplicates(tmp_path):
-    msgs = read_transcript(_jsonl(tmp_path / "rollout.jsonl", CODEX))
+    msgs = [Message(m.role, m.text) for m in
+            read_transcript(_jsonl(tmp_path / "rollout.jsonl", CODEX))]
     assert msgs == [Message("user", "Add the CLI command."),
                     Message("agent", "The CLI is added; tests pass.")]
 
@@ -77,8 +80,8 @@ def test_gemini_and_generic_chat_exports(tmp_path):
     gemini = tmp_path / "chat.json"
     gemini.write_text(json.dumps([{"role": "user", "parts": [{"text": "use sqlite"}]},
                                   {"role": "model", "parts": [{"text": "ok, sqlite"}]}]))
-    assert read_transcript(gemini) == [Message("user", "use sqlite"),
-                                       Message("agent", "ok, sqlite")]
+    assert [Message(m.role, m.text) for m in read_transcript(gemini)] == [
+        Message("user", "use sqlite"), Message("agent", "ok, sqlite")]
     generic = extract([{"messages": [{"role": "system", "content": "be terse"},
                                      {"role": "user", "content": "q"},
                                      {"role": "assistant", "content": "a"}]}])
@@ -91,7 +94,8 @@ def test_unknown_future_wrappers_and_garbage_degrade_gracefully(tmp_path):
         {"kind": "turn", "data": {"msg": {"role": "User", "content": [
             {"type": "text", "text": "future format"}, {"type": "image", "url": "x"}]}}})
         + "\n\n")
-    assert read_transcript(path) == [Message("user", "future format")]
+    assert [Message(m.role, m.text) for m in read_transcript(path)] == [
+        Message("user", "future format")]
     assert read_transcript(_jsonl(tmp_path / "empty.jsonl", [])) == []
 
 
@@ -107,6 +111,6 @@ def test_a_turn_end_reads_only_the_newest_part_of_a_long_transcript(tmp_path):
     records.append({"role": "assistant", "content": "final report"})
     path = _jsonl(tmp_path / "long.jsonl", records)
     tail = read_transcript(path, tail_bytes=4096)
-    assert tail[-1] == Message("agent", "final report")
+    assert (tail[-1].role, tail[-1].text) == ("agent", "final report")
     assert 0 < len(tail) < 30 and "old request 0 " not in tail[0].text
     assert len(read_transcript(path)) == 501

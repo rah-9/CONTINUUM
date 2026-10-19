@@ -9,7 +9,7 @@ context, next steps), which are useful but are claims, never proof.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from continuum.coding.memory import Turn, consolidate
@@ -296,6 +296,7 @@ def build_view(session: dict[str, Any], events: list[dict[str, Any]], current: R
                        last_seq=int(session["last_seq"]),
                        updated_at=session.get("updated_at")
                        if isinstance(session.get("updated_at"), datetime) else None)
+    alias_times: dict[str, list[Any]] = {}
     for e in events:
         p, at, actor = e["payload_json"], _iso(e["occurred_at"]), e["actor"]
         match e["type"]:
@@ -329,14 +330,41 @@ def build_view(session: dict[str, Any], events: list[dict[str, Any]], current: R
                 run = {**p, "seq": e["seq"], "at": at, "by": actor}
                 view.check_runs.append(run)
                 view.latest_runs[p["name"]] = run
+            case "ChatCaptured" if p.get("alias"):
+                # the transcript's copy of a message captured live: only its time is new
+                base = str(p.get("key", "")).split("@", 1)[0]
+                alias_times.setdefault(base, []).append(p.get("sent_at"))
             case "ChatCaptured":
                 view.chat.append({"role": p["role"], "text": p["text"], "source": p["source"],
                                   "chat": p.get("chat_id"),
                                   "chars_omitted": p.get("chars_omitted", 0), "at": at,
-                                  "seq": e["seq"]})
+                                  "seq": e["seq"], "key": str(p.get("key", "")),
+                                  "sent_at": p.get("sent_at"),
+                                  "occurred_at": e["occurred_at"]})
             case "SessionClosed":
                 view.closed_reason = p["reason"]
+    # Messages recovered from a transcript after a missed hook are stored late. Order by
+    # the transcript's own timestamps: a live message takes the time of its transcript copy
+    # (matched by words and occurrence), so one clock orders the whole chat.
+    for c in view.chat:
+        base, _, n = c["key"].partition("#")
+        times = alias_times.get(base, [])
+        index = int(n) - 1 if n.isdigit() else 0
+        sent = c["sent_at"] or (times[index] if index < len(times) else None)
+        c["when"] = _when(sent, c.pop("occurred_at"))
+    view.chat.sort(key=lambda c: (c["when"], c["seq"]))
     return view
+
+
+def _when(sent_at: Any, occurred_at: Any) -> datetime:
+    if isinstance(sent_at, str):
+        try:
+            return datetime.fromisoformat(sent_at)
+        except ValueError:
+            pass
+    if isinstance(occurred_at, datetime):
+        return occurred_at if occurred_at.tzinfo else occurred_at.replace(tzinfo=UTC)
+    return datetime.min.replace(tzinfo=UTC)
 
 
 def _agents_line(agents: list[dict[str, Any]], keep: int = 8) -> str:

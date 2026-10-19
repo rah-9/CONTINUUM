@@ -362,3 +362,21 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 - Embedding search for selection: a dependency and an index for a problem that ranking within a budget solves deterministically.
 - A larger fixed window of recent messages: it buys recall only for the recent part of the chat, and costs tokens on every handoff.
 
+## D-038 — Keep both sides of the chat, by the transcript's own identities
+
+**Context.** Replaying Trial 5's real transcript showed the journal held 27 of Claude's 47 messages:
+- Only each turn's final agent message was kept.
+- A catch-up after an outage kept only the last agent message overall.
+- Claude Code writes uuid-less request/cache copies of messages, which the parser read again.
+
+**Decision.**
+- **Keep every agent text message from transcripts** (tool calls and tool output excluded).
+- **Key transcript messages by the transcript's id.** Fall back to the occurrence count for formats without ids.
+- **Skip records without an id** when the transcript has ids.
+- **Store a transcript copy of a live-captured message as a hidden alias.** Re-imports stay idempotent, and the live message takes the copy's timestamp.
+- **Order the chat by transcript timestamps.**
+
+**Rejected.**
+- Matching live and transcript messages by text alone: it loses repeated words, which was the v0.8 bug.
+- Re-ordering stored events: the journal is immutable.
+

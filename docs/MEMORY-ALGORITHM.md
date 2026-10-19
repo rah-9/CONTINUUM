@@ -113,13 +113,27 @@ user text      -> remove harness-injected blocks (<system-reminder>, <environmen
 drop empty messages and immediate duplicates (an item and its event)
 ```
 
+Records: when a transcript identifies its messages (Claude Code `uuid`, Codex `timestamp`),
+records without an id are copies (request and cache blobs) and are skipped. Each message
+keeps its transcript id and timestamp.
+
 Storing (`service.capture`), in one transaction under the session row lock:
 
 ```
-for each message (only the newest agent message is kept: the turn's final report):
-  text = redact(text)        # known secrets, URL credentials, well-known token formats
-  key  = sha256(source, chat, role, text)
-  store ChatCaptured(text[:16000], chars_omitted) unless key already in the session
+from a transcript: every user message and every agent text message (tool calls and tool
+                   output are not conversation); from a live turn (prompt / notify): the
+                   user's words and the turn's final agent message
+text = redact(text)        # known secrets, URL credentials, well-known token formats
+key  = sha256(source, chat, role, text)
+  + "@" + id hash          if the transcript gave the message an id: exact identity, so a
+                           re-read (after an outage, or of a 2 MiB tail) adds each missed
+                           message once and nothing twice
+  + "#n"                   otherwise: the n-th occurrence of these words in the chat, so a
+                           second "yes" is a new message
+a transcript copy of a message already captured live is stored as a hidden alias (re-imports
+  stay idempotent); the live message takes the copy's timestamp
+store ChatCaptured(text[:16000], chars_omitted, sent_at) unless the key exists
+the brief orders the chat by transcript timestamps, so recovered messages fall into place
 no active session, a user message present, inside a git repository
                                     -> start one; goal = the first message
                                     (a plugin's hooks run in every folder; elsewhere a

@@ -106,6 +106,10 @@ class ChatCaptured(_P):
     chat_id: str | None = None
     key: str
     chars_omitted: int = 0
+    # The transcript copy of a message already captured live (by a prompt or notify hook).
+    # Stored so re-imports stay idempotent; never shown twice.
+    alias: bool = False
+    sent_at: str | None = None   # the transcript's timestamp for the message, if any
 
 
 class SessionClosed(_P):

@@ -56,6 +56,12 @@ _INJECTED_PREFIXES = ("Caveat: The messages below were generated",
 class Message:
     role: Literal["user", "agent"]
     text: str
+    # The transcript's own id for this message (Claude Code ``uuid``, Codex ``timestamp``),
+    # when it has one: the exact identity used to re-import without duplicates or losses.
+    ident: str | None = None
+    # When the message was written, if the transcript says (ISO-8601): restores the true
+    # order of messages recovered after a missed hook.
+    at: str | None = None
 
 
 def clean_user_text(text: str) -> str:
@@ -124,15 +130,33 @@ def extract(records: Iterable[Any]) -> list[Message]:
     harness injections; empty messages and consecutive duplicates are dropped (some
     formats log the same message twice, e.g. as an item and as an event)."""
     out: list[Message] = []
-    for record in records:
-        for msg in _walk(record):
+    records = list(records)
+    ids = [_record_id(r) for r in records]
+    # When a transcript identifies its messages, records without an id are copies (Claude
+    # Code writes request/cache blobs of messages it already logged), not new messages.
+    identified = any(i is not None for i in ids) and len(records) > 1
+    for record, rid in zip(records, ids, strict=True):
+        if identified and rid is None:
+            continue
+        stamp = record.get("timestamp") if isinstance(record, dict) else None
+        stamp = stamp if isinstance(stamp, str) else None
+        for k, msg in enumerate(_walk(record)):
             text = clean_user_text(msg.text) if msg.role == "user" else msg.text.strip()
             if not text:
                 continue
             if out and out[-1].role == msg.role and out[-1].text == text:
                 continue
-            out.append(Message(msg.role, text))
+            out.append(Message(msg.role, text, None if rid is None else f"{rid}/{k}", stamp))
     return out
+
+
+def _record_id(record: Any) -> str | None:
+    if isinstance(record, dict):
+        for key in ("uuid", "id", "timestamp"):
+            value = record.get(key)
+            if isinstance(value, str | int) and str(value):
+                return f"{key}:{value}"
+    return None
 
 
 def _records(data: bytes) -> list[Any]:

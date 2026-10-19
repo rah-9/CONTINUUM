@@ -81,7 +81,9 @@ _TASK_START = re.compile(
 _DECISION = re.compile(
     r"\b(I chose|I picked|I went with|I decided|decided to|chose|opted|switched to|"
     r"because|instead of|trade-?off|caveat|not yet|left out|skipped|TODO|known issue|"
-    r"limitation|assum(?:e|ed|ption)|deliberately|on purpose)\b", re.I)
+    r"limitation|assum(?:e|ed|ption)|deliberately|on purpose|not (?:\w+ )?(?:handled|"
+    r"supported|implemented|covered|tested|done)|unsupported|doesn'?t (?:handle|support)|"
+    r"won'?t|warning|beware)\b|^note\b", re.I)
 # Pasted material: never a requirement, even when it says "must".
 _PASTED_LINE = re.compile(
     r"^\s*(Traceback|File \"|at [\w.$]+\(|[\w.]*(Error|Exception|Warning)\b[:(]|"
