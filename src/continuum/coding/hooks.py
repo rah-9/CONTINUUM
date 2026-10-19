@@ -252,7 +252,10 @@ def fast(app: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any] | None]
     can_write = env is not None and env["phase"] in ("start", "finish", "start_finish") \
         and (env["effect"] == "write" or env["kind"] == "shell")
     if can_write or event in TURN_EVENTS:
-        entry["snapshot"] = snapshot.take(cwd)
+        try:
+            entry["snapshot"] = snapshot.take(cwd)
+        except Exception as exc:   # evidence is optional; capturing the call is not
+            _log(f"snapshot: {_masked(exc)}")
     if env is not None and env["phase"] == "start" and env["effect"] == "external":
         found = snapshot.git_dir(Path(cwd))
         root = str(found[0]) if found else cwd
@@ -286,20 +289,31 @@ def drain(coding: Any, *, deadline: float | None = None) -> int:
                 handle(str(entry.get("app") or "generic")[:40], entry["payload"], coding,
                        entry.get("snapshot"))
             except Exception as exc:
-                from continuum.core.errors import ContinuumError
-
-                if isinstance(exc, ContinuumError) and exc.code not in (
-                        "database_unavailable",):
-                    _log(f"spool: {path.name} not applied ({exc.code}); moved to failed/")
-                    spool_mod.quarantine(path)
-                    continue
-                raise   # the database is unreachable: keep the file, retry later
+                if _database_down(exc):
+                    raise   # keep the file and everything after it; retry later
+                # one entry that cannot be applied must not block the ones after it
+                _log(f"spool: {path.name} not applied ({_masked(exc)}); moved to failed/")
+                if os.environ.get("CONTINUUM_HOOKS_DEBUG"):
+                    _log(traceback.format_exc())
+                spool_mod.quarantine(path)
+                continue
             path.unlink(missing_ok=True)
             applied += 1
             lock.touch()
     finally:
         lock.release()
     return applied
+
+
+def _database_down(exc: BaseException) -> bool:
+    """The database is unreachable (retry later), as opposed to an entry it rejects."""
+    import psycopg
+    from psycopg_pool import PoolTimeout
+
+    from continuum.core.errors import ContinuumError
+
+    return isinstance(exc, psycopg.OperationalError | PoolTimeout) or (
+        isinstance(exc, ContinuumError) and exc.code == "database_unavailable")
 
 
 def _with_sdk(work: Any) -> Any:

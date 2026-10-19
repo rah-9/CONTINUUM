@@ -219,7 +219,7 @@ def test_s4_a_hook_never_breaks_or_stalls_the_agent(tmp_path):
 def test_s4b_hook_cli_round_trip_over_a_real_database(schema, repo, tmp_path):
     exe = str(Path(PY).parent / "continuum")
     env = {**os.environ, "CONTINUUM_DATABASE_URL": DSN, "CONTINUUM_DB_SCHEMA": schema,
-           "CONTINUUM_HOME": str(tmp_path / "home")}
+           "CONTINUUM_HOME": str(tmp_path / "home"), "CONTINUUM_HOOKS_DEBUG": "1"}
     notify = json.dumps({"type": "agent-turn-complete", "cwd": str(repo),
                          "input-messages": [REQ_1], "last-assistant-message": "ok"})
     out = subprocess.run([exe, "hook", "codex", notify], env=env, capture_output=True,
@@ -228,7 +228,10 @@ def test_s4b_hook_cli_round_trip_over_a_real_database(schema, repo, tmp_path):
     start = subprocess.run([exe, "hook", "claude-code"], env=env, capture_output=True,
                            text=True, timeout=60, input=json.dumps(
                                {"hook_event_name": "SessionStart", "cwd": str(repo)}))
-    assert REQ_1 in start.stdout and "Continuum coding brief" in start.stdout
+    log = tmp_path / "home" / "hooks.log"
+    assert REQ_1 in start.stdout and "Continuum coding brief" in start.stdout, (
+        log.read_text() if log.exists() else "no hooks.log",
+        sorted(p.name for p in (tmp_path / "home").rglob("*")))
 
 
 # S5 ---------------------------------------------------------------------------------------
@@ -653,3 +656,46 @@ def test_s15c_background_subagents_reports_and_hidden_test_failures(coding, repo
         "python -m pytest -q 2>&1 | tail -30"]
     assert "output reports failures" in brief["markdown"]
     assert brief["user_requests"]["messages"] == 1          # the app's notice is not a turn
+
+
+def test_s4c_the_spool_keeps_order_quarantines_bad_entries_and_waits_for_the_database(
+        coding, repo, tmp_path, monkeypatch):
+    """A spooled entry that cannot be applied is set aside (logged), and the entries
+    after it still reach the journal; while the database is down, nothing is lost."""
+    import psycopg
+
+    from continuum.coding import spool
+
+    monkeypatch.setenv("CONTINUUM_HOME", str(tmp_path / "home"))
+    root = str(repo)
+    for text in ("first request", "BREAK", "third request"):
+        spool.write({"app": "claude-code", "snapshot": None, "payload": {
+            "hook_event_name": "UserPromptSubmit", "cwd": root, "prompt": text}})
+    real = hooks.handle
+
+    def flaky(app, payload, c, snap=None):
+        if payload.get("prompt") == "BREAK":
+            raise ValueError("an entry the journal rejects")
+        return real(app, payload, c, snap)
+
+    monkeypatch.setattr(hooks, "handle", flaky)
+    assert hooks.drain(coding) == 2
+    assert [p.name for p in spool.pending()] == []
+    assert len(list((spool.spool_dir() / "failed").glob("*.json"))) == 1
+    assert _said(coding.brief(coding.latest_active(root))) == ["first request",
+                                                                "third request"]
+    assert "not applied" in (tmp_path / "home" / "hooks.log").read_text()
+
+    spool.write({"app": "claude-code", "snapshot": None, "payload": {
+        "hook_event_name": "UserPromptSubmit", "cwd": root, "prompt": "later"}})
+
+    def down(app, payload, c, snap=None):
+        raise psycopg.OperationalError("connection refused")
+
+    monkeypatch.setattr(hooks, "handle", down)
+    with pytest.raises(psycopg.OperationalError):
+        hooks.drain(coding)
+    assert len(spool.pending()) == 1                     # kept for the next drain
+    monkeypatch.setattr(hooks, "handle", real)
+    assert hooks.drain(coding) == 1
+    assert _said(coding.brief(coding.latest_active(root)))[-1] == "later"
