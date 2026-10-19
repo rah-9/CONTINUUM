@@ -159,6 +159,8 @@ def classify(tool: str, tool_input: Any = None) -> dict[str, Any]:
         if server and server.startswith("plugin_"):
             server = server[len("plugin_"):]
         effect = "read" if _MCP_READ.match(short) else "external"
+        if server == "continuum":            # Continuum's own journal: bookkeeping
+            effect = "read"
         return {"kind": "mcp", "server": server, "effect": effect}
     if name.startswith("mcp_"):                          # Gemini CLI: mcp_<server>_<tool>
         rest = tool[4:]
@@ -321,11 +323,13 @@ def from_hook(app: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     if low == "afterfileedit":
         app_call_id = None
     key = call_key(app_call_id, chat, tool, tool_input if app_call_id is None else None)
+    # every record carries the input: a finish whose start hook was missed still says
+    # what the call was
     common = {**base, "call_key": key, "call_id": app_call_id, "tool": tool,
               "kind": info["kind"], "server": info["server"], "effect": info["effect"],
-              "skill": skill_of(tool, tool_input)}
+              "skill": skill_of(tool, tool_input), "input": tool_input}
     if low in ("pretooluse", "beforetool", "beforeshellexecution", "beforemcpexecution"):
-        return {**common, "phase": "start", "input": tool_input}
+        return {**common, "phase": "start"}
     # a finish (Cursor's afterFileEdit is a finished edit with no separate start)
     response = payload.get("tool_response", payload.get("toolResponse"))
     if low == "aftershellexecution":
@@ -354,5 +358,5 @@ def from_hook(app: str, payload: dict[str, Any]) -> dict[str, Any] | None:
               "duration_ms": duration if isinstance(duration, int) else None,
               "output": output, "error": error_text or None}
     if low == "afterfileedit":
-        return {**finish, "phase": "start_finish", "input": tool_input}
+        return {**finish, "phase": "start_finish"}
     return finish

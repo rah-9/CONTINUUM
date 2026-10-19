@@ -212,3 +212,10 @@ def test_codex_and_gemini_tool_calls_with_results():
     assert _acts(activity(gemini, app="gemini-cli", chat=None)) == [
         ("start", "run_shell_command", None, "write"),
         ("finish", "run_shell_command", "ok", "write")]
+
+
+def test_app_notifications_are_never_the_users_words():
+    """Trial 7: a background subagent's completion notice arrived as a "user" message."""
+    assert clean_user_text("<task-notification><task-id>a1</task-id><status>completed"
+                           "</status></task-notification>") == ""
+    assert clean_user_text("<bash-input>ls</bash-input><bash-stdout>a.py</bash-stdout>") == ""

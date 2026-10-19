@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from continuum.coding import snapshot
 from continuum.coding.models import (
     CompactionObserved,
     FileImpactObserved,
+    SubagentReported,
     ToolCallFinished,
     ToolCallResolved,
     ToolCallStarted,
@@ -32,6 +34,21 @@ BLOB_MAX_CHARS = 1_000_000   # a blob keeps at most this much (head and tail hal
 INPUT_MAX_CHARS = 16_000     # inline tool input; larger inputs are kept whole in a blob
 MAX_ERROR = 2000
 EFFECTS_NEEDING_RESULT = ("write", "external")
+
+
+# What an output itself says went wrong, for commands whose exit code hides it (a pipe
+# into `tail`, a runner that exits 0). Matched on the output's last 20,000 characters.
+_SIGNALS = {
+    "tests_failed": re.compile(
+        r"\b[1-9]\d* (?:failed|failing|failures?|errors?)\b|^FAILED\b|^FAIL\b|"
+        r"Tests?:\s+[1-9]\d* failed|^ERROR:? .*test", re.M),
+    "traceback": re.compile(r"^Traceback \(most recent call last\):", re.M),
+}
+
+
+def signals(output: str) -> list[str]:
+    tail = output[-20_000:]
+    return [name for name, pattern in _SIGNALS.items() if pattern.search(tail)]
 
 
 def excerpt(text: str) -> str:
@@ -144,6 +161,8 @@ class Recorder:
             self.compaction(env)
         elif phase == "turn_end":
             self.turn_end(env)
+        elif phase == "subagent_stop":
+            self.subagent(env)
 
     def start(self, env: dict[str, Any]) -> None:
         key = str(env["call_key"])
@@ -194,7 +213,7 @@ class Recorder:
             exit_code=env.get("exit_code") if isinstance(env.get("exit_code"), int) else None,
             duration_ms=duration if isinstance(duration, int) else None,
             output_excerpt=excerpt(output), output_blob=blob, output_chars=len(output),
-            error=error, untrusted=True, tree_after=tree_after,
+            error=error, untrusted=True, signals=signals(output), tree_after=tree_after,
             source=self._text(env.get("app") or "app")[:60],
             chat_id=self._opt(env.get("chat"), 120), sent_at=_timestamp(env.get("at"))))
         before = self.started[key].get("tree_before")
@@ -217,6 +236,23 @@ class Recorder:
             files_total=found["files_total"], diff_blob=diff_blob,
             patch_bytes=found["patch_bytes"], truncated=found["truncated"],
             source=self._text(source)[:60]))
+
+    def subagent(self, env: dict[str, Any]) -> None:
+        agent = self._opt(env.get("agent_id"), 200)
+        report = self._text(env.get("report"))
+        if not agent or not report:
+            return
+        if self.conn.execute(
+                b"SELECT 1 FROM coding_events WHERE session_id = %s AND type = "
+                b"'SubagentReported' AND payload_json->>'agent_id' = %s",
+                (self.sid, agent)).fetchone():
+            return
+        blob = self.blob(report) if len(report) > 2000 else None
+        self._put(SubagentReported(
+            agent_id=agent, agent_type=self._opt(env.get("agent_type"), 200),
+            report_excerpt=excerpt(report), report_blob=blob,
+            source=self._text(env.get("app") or "app")[:60],
+            chat_id=self._opt(env.get("chat"), 120)))
 
     def compaction(self, env: dict[str, Any]) -> None:
         summary = self._text(env.get("summary"))

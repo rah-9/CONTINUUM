@@ -621,3 +621,32 @@ def test_s16_the_same_short_answer_in_two_apps_is_two_answers(coding, repo):
     md = coding.brief(coding.latest_active(root))["markdown"]
     assert '"Should I also drop the `old_export` table?" → "yes"' in md
     assert '"Should I gzip the `nightly_dump` files?" → "yes"' in md
+
+
+def test_s15c_background_subagents_reports_and_hidden_test_failures(coding, repo, tmp_path,
+                                                                     monkeypatch):
+    """Trial 7 found: a background subagent's tool result is only a handle (its report
+    comes with SubagentStop), and a piped test run exits 0 although tests failed."""
+    monkeypatch.setenv("CONTINUUM_HOME", str(tmp_path / "home"))
+    root = str(repo)
+
+    def hook(payload):
+        hooks.handle("claude-code", {"cwd": root, "session_id": "c", **payload}, coding)
+
+    hook({"hook_event_name": "UserPromptSubmit", "prompt": "Find TODOs and run the tests."})
+    hook({"hook_event_name": "PostToolUse", "tool_name": "Task", "tool_use_id": "t1",
+          "tool_input": {"description": "List TODO comments"},
+          "tool_response": {"agentId": "ag9", "isAsync": True, "status": "async_launched"}})
+    hook({"hook_event_name": "SubagentStop", "agent_id": "ag9", "agent_type": "Explore",
+          "last_assistant_message": "Found 2 TODOs: parse.py:14 (CHF), totals.py:20 (VAT)."})
+    hook({"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_use_id": "t2",
+          "tool_input": {"command": "python -m pytest -q 2>&1 | tail -30"},
+          "tool_response": {"stdout": "F...\n1 failed, 3 passed in 0.1s", "stderr": ""}})
+    brief = coding.brief(coding.latest_active(root))
+    [sub] = brief["work_log"]["subagents"]
+    assert "parse.py:14" in sub["report"] and "agentId" not in sub["report"]
+    [cmd] = brief["work_log"]["commands"]
+    assert cmd["status"] == "reports_failures"
+    assert [f["target"] for f in brief["work_log"]["failures"]] == [
+        "python -m pytest -q 2>&1 | tail -30"]
+    assert "output reports failures" in brief["markdown"]

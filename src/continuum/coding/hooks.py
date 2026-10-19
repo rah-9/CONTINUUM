@@ -38,11 +38,13 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from continuum.coding import activity
 from continuum.coding import spool as spool_mod
-from continuum.coding.transcript import Message, read_all
+
+if TYPE_CHECKING:   # the hot path does not load the transcript parser
+    from continuum.coding.transcript import Message
 
 CHAT_KEYS = ("session_id", "sessionId", "thread-id", "thread_id", "conversation_id",
              "conversationId")
@@ -108,6 +110,8 @@ def _read(payload: dict[str, Any], app: str, chat: str | None
     path = _first_str(payload, TRANSCRIPT_KEYS)
     if not path or not Path(path).expanduser().is_file():
         return [], []
+    from continuum.coding.transcript import read_all
+
     tail = TURN_TAIL_BYTES if _event(payload) in TURN_EVENTS else None
     return read_all(Path(path).expanduser(), app=app, chat=chat,
                     **({"tail_bytes": tail} if tail else {}))
@@ -120,6 +124,8 @@ def messages_from(payload: dict[str, Any], history: list[Message] | None = None
     The transcript is re-imported idempotently (occurrences are counted within it). This
     turn's fields (``prompt``, ``input-messages``, ``last-assistant-message``) are new
     messages, except when the transcript already ends with them."""
+    from continuum.coding.transcript import Message
+
     if history is None:
         history, _ = _read(payload, "transcript", None)
     turn: list[Message] = []
@@ -166,7 +172,7 @@ def handle(app: str, payload: dict[str, Any], coding: Any,
                    "output": str(payload["continuum_denied"])}
         envs = [env]
         if env["phase"] == "subagent_stop":
-            envs = _subagent_activity(env, app)
+            envs = [*_subagent_activity(env, app), env]
         if envs:
             coding.record_activity(cwd, envs, source=app)
         return ""
@@ -191,6 +197,8 @@ def handle(app: str, payload: dict[str, Any], coding: Any,
 
 def _subagent_activity(env: dict[str, Any], app: str) -> list[dict[str, Any]]:
     """A subagent finished: its own tool calls, from its transcript, under its id."""
+    from continuum.coding.transcript import read_all
+
     path = env.get("transcript")
     if not isinstance(path, str) or not Path(path).expanduser().is_file():
         return []

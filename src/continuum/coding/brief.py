@@ -420,7 +420,8 @@ def build_view(session: dict[str, Any], events: list[dict[str, Any]], current: R
                                   "failed": bool(p.get("failed", False)),
                                   "occurred_at": e["occurred_at"]})
             case ("ToolCallStarted" | "ToolCallFinished" | "ToolCallUnresolved"
-                  | "ToolCallResolved" | "FileImpactObserved" | "CompactionObserved"):
+                  | "ToolCallResolved" | "FileImpactObserved" | "CompactionObserved"
+                  | "SubagentReported"):
                 view.tools.append({"seq": e["seq"], "type": e["type"], "p": p, "at": at})
             case "SessionClosed":
                 view.closed_reason = p["reason"]

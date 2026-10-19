@@ -46,7 +46,8 @@ _INJECTED_TAGS = ("system-reminder", "environment_context", "user_instructions",
                   "user-prompt-submit-hook", "command-message", "command-name",
                   "command-args", "local-command-stdout", "local-command-stderr",
                   "local-command-caveat", "ide_selection", "ide_opened_file",
-                  "ide_diagnostics", "INSTRUCTIONS", "turn_aborted", "session-start-hook")
+                  "ide_diagnostics", "INSTRUCTIONS", "turn_aborted", "session-start-hook",
+                  "task-notification", "bash-input", "bash-stdout", "bash-stderr")
 _INJECTED_BLOCK = re.compile(
     r"<(" + "|".join(re.escape(t) for t in _INJECTED_TAGS) + r")(?:\s[^>]*)?>.*?</\1>",
     re.S)
@@ -271,7 +272,8 @@ def _finish(start: dict[str, Any], *, output: str, is_error: bool, exit_code: in
     status = act.status_of(is_error=is_error, text=output, interrupt=interrupt,
                            exit_code=exit_code)
     return {**{k: start[k] for k in ("v", "app", "chat", "call_key", "call_id", "tool",
-                                      "kind", "server", "effect", "skill", "agent_id")},
+                                      "kind", "server", "effect", "skill", "agent_id",
+                                      "input")},
             "phase": "finish", "status": status, "exit_code": exit_code,
             "duration_ms": None, "output": output,
             "error": output[:2000] if status in ("error", "denied") else None, "at": stamp}
