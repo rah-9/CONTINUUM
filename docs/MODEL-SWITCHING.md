@@ -28,7 +28,7 @@ dialog, but it makes both outcomes safe:
 - **Keeping the chat** works too, but it is the expensive path. Prompt caches do not carry across models, and in a measured 30-message chat every call carried ~135k tokens of history. The brief carried the same requirements in ~2.1k tokens.
 - **Before a deliberate switch,** run `/continuum:handoff` in Claude Code. It records decisions, a checkpoint and the next step.
 
-Details: [MEMORY-QUALITY.md](MEMORY-QUALITY.md) §5.
+Details: [MEMORY-QUALITY.md](MEMORY-QUALITY.md) §6.
 
 ## How to switch
 

@@ -187,8 +187,10 @@ def test_s3_hooks_fire_repeatedly_and_concurrently_without_duplicates(coding, re
     # The transcript re-imports (5 hook calls, 4 concurrent) add nothing twice. REQ_1
     # submitted again as a new prompt IS a new message (people repeat themselves, and a
     # second "yes" must not be lost), and REQ_2 via another source is kept in the journal.
-    assert [e["payload_json"]["role"] for e in captured] == [
-        "user", "user", "agent", "user", "user"]
+    # every agent text message of the transcript is kept, not only the turn's last one
+    assert [(e["payload_json"]["role"], e["payload_json"]["text"][:12]) for e in captured] == [
+        ("user", REQ_1[:12]), ("agent", "Reading lib/"), ("user", REQ_2[:12]),
+        ("agent", "done"), ("user", REQ_1[:12]), ("user", REQ_2[:12])]
     # in order: #1 REQ_1, #2 REQ_2 (the copy from another source is not repeated),
     # #3 REQ_1 again: the latest message
     assert _said(coding.brief(sid)) == [REQ_1, REQ_2, REQ_1]
@@ -408,3 +410,52 @@ def test_s13_repeated_words_in_one_chat_are_all_kept_and_reimports_add_nothing(
         coding.capture(str(repo), [Message("user", u) for u in users], source="codex",
                        chat_id="t", history=True)
     assert len(coding._events(sid)[1]) == before
+
+
+# S14 --------------------------------------------------------------------------------------
+
+def test_s14_both_sides_of_the_chat_are_kept_exactly_through_an_outage(coding, repo, tmp_path):
+    """Everything the user AND the agent wrote is kept: no message missing, none twice, in
+    the order written. Shaped like a real Claude Code transcript (found in Trial 5's): each
+    message record has a uuid and a timestamp; the file also holds uuid-less request/cache
+    copies of messages; words repeat ("continue", "Done."); hooks fail for the first turns
+    (database down) and catch up later."""
+    script = [("user", "Build the parser."), ("agent", "Reading the grammar first."),
+              ("agent", "I chose a recursive-descent parser because the grammar is LL(1)."),
+              ("user", "continue"), ("agent", "Done."),
+              ("user", "Errors must include the line number."), ("agent", "Done."),
+              ("user", "continue"), ("agent", "Note: unicode identifiers are not handled yet."),
+              ("agent", "Done.")]
+    lines, starts = [], []
+    for i, (role, text) in enumerate(script):
+        kind = "user" if role == "user" else "assistant"
+        if role == "user":
+            starts.append(len(lines))
+        lines.append(json.dumps({"type": kind, "uuid": f"u{i}",
+                                 "timestamp": f"2026-10-18T10:{i:02d}:00Z",
+                                 "message": {"role": kind, "content": [
+                                     {"type": "text", "text": text}]}}))
+        lines.append(json.dumps({"type": "api-request-blob", "hash": f"h{i}",
+                                 "message": {"role": kind, "content": text}}))
+    starts.append(len(lines))
+    partial = tmp_path / "t.jsonl"
+    base = {"session_id": "chat-1", "cwd": str(repo)}
+    for t in range(len(starts) - 1):
+        if t < 2:
+            continue                       # database down: these hooks only logged errors
+        prompt = json.loads(lines[starts[t]])["message"]["content"][0]["text"]
+        hooks.handle("claude-code", {**base, "hook_event_name": "UserPromptSubmit",
+                                     "prompt": prompt}, coding)
+        partial.write_text("\n".join(lines[:starts[t + 1]]) + "\n")
+        hooks.handle("claude-code", {**base, "hook_event_name": "Stop",
+                                     "transcript_path": str(partial)}, coding)
+    for _ in range(2):                     # session end re-reads it all (twice: idempotent)
+        partial.write_text("\n".join(lines) + "\n")
+        hooks.handle("claude-code", {**base, "hook_event_name": "SessionEnd",
+                                     "transcript_path": str(partial)}, coding)
+    view = coding._view(coding.latest_active(str(repo)))
+    assert [(c["role"], c["text"]) for c in view.chat] == script
+    brief = coding.brief(view.session_id)
+    decisions = " ".join(d["text"] for d in brief["agent_notes"]["reported_decisions"])
+    assert "recursive-descent" in decisions and "unicode identifiers" in decisions
+    assert any("line number" in i["text"] for i in brief["user_requests"]["ledger"])

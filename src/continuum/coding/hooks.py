@@ -130,10 +130,12 @@ def handle(app: str, payload: dict[str, Any], coding: Any) -> str:
         return CONTEXT_HEADER + str(brief["markdown"])
     history, turn = messages_from(payload)
     chat = _first_str(payload, CHAT_KEYS)
-    if history:
-        coding.capture(cwd, history, source=app, chat_id=chat, history=True)
+    # this turn first, then the transcript: the transcript's copy of a message captured
+    # live is then recognised as the same message (an alias), never a second one
     if turn:
         coding.capture(cwd, turn, source=app, chat_id=chat)
+    if history:
+        coding.capture(cwd, history, source=app, chat_id=chat, history=True)
     return ""
 
 

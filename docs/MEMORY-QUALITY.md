@@ -23,12 +23,37 @@ method is described so it can be rerun. The algorithm itself is in
   - **Model-dependent:** following the rules and reading the brief correctly.
   - **What the trials found:** the weakest model (Haiku) exposed two places where the brief could be misread. Both were fixed (§4), and Haiku then scored 13/13 in two runs.
   - **Not measured:** GPT models, because this environment has no OpenAI access.
+- **Both sides of the chat.** Your messages and everything the agent writes (except tool calls and tool output) are kept exactly. On the real 30-message transcript: 30/30 and 47/47, none missing, none duplicated, in order, even when the hooks failed (§2).
 - **The model-switch notice.**
   - Continuum cannot remove an app's own dialog. That dialog is part of the closed-source app.
   - It makes the dialog harmless. Accepting a new chat costs nothing in memory, because the new chat receives the brief automatically in Claude Code, or through `coding_resume` elsewhere.
-  - A new chat is also far cheaper than carrying the old chat over to a new model (§5).
+  - A new chat is also far cheaper than carrying the old chat over to a new model (§6).
 
-## 2. Long chats: the memory benchmark
+## 2. Both sides of the conversation are kept exactly
+
+Your messages and everything the agent writes (its explanations, choices and caveats, not
+its tool calls or tool output) are journaled. The real 30-message transcript from Trial 5 was
+replayed through the exact hook sequence Claude Code produced
+(`eval/handoff_trials/long_chat/replay_capture.py`), in three situations:
+
+| hooks failing (database down) | your messages | Claude's messages | missing | duplicated | order |
+|---|---|---|---|---|---|
+| never | 30 / 30 | 47 / 47 | 0 | 0 | as written |
+| first 4 turns | 30 / 30 | 47 / 47 | 0 | 0 | as written |
+| every turn (recovered at session end) | 30 / 30 | 47 / 47 | 0 | 0 | as written |
+
+Before this fix, the same chat kept 27 of 47 of Claude's messages, and only 27 of its 30
+end-of-turn replies. The real transcript showed three problems that synthetic tests had not:
+- **Only the final agent message of a turn was kept.** Now every agent text message is kept.
+- **A catch-up after an outage kept only the very last agent message.** Messages are now matched by the transcript's own ids, so a re-read keeps every missed message exactly once.
+- **Claude Code transcripts also contain uuid-less request and cache copies of messages** (`api-request-blob`). When a transcript identifies its messages, records without an id are treated as copies.
+
+A message captured live by a hook and later seen again in the transcript is recognised as
+the same message. Recovered messages take the transcript's timestamps, so the brief keeps
+the true order, which "the higher number wins" depends on.
+`test_s14_both_sides_of_the_chat_are_kept_exactly_through_an_outage` pins all of this.
+
+## 3. Long chats: the memory benchmark
 
 `continuum_lab.memory_bench` generates coding conversations of N user messages, each
 followed by the agent's final report, and plants facts at random turns:
@@ -47,13 +72,13 @@ per row:
 | messages | version | explicit | no cue | fresh phrasings¹ | changes of mind | answers | agent decisions | noise leaked | tokens (max) |
 |---|---|---|---|---|---|---|---|---|---|
 | 10 | v0.8.0 | 0.74 | 0.80 | 0.46 | 1.00 | 0.00 | 0.00 | 0.42 | — |
-| 10 | **v0.9.0** | **1.00** | **1.00** | **1.00** | **1.00** | **1.00** | **1.00** | **0.00** | 708 |
+| 10 | **v0.9.0** | **1.00** | **1.00** | **1.00** | **1.00** | **1.00** | **1.00** | **0.00** | 778 |
 | 40 | v0.8.0 | 0.15 | 0.14 | 0.10 | 0.23 | 0.00 | 0.00 | 0.11 | — |
-| 40 | **v0.9.0** | **1.00** | **1.00** | **1.00** | **1.00** | **1.00** | **1.00** | **0.00** | 1,154 |
+| 40 | **v0.9.0** | **1.00** | **1.00** | **1.00** | **1.00** | **1.00** | **1.00** | **0.00** | 1,225 |
 | 80 | v0.8.0 | 0.07 | 0.08 | 0.05 | 0.18 | 0.00 | 0.00 | 0.02 | — |
-| 80 | **v0.9.0** | **1.00** | **1.00** | **1.00** | **1.00** | **0.99** | **1.00** | **0.00** | 1,705 |
+| 80 | **v0.9.0** | **1.00** | **1.00** | **1.00** | **1.00** | **0.99** | **1.00** | **0.00** | 1,776 |
 | 160, verbose² | v0.8.0 | 0.04 | 0.03 | 0.03 | 0.07 | 0.00 | 0.00 | 0.01 | — |
-| 160, verbose² | **v0.9.0** | **1.00** | **1.00** | **1.00** | **1.00** | **1.00** | **1.00** | **0.00** | 2,965 |
+| 160, verbose² | **v0.9.0** | **1.00** | **1.00** | **1.00** | **1.00** | **1.00** | **1.00** | **0.00** | 3,035 |
 
 ¹ **Generalization was measured, not assumed.** Three sets of phrasings were held out of
 development:
@@ -68,7 +93,7 @@ message beyond 40 and is capped at about 2.5k tokens of ledger. This is the meas
 `tests/nonfunctional/test_nonfunctional.py::test_nf6_long_chat_memory_quality` pins this:
 any change that drops recall below 95% or lets noise through fails the build.
 
-## 3. What changed in the algorithm (v0.9.0)
+## 4. What changed in the algorithm (v0.9.0)
 
 Before, the brief showed the first message and the newest six. Now
 `coding/memory.py` reads every captured message (D-037):
@@ -93,7 +118,7 @@ Capture was fixed too. A second identical message in one chat ("yes", "continue"
 dropped as a duplicate. Message keys now count occurrences, so each submitted prompt is
 kept, while re-importing a transcript still adds nothing.
 
-## 4. Different LLMs
+## 5. Different LLMs
 
 What does not depend on the model: capture by the app, the journal, consolidation, the code
 map, check verification. Every model receives the same facts, in plain Markdown, at the
@@ -108,12 +133,12 @@ it:
 | Haiku, long chat | The previous agent's last report ended with an open proposal. Haiku stopped to ask the user instead of continuing. | Rule: continue with the user's instruction; for an open question the user did not answer, pick the safest option, record it as a decision, and say so. Ask first only for destructive choices. |
 | Haiku, long chat | The user's last message to the previous agent ("stop here, the next model will do it") was labelled "the current instruction", so Haiku did not start the remaining work. | It is labelled "the most recent message". When it ends the chat, Attention says the stop was addressed to the previous agent and the remaining work is now theirs. |
 
-Results on the 30-message chat (§6), after the fixes: Haiku 13/13 in two runs, Sonnet
+Results on the 30-message chat (§7), after the fixes: Haiku 13/13 in two runs, Sonnet
 13/13, Opus 13/13. GPT models (Codex) were not run: this environment has no OpenAI
 access. The harness is vendor-neutral, and the GPT → Claude runbook is in
 `eval/handoff_trials/README.md`.
 
-## 5. The "you changed the model" notice
+## 6. The "you changed the model" notice
 
 Coding apps behave differently when you change model mid-chat:
 - Some warn you.
@@ -130,7 +155,7 @@ Continuum cannot change an app's own dialog. It makes either outcome safe and ch
   - Measured in the 30-message trial: by message 30, every call carried **~135,000 tokens** of history. The Continuum brief for the same chat is **~2,100 tokens**, so starting a new chat on the new model is the cheaper way to switch.
 - **Before a deliberate switch,** run `/continuum:handoff` in Claude Code (a plugin command). The current model records its decisions, a checkpoint and the next step. `/continuum:resume` does the opposite in the new chat.
 
-## 6. Real trials (summary; details in HANDOFF-TRIALS.md)
+## 7. Real trials (summary; details in HANDOFF-TRIALS.md)
 
 | Trial | Model A | Model B | With Continuum | Without |
 |---|---|---|---|---|
@@ -144,7 +169,7 @@ In Trial 5 the database was down for the first minutes of model A's chat, and th
 logged timeouts. Every message from that time was recovered from the transcript later: a
 real-world check of the "hooks never break the agent, and catch up" design.
 
-## 7. Limits
+## 8. Limits
 
 - **Lexical rules.** Requirements are recognised by language patterns plus "keep every
   statement". A requirement buried in a long question ("could you make sure X?") is a
