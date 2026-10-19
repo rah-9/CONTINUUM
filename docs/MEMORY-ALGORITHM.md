@@ -131,13 +131,40 @@ duplicate a message.
 
 ### 3.4 Assembling the brief (`brief.SessionView.to_dict`, `render_markdown`)
 
-From the journal plus a fresh observation. Every cap is fixed, and every omission is
-counted and shown:
+From the journal plus a fresh observation. Every cap is fixed or grows slowly with the
+chat up to a cap, and every omission is counted and shown. The user's side of the
+conversation is consolidated (`coding/memory.py`, D-037); the measured quality is in
+[MEMORY-QUALITY.md](MEMORY-QUALITY.md):
+
+```
+consolidate(turns):                                     # every captured message, in order
+  number user messages #1..#N
+  latest  = #N whole (2,000 chars); flag ends_chat ("stop here", "next model will ...")
+            + the agent's question it answers, if #N is a short reply
+  first   = #1 (700 chars), as prose
+  for each earlier message m:
+      if m is a short reply and the agent's message before it asked a question:
+          candidate(answer, strength 3, 'asked "Q?" -> "yes"')
+      for each sentence s of prose(m):        # code blocks, traces, logs, diffs removed;
+                                              # a pasted block runs until a blank line
+          revision cue ("actually", "instead of", ...)  -> strength 3
+          strong cue ("must", "never", "only", ...)     -> strength 2
+          weak cue / preference / spec line / value statement -> strength 1
+          question, small talk, short reply             -> dropped
+          anything else                                 -> statement, strength 0
+      at most 6 candidates per message
+  identical sentences: keep the newest occurrence
+  fill the ledger by (strength, newer) within 4,400 chars + 50 per message beyond 40
+      (cap 10,000); show it in conversation order with message numbers
+  agent decisions = choice/caveat sentences from the agent's reports, newest 8 (+1 per
+      40 reports, cap 14), as claims
+```
 
 | Section | Selection | Bound |
 |---|---|---|
 | Attention | rules in 3.5 | a few lines |
-| What the user asked | first request + newest 6; short replies ("continue", "ok") dropped except the newest; identical text once | 2,000 chars each (1,200 in Markdown) |
+| What the user asked | consolidation above: first request, ledger, most recent message (with the question it answers) | latest 2,000 chars; ledger 4,400–10,000 chars |
+| Reported choices and caveats | decision sentences from captured agent reports (claims) | 8–14 items, 260 chars each |
 | Verified facts | current code, commits since the last checkpoint, latest check per name | 50 files, 10 commits |
 | Code map | files changed since the session's base commit (git) or modified since it started (mtime, outside git), +/- lines, enclosing context, names defined | 40 files (15 in Markdown), 8 names each |
 | Tasks | all, with verified / needs re-verification | — |
@@ -151,8 +178,11 @@ forge the brief's own headings. MCP returns the Markdown plus task ids (compact)
 ### 3.5 Attention rules (computed, not written by a model)
 
 - No chat captured: requirements stated only in chat may be missing; ask the user.
-- The user's newest request is newer than the newest `next_step`: it is the current
-  instruction.
+- The user's most recent message ended the previous chat ("stop here", "the next model will
+  do it"): the stop was addressed to the previous agent; the remaining work is the next
+  one's. Otherwise, if that message is newer than the newest `next_step`, it says what to
+  do now.
+- Nothing was recorded for more than 3 days: confirm the latest request is still current.
 - The code map is non-empty and the code differs from the last checkpoint (or there is
   none): read the mapped files first.
 - Verified tasks whose code or check definition changed: re-verify them.
@@ -179,7 +209,7 @@ forge the brief's own headings. MCP returns the Markdown plus task ids (compact)
 | capture hook | at a turn's end the newest 2 MiB of the transcript; 1 transaction |
 | brief | 1 journal read + fingerprint + code map (3 git calls) |
 | recall | 1 journal read per session searched; no index to maintain |
-| tokens | compact brief ~1.3k typical, < 4k worst case; full JSON < 10k |
+| tokens | compact brief ~0.7k–1.8k for chats up to 80 messages, ~3k at 160 (measured); full JSON < 10k |
 
 ## 5. Scenarios
 
@@ -201,11 +231,14 @@ transcripts are built with each app's structure.
 | S10 | one-command setup in a repo with existing rules and hooks | merged, idempotent, nothing of the user's lost | `test_s10_…` |
 | S11 | existing v3 database | upgraded in place | `test_s11_…` |
 | S12 | hooks installed for every project; the user chats in a non-repository folder | nothing journaled unless a session is started explicitly | `test_s12_…` |
+| S13 | the user says "yes" or "continue" several times in one chat | every one kept; transcript re-imports add nothing | `test_s13_…` |
+| — | long chats of 10–160 messages with requirements, changes of mind, answers, agent decisions and pasted noise anywhere | all of them in the brief, no noise, ≤ ~3k tokens | `continuum_lab.memory_bench`, `test_nf6_long_chat_memory_quality`, `tests/unit/test_memory.py` (with a property test) |
 | — | model or version switch in one app; new chat; vendor switch | everything above | `test_coding.py` C1–C11, `test_mcp_stdio.py` |
 | — | commit, rebase, failing/timed-out checks, forged text, races | facts stay correct | `test_coding_hardening.py`, `test_brief_quality.py` |
 | — | transcript formats: Claude Code, Codex, Gemini, generic chat export, an unknown future wrapper, garbage lines | user text only, no injected context | `tests/unit/test_transcript.py` |
 
-Real models: see [HANDOFF-TRIALS.md](HANDOFF-TRIALS.md), Trial 4.
+Real models: see [HANDOFF-TRIALS.md](HANDOFF-TRIALS.md), Trials 4 and 5, and the summary
+in [MEMORY-QUALITY.md](MEMORY-QUALITY.md).
 
 ## 6. Support by app
 

@@ -47,6 +47,9 @@ never wrote it down:
 
 A hook always exits 0 and never blocks your app. `CONTINUUM_HOOKS=off` turns it off.
 
+The Claude Code plugin also adds `/continuum:handoff` (record decisions, a checkpoint and the
+next step before you switch model, chat or app) and `/continuum:resume`.
+
 **Human decisions are intentionally not tools.** These include approving a gated action, confirming an
 uncertain effect, `retry_at_risk` and `abort`. A model must not approve its own side effects. The
 agent shows the user the exact `continuum resolve …` command instead.

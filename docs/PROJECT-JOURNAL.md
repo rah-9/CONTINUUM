@@ -160,6 +160,20 @@ Every feature is judged by one question: *does it keep valid work and prevent un
 - **`coding_recall`** keeps the brief small without forgetting anything. **`continuum coding setup`** wires a repository in one command.
 - **The whole algorithm is written down** with its bounds and a tested scenario matrix ([MEMORY-ALGORITHM.md](MEMORY-ALGORITHM.md)), and validated with real models in real Claude Code (Trial 4 in [HANDOFF-TRIALS.md](HANDOFF-TRIALS.md)).
 
+### Phase 10: v0.9.0, long chats and every model
+
+- **The gap, measured:** the brief kept the first and newest six messages, so in a 40-message chat 15% of the user's requirements reached the next model.
+- **Consolidation (D-037):**
+  - every message is read; pasted output is removed
+  - requirements, changes of mind, answers and statements are ranked within a budget that grows with the chat
+  - the agent's reported decisions are kept as claims
+- **Results:**
+  - benchmark: 100% recall at 10–160 messages, checked against held-out phrasings
+  - real 30-message Claude Code chat: Haiku, Sonnet and Opus each 13/13 with Continuum, 9/13 without
+- **Weaker models** exposed two places where the brief could be misread. Both were fixed.
+- **Capture** keeps repeated messages.
+- **New docs and commands:** `docs/MEMORY-QUALITY.md` answers how well memory works and what to do about an app's model-switch notice; `/continuum:handoff`.
+
 ## 4. Evidence so far
 
 Results are from the deterministic fake-model safety matrix: 15 tasks × 6 faults × 3 connector modes × 2 seeds, 912 paired cells. They test **modeled** safety properties only. They are not claims about live providers. The full report is in `lab-reports/`.

@@ -87,26 +87,33 @@ def _event(payload: dict[str, Any]) -> str:
                or payload.get("type") or "").lower()
 
 
-def messages_from(payload: dict[str, Any]) -> list[Message]:
-    """The conversation a hook payload carries, in order (transcript first, then the
-    fields that describe the current turn; duplicates are removed when stored)."""
-    out: list[Message] = []
+def messages_from(payload: dict[str, Any]) -> tuple[list[Message], list[Message]]:
+    """What a hook payload carries: (the chat transcript in order, this turn's messages).
+
+    The transcript is re-imported idempotently (occurrences are counted within it). This
+    turn's fields (``prompt``, ``input-messages``, ``last-assistant-message``) are new
+    messages, except when the transcript already ends with them."""
+    history: list[Message] = []
     path = _first_str(payload, TRANSCRIPT_KEYS)
     if path and Path(path).expanduser().is_file():
         tail = TURN_TAIL_BYTES if _event(payload) in TURN_EVENTS else None
-        out += read_transcript(Path(path).expanduser(), **(
+        history = read_transcript(Path(path).expanduser(), **(
             {"tail_bytes": tail} if tail else {}))
+    turn: list[Message] = []
     prompt = payload.get("prompt")
     if isinstance(prompt, str) and prompt.strip():
-        out.append(Message("user", prompt))
+        turn.append(Message("user", prompt))
     for key in USER_KEYS:
         items = payload.get(key)
         if isinstance(items, list):
-            out += [Message("user", m) for m in items if isinstance(m, str) and m.strip()]
+            turn += [Message("user", m) for m in items if isinstance(m, str) and m.strip()]
     agent = _first_str(payload, AGENT_KEYS)
     if agent:
-        out.append(Message("agent", agent))
-    return out
+        turn.append(Message("agent", agent))
+    recent = history[-3:]
+    turn = [m for m in turn if not any(
+        r.role == m.role and r.text.strip() == m.text.strip() for r in recent)]
+    return history, turn
 
 
 def handle(app: str, payload: dict[str, Any], coding: Any) -> str:
@@ -121,9 +128,12 @@ def handle(app: str, payload: dict[str, Any], coding: Any) -> str:
         except NotFoundError:
             return ""
         return CONTEXT_HEADER + str(brief["markdown"])
-    messages = messages_from(payload)
-    if messages:
-        coding.capture(cwd, messages, source=app, chat_id=_first_str(payload, CHAT_KEYS))
+    history, turn = messages_from(payload)
+    chat = _first_str(payload, CHAT_KEYS)
+    if history:
+        coding.capture(cwd, history, source=app, chat_id=chat, history=True)
+    if turn:
+        coding.capture(cwd, turn, source=app, chat_id=chat)
     return ""
 
 

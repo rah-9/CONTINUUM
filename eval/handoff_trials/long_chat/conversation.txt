@@ -1,0 +1,64 @@
+Let's build a small task tracker CLI in Python called taskr: package `taskr`, run as `python -m taskr`. Start with `add TITLE` and `list`. Store tasks in a JSON file. Standard library only. Write pytest tests as you go and commit after each change.
+---
+Put the data file at $TASKR_HOME/tasks.json; if TASKR_HOME is not set, use ~/.taskr.
+---
+How are you generating ids right now?
+---
+IDs must be short: exactly 4 lowercase hex characters, and an id must never be reused, even after the task is deleted.
+---
+Add a `done ID` command.
+---
+continue
+---
+In `list`, show done tasks with [x] and open ones with [ ], followed by the id and the title.
+---
+Later we'll need an export command. When we get to it, the CSV header must be exactly id,title,priority,done,created_at. Don't build it yet.
+---
+I got this when I ran it, can you look?
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/json/decoder.py", line 355, in raw_decode
+    obj, end = self.scan_once(s, idx)
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+note: the file must be valid JSON; this message must not be ignored
+---
+fix that please
+---
+Add priorities: `add TITLE --priority high|normal|low`, default normal.
+---
+Actually, change of plan: the default priority should be low, not normal.
+---
+thanks
+---
+`list` must sort by priority (high, then normal, then low) and then by creation time, oldest first.
+---
+Another note for the export later: the done column must be yes or no, not true/false.
+---
+Add `rm ID`.
+---
+Deleting must ask for confirmation unless --yes is given. If there is no terminal (stdin is not a tty) and --yes is missing, exit with code 2 and change nothing.
+---
+ok
+---
+Titles: trim surrounding whitespace, and reject an empty title with exit code 2.
+---
+What's the test coverage like at this point?
+---
+Remember for the export too: `export --out FILE` must never overwrite an existing file unless --force is given; without it, exit with code 2 and leave the file alone.
+---
+Never show Python tracebacks to users: errors go to stderr as `error: <message>`, with exit code 1 unless another code is specified.
+---
+continue
+---
+Add `edit ID --title NEW`.
+---
+go on
+---
+Store created_at in UTC ISO-8601 ending with Z, to the second.
+---
+thanks, looks good
+---
+Export rows must be sorted by created_at, oldest first.
+---
+nice
+---
+OK, I'm out of time with you now. Stop here and don't start the export; the next model will do it.

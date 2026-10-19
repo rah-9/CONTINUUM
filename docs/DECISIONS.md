@@ -340,3 +340,25 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 - Joining by remote alone: two branches of one repository are different work.
 - Exposing capture as an MCP tool: a model could then write "the user's words".
 
+## D-037 — Consolidate the whole conversation; recognise what is *not* a requirement
+
+**Context.** The v0.8.0 brief showed the first user message and the newest six. A benchmark of planted facts (`continuum_lab.memory_bench`) showed what that loses. In 40-message chats only 15% of explicit requirements reached the next model, and so did 23% of changes of mind, no answers to the agent's questions and no agent decisions. Pasted logs leaked in. In a real 30-message trial, the requirements for the remaining work had been stated in messages 8–27.
+
+**Decision.**
+- **Read every captured message** and keep, within a budget, what is still binding:
+  - changes of mind and answered questions first
+  - then sentences with strong and weak requirement cues
+  - then every other statement
+- **Exclusion over inclusion.** Questions, small talk, short replies and pasted output (code blocks, traces, logs, diffs; a pasted block runs until a blank line) are excluded. Recognizing what is *not* a requirement generalizes better than listing every way to phrase one. On a phrasing set written after the last change, recall rose from 47–74% with cue lists alone to 100%.
+- **Show the ledger in conversation order with message numbers,** so "the higher number wins" is applicable. Keep the newest occurrence of a repeated sentence.
+- **The budget grows with the chat** (4,400 chars + 50 per message beyond 40, capped at 10,000). This is the measured capacity limit: at 160 verbose messages a fixed budget dropped recall to 23–78%.
+- **Pair short replies with the question they answer.** Keep choices and caveats from the agent's reports as claims.
+- **Label the most recent message as such.** Flag a chat-ending message, because it was addressed to the previous agent. Add a rule not to stall on the previous agent's open questions. Both were found by Haiku misreading the brief.
+- **Capture keys count occurrences,** so repeated words are kept, while transcript re-imports stay idempotent.
+- **Pin quality with a benchmark test.** Brief changes must keep ≥95% recall and zero noise.
+
+**Considered and rejected.**
+- An LLM summariser: cost, and it would turn the user's words into a model's paraphrase (a claim).
+- Embedding search for selection: a dependency and an index for a problem that ranking within a budget solves deterministically.
+- A larger fixed window of recent messages: it buys recall only for the recent part of the chat, and costs tokens on every handoff.
+
