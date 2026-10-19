@@ -16,6 +16,20 @@ chat, does not lose work and never repeats an effect.
 
 To keep **coding work** across a switch of your coding agent's model (what was decided, what is proven, where the code is), use coding continuity: `coding_resume` at the start of every chat. See [CODING-HANDOFF.md](CODING-HANDOFF.md); it is measured with real models in [HANDOFF-TRIALS.md](HANDOFF-TRIALS.md).
 
+## The "you changed the model" notice in coding apps
+
+Some apps warn or start a new chat when you change model mid-conversation. Others keep the
+chat and send its whole history to the new model. Continuum cannot change an app's own
+dialog, but it makes both outcomes safe:
+
+- **A new chat:**
+  - In Claude Code the brief is put into it automatically (session-start hook, also after `/clear` and compaction).
+  - In other apps the rules make the model call `coding_resume` first.
+- **Keeping the chat** works too, but it is the expensive path. Prompt caches do not carry across models, and in a measured 30-message chat every call carried ~135k tokens of history. The brief carried the same requirements in ~2.1k tokens.
+- **Before a deliberate switch,** run `/continuum:handoff` in Claude Code. It records decisions, a checkpoint and the next step.
+
+Details: [MEMORY-QUALITY.md](MEMORY-QUALITY.md) §6.
+
 ## How to switch
 
 ```bash

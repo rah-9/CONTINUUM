@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.9.0 — 2026-10-18
+
+Long chats and every model (D-037). Measured in `docs/MEMORY-QUALITY.md`.
+
+### Changed
+- **The brief consolidates the whole conversation** (`coding/memory.py`). It no longer shows the first message and the newest six.
+  - Every captured message is read. Pasted output is removed.
+  - Requirements, changes of mind, answered questions and other statements are ranked, kept within a budget that grows slowly with the chat, and shown in order with message numbers.
+  - Measured in 40-message chats: the share of the user's explicit requirements that reach the next model rose from **15% to 100%**. Changes of mind went from 23% to 100%, answers from 0% to 100%, and leaked log noise from 11% to 0%. The brief is ~1.2k tokens.
+- **The agent's reported choices and caveats** (from captured reports) are in the brief as claims.
+- **The user's most recent message is labelled as such,** not as "the current instruction". When it ended the chat ("stop here, the next model will do it"), Attention says the stop applied to the previous agent.
+- **New rule:** keep going with the user's instruction. Do not stall on the previous agent's open questions; pick the safest option and record it. This was found with Haiku.
+- **Attention flags a session idle for more than 3 days.**
+
+### Fixed
+- **Everything the agent writes is kept**, not only its final message per turn: every agent text message in the transcript (tool calls and tool output excluded). On the real 30-message transcript the journal had 27 of Claude's 47 messages. It now has 47 of 47, plus your 30 of 30, none duplicated, in order, also when the hooks fail and catch up later (`replay_capture.py`, `test_s14`).
+- **Exact message identity.**
+  - Transcript messages are keyed by the transcript's own ids.
+  - Claude Code's uuid-less request/cache copies (`api-request-blob`) are no longer read as messages.
+  - A live-captured message and its transcript copy are recognised as one.
+  - Recovered messages are ordered by their transcript timestamps.
+- **Caveats** such as "Note: X is not handled yet" are recognised in the agent's reports.
+- **Repeated messages.** A second identical message in one chat ("yes", "continue") was dropped at capture as a duplicate. Keys now count occurrences: submitted prompts are all kept, and transcript re-imports still add nothing.
+- **Duplicate capture at turn end.** A hook payload carrying both a transcript and this turn's fields could store the turn twice. The turn's fields are now skipped when the transcript already ends with them.
+
+### Added
+- **`continuum_lab.memory_bench`:** a long-chat memory benchmark.
+  - It plants requirements, changes of mind, answers, agent decisions and noise in conversations of 10–160 messages.
+  - It includes held-out phrasing sets and compares v0.8.0 with the current version.
+  - `test_nf6_long_chat_memory_quality` pins the results.
+- **Trial 5:** a real 30-message Claude Code chat, continued by Haiku, Sonnet and Opus. Each scored 13/13 with Continuum and 9/13 without.
+- **Claude Code plugin commands** `/continuum:handoff` (record decisions, checkpoint and next step before switching) and `/continuum:resume`.
+- **`docs/MEMORY-QUALITY.md`:** how well memory works, model differences, the model-switch notice, limits.
+
 ## 0.8.0 — 2026-10-18
 
 Continuity across **apps**, **machines** and **abrupt ends**, not only across models in one app (D-036). The complete algorithm, its bounds and the scenario matrix are in `docs/MEMORY-ALGORITHM.md`.

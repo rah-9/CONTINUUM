@@ -33,7 +33,7 @@ def session(tmp_path: Any) -> Iterator[tuple[Store, str, str]]:
     store.migrate()
     repo = tmp_path / "r"
     repo.mkdir()
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)  # noqa: S603,S607 - fixed argv
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
     (repo / "a.py").write_text("x = 1\n")
     cc = CodingContinuity(store, clock=SystemClock(), ids=RandomIds())
     sid = cc.start(str(repo), "goal", agent="m", tasks=[{"title": "t"}])["session_id"]
@@ -52,6 +52,6 @@ def cli(schema: str, *args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "CONTINUUM_DATABASE_URL": DSN, "CONTINUUM_DB_SCHEMA": schema,
            "PYTHONPATH": PROJ_SRC}
     code = "import sys; from continuum.interfaces.cli import main; sys.exit(main())"
-    return subprocess.run([sys.executable, "-c", code, *args],  # noqa: S603 - test argv
+    return subprocess.run([sys.executable, "-c", code, *args],
                           env=env, capture_output=True,
                           text=True, check=False)

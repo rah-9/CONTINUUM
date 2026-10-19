@@ -14,7 +14,7 @@ Continuum keeps an AI agent's work **outside the chat**, so you can switch model
 
 Continuum itself uses **no LLM**. Memory is your own words (captured by your app's hooks), what the working agent records (decisions, next steps) and facts Continuum observes (git, check results). Plain code assembles them, so there is no extra model cost. The algorithm and its scenario matrix: [`docs/MEMORY-ALGORITHM.md`](docs/MEMORY-ALGORITHM.md).
 
-> Docs: [how it runs and connects](docs/OPERATIONS.md) · [coding handoff guide](docs/CODING-HANDOFF.md) · [real handoff trials](docs/HANDOFF-TRIALS.md) · [verification](docs/VERIFICATION.md) · [specification](docs/00-README.md) (read in order) · [decisions](docs/DECISIONS.md) · [changelog](docs/CHANGELOG.md) · [project journal](docs/PROJECT-JOURNAL.md) · [agent contract](AGENTS.md)
+> Docs: [how well the memory works](docs/MEMORY-QUALITY.md) · [the memory algorithm](docs/MEMORY-ALGORITHM.md) · [how it runs and connects](docs/OPERATIONS.md) · [coding handoff guide](docs/CODING-HANDOFF.md) · [real handoff trials](docs/HANDOFF-TRIALS.md) · [verification](docs/VERIFICATION.md) · [specification](docs/00-README.md) (read in order) · [decisions](docs/DECISIONS.md) · [changelog](docs/CHANGELOG.md) · [project journal](docs/PROJECT-JOURNAL.md) · [agent contract](AGENTS.md)
 
 ## Measured with real models
 
@@ -26,6 +26,11 @@ These are Sonnet → Opus handoffs on a copy of this repository, judged by hidde
 | without (2 runs) | 1/4 both runs | 0/2 | ~21–29k | 12–14+ |
 
 \*Total tokens minus the ~54k that any agent spends before doing anything.
+
+**A 30-message chat** (v0.9.0):
+- Model A worked in real Claude Code with only the hooks; requirements for the remaining work were stated in messages 8, 15, 21 and 27.
+- Haiku, Sonnet and Opus each continued from it. Each scored **13/13 with Continuum and 9/13 without**.
+- In a benchmark of chats with 10–160 messages, **100%** of planted requirements, changes of mind and answers reach the next model, against 15% for v0.8.0 at 40 messages. The brief costs 0.7k–3k tokens. Details: [`docs/MEMORY-QUALITY.md`](docs/MEMORY-QUALITY.md).
 
 **Switching apps after an abrupt end** (v0.8.0): model A in real Claude Code never used Continuum (only its hooks were installed), and its chat ended mid-task. Model B was configured like another app (rules + MCP, no hooks). B finished it **4/4, with both chat-only requirements**, in 1.8 min. The baseline scored 1/4 in 5.1 min.
 
@@ -153,6 +158,7 @@ API keys come only from the environment. They are redacted before anything is st
 - portability
 - brief quality
 - continuity scenarios (app switch, another checkout, abrupt end, long sessions, secrets in chat; see [`docs/MEMORY-ALGORITHM.md`](docs/MEMORY-ALGORITHM.md) §5)
+- long-chat memory quality (planted requirements in chats of 10–160 messages, pinned at ≥95% recall and zero noise)
 
 Every requirement maps to tests in [`tests/traceability.yaml`](tests/traceability.yaml), and every defect found has a regression test. Results are in [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
 

@@ -9,9 +9,10 @@ context, next steps), which are useful but are claims, never proof.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
+from continuum.coding.memory import Turn, consolidate
 from continuum.coding.models import RepoState
 from continuum.core.canonical import digest
 from continuum.core.errors import NotFoundError
@@ -28,22 +29,8 @@ CURRENT_FILES = 50
 MD_FILES = 10
 MD_COMMITS = 10
 MD_MAP_FILES = 15
-# The user's own words are requirements: the first request (it usually states the task)
-# plus the newest ones, whole up to a generous bound. Low-information turns ("continue",
-# "ok") are left to the journal, except the newest one (it may answer a question).
-KEEP_REQUESTS = 6
-REQUEST_CHARS = 2000
-MD_REQUEST_CHARS = 1200
 REPORT_CHARS = 1500
-_LOW_INFO = frozenset({
-    "continue", "go on", "ok", "okay", "k", "yes", "y", "yep", "no", "n", "thanks",
-    "thank you", "proceed", "go", "next", "do it", "keep going", "carry on", "go ahead",
-    "sure", "continue where we left off", "continue where you left off", "resume", "done",
-    "great", "nice", "cool", "good", "lgtm"})
-
-
-def low_information(text: str) -> bool:
-    return " ".join(text.lower().replace("!", " ").replace(".", " ").split()) in _LOW_INFO
+STALE_DAYS = 3
 
 
 def _clip(text: str, limit: int) -> str:
@@ -52,6 +39,10 @@ def _clip(text: str, limit: int) -> str:
 
 RULES = [
     "Read this brief before changing code; continue from `next_steps` and open tasks.",
+    "Keep going with the user's latest instruction. If the previous agent left an open "
+    "question that the user's words do not answer, pick the safest reasonable option, record "
+    "it with coding_note(kind=decision) and mention it; do not stop to ask unless the choice "
+    "is destructive or irreversible.",
     "'What the user asked' is the user's own words, captured verbatim: treat it as the "
     "requirements. When two requests conflict, the newer one wins.",
     "Do not re-read the repository to rediscover the work: start from the files under "
@@ -101,6 +92,8 @@ class SessionView:
     chat: list[dict[str, Any]] = field(default_factory=list)
     moves: list[dict[str, Any]] = field(default_factory=list)  # checkout changes
     start_branch: str | None = None
+    updated_at: datetime | None = None   # the session's last write
+    now: datetime | None = None          # when this view was built
 
     def task(self, task_id: str) -> TaskView:
         if task_id not in self.tasks:
@@ -175,6 +168,8 @@ class SessionView:
             "checkpoints": checkpoints,
         }
         agent_notes["last_report"] = self._last_report()
+        memory = self._user_requests()
+        agent_notes["reported_decisions"] = memory.pop("agent_decisions")
         agent_notes["omitted"] = omitted
         agent_notes["trust"] = "recorded by previous agents; claims, not proof"
         return {
@@ -203,35 +198,28 @@ class SessionView:
                            "changed_during_session": self._registered_after_start(c)}
                     for name, c in sorted(self.registered_checks.items())},
             },
-            "user_requests": self._user_requests(),
-            "attention": self.attention(),
+            "user_requests": memory,
+            "attention": self.attention(memory),
             "tasks": tasks,
             "agent_notes": agent_notes,
             "rules": RULES,
         }
 
     def _user_requests(self) -> dict[str, Any]:
-        users = [c for c in self.chat if c["role"] == "user"]
-        keep: list[dict[str, Any]] = []
-        low = 0
-        seen: set[str] = set()
-        for i, c in enumerate(users):
-            if i < len(users) - 1 and low_information(c["text"]):
-                low += 1
-                continue
-            if c["text"] in seen:  # the same words captured twice (hook and import)
-                continue
-            seen.add(c["text"])
-            keep.append(c)
-        selected = keep if len(keep) <= KEEP_REQUESTS + 1 else \
-            keep[:1] + keep[-KEEP_REQUESTS:]
-        items = [{"text": _clip(c["text"], REQUEST_CHARS), "at": c["at"],
-                  "source": c["source"], "chars_omitted": c["chars_omitted"]}
-                 for c in selected]
-        return {"captured": len(users), "items": items,
-                "omitted": len(keep) - len(selected), "omitted_low_information": low,
-                "trust": "the user's own words, captured by the user's app (hook or "
-                         "transcript import); requirements, newest wins"}
+        """The conversation's memory for the next model (``memory.consolidate``)."""
+        turns: list[Turn] = []
+        first_source: dict[str, tuple[str, str | None]] = {}
+        for c in self.chat:
+            if c["role"] == "user":
+                # the same words captured by two routes (hook and import): keep the first
+                origin = first_source.setdefault(c["text"], (c["source"], c["chat"]))
+                if origin != (c["source"], c["chat"]):
+                    continue
+            turns.append(Turn(c["seq"], c["role"], c["text"], c["at"], c["source"], c["chat"]))
+        body = consolidate(turns)
+        body["trust"] = ("the user's own words, captured by the user's app (hook or "
+                         "transcript import): requirements; a newer message wins")
+        return body
 
     def _last_report(self) -> dict[str, Any] | None:
         reports = [c for c in self.chat if c["role"] == "agent"]
@@ -240,8 +228,9 @@ class SessionView:
         r = reports[-1]
         return {"text": _clip(r["text"], REPORT_CHARS), "at": r["at"], "source": r["source"]}
 
-    def attention(self) -> list[str]:
+    def attention(self, memory: dict[str, Any] | None = None) -> list[str]:
         """Gaps the next model must know about, computed from the journal (no model)."""
+        memory = memory if memory is not None else self._user_requests()
         out: list[str] = []
         users = [c for c in self.chat if c["role"] == "user"]
         steps = [n for n in self.notes if n["kind"] == "next_step"]
@@ -249,9 +238,14 @@ class SessionView:
             out.append("No chat was captured for this session: requirements the user stated "
                        "only in an earlier chat are not here. If something seems missing, ask "
                        "the user (a human can enable capture: `continuum coding setup`).")
+        elif users and memory["latest"] and memory["latest"].get("ends_chat"):
+            out.append(f"The user's most recent message (#{memory['latest']['n']}) ended the "
+                       "previous chat: its \"stop\" was addressed to the previous agent, not "
+                       "to you. The work it leaves for later (and every requirement below) is "
+                       "yours to continue now.")
         elif users and (not steps or users[-1]["seq"] > steps[-1]["seq"]):
-            out.append("The user's latest request is newer than the last recorded next step: "
-                       "it is the current instruction.")
+            out.append("The user's most recent message is newer than the last recorded next "
+                       "step: it says what to do now.")
         last_cp = self.checkpoints[-1] if self.checkpoints else None
         mapped = bool(self.session_changes and self.session_changes.get("files"))
         if mapped and (last_cp is None or last_cp["fingerprint"] != self.current.fingerprint):
@@ -265,6 +259,11 @@ class SessionView:
                    if not r["passed"] and r["fingerprint"] == self.current.fingerprint]
         if failing:
             out.append(f"Failing on the current code: {', '.join(sorted(failing))}.")
+        if self.now and self.updated_at and \
+                (self.now - self.updated_at).total_seconds() > STALE_DAYS * 86400:
+            days = int((self.now - self.updated_at).total_seconds() // 86400)
+            out.append(f"Nothing was recorded for {days} days. Confirm with the user that the "
+                       "latest request is still what they want before continuing.")
         if self.moves:
             m = self.moves[-1]
             out.append(f"This session moved to another checkout ({m['to']}) at {m['at']}; "
@@ -294,7 +293,10 @@ def build_view(session: dict[str, Any], events: list[dict[str, Any]], current: R
                        registered_checks={c["name"]: c for c in checks},
                        started_at=session["created_at"]
                        if isinstance(session["created_at"], datetime) else None,
-                       last_seq=int(session["last_seq"]))
+                       last_seq=int(session["last_seq"]),
+                       updated_at=session.get("updated_at")
+                       if isinstance(session.get("updated_at"), datetime) else None)
+    alias_times: dict[str, list[Any]] = {}
     for e in events:
         p, at, actor = e["payload_json"], _iso(e["occurred_at"]), e["actor"]
         match e["type"]:
@@ -328,13 +330,41 @@ def build_view(session: dict[str, Any], events: list[dict[str, Any]], current: R
                 run = {**p, "seq": e["seq"], "at": at, "by": actor}
                 view.check_runs.append(run)
                 view.latest_runs[p["name"]] = run
+            case "ChatCaptured" if p.get("alias"):
+                # the transcript's copy of a message captured live: only its time is new
+                base = str(p.get("key", "")).split("@", 1)[0]
+                alias_times.setdefault(base, []).append(p.get("sent_at"))
             case "ChatCaptured":
                 view.chat.append({"role": p["role"], "text": p["text"], "source": p["source"],
+                                  "chat": p.get("chat_id"),
                                   "chars_omitted": p.get("chars_omitted", 0), "at": at,
-                                  "seq": e["seq"]})
+                                  "seq": e["seq"], "key": str(p.get("key", "")),
+                                  "sent_at": p.get("sent_at"),
+                                  "occurred_at": e["occurred_at"]})
             case "SessionClosed":
                 view.closed_reason = p["reason"]
+    # Messages recovered from a transcript after a missed hook are stored late. Order by
+    # the transcript's own timestamps: a live message takes the time of its transcript copy
+    # (matched by words and occurrence), so one clock orders the whole chat.
+    for c in view.chat:
+        base, _, n = c["key"].partition("#")
+        times = alias_times.get(base, [])
+        index = int(n) - 1 if n.isdigit() else 0
+        sent = c["sent_at"] or (times[index] if index < len(times) else None)
+        c["when"] = _when(sent, c.pop("occurred_at"))
+    view.chat.sort(key=lambda c: (c["when"], c["seq"]))
     return view
+
+
+def _when(sent_at: Any, occurred_at: Any) -> datetime:
+    if isinstance(sent_at, str):
+        try:
+            return datetime.fromisoformat(sent_at)
+        except ValueError:
+            pass
+    if isinstance(occurred_at, datetime):
+        return occurred_at if occurred_at.tzinfo else occurred_at.replace(tzinfo=UTC)
+    return datetime.min.replace(tzinfo=UTC)
 
 
 def _agents_line(agents: list[dict[str, Any]], keep: int = 8) -> str:
@@ -371,18 +401,7 @@ def render_markdown(view: SessionView, d: dict[str, Any] | None = None) -> str:
              "Agents so far: " + _agents_line(view.agents)]
     if d["attention"]:
         lines += ["", "## Attention", ""] + [f"- ⚠ {_line(a, 400)}" for a in d["attention"]]
-    req = d["user_requests"]
-    if req["items"]:
-        lines += ["", "## What the user asked (their own words; newest last, newest wins)", ""]
-        for i, r in enumerate(req["items"]):
-            more = f" _(+{r['chars_omitted']} chars not stored)_" if r["chars_omitted"] else ""
-            lines.append(f"{i + 1}. {_line(r['text'], MD_REQUEST_CHARS)}{more}")
-            if i == 0 and req["omitted"]:
-                lines.append(f"   _… {req['omitted']} request(s) in between omitted "
-                             "(`coding_recall` finds them)_")
-        if req["omitted_low_information"]:
-            lines.append(f"_({req['omitted_low_information']} short replies such as "
-                         "\"continue\" not shown)_")
+    lines += _render_memory(d["user_requests"])
     lines += ["", "## Verified facts (observed by Continuum)", "",
              f"- Code now: {cur['vcs']} `{(cur.get('head') or '')[:12]}` on "
              f"`{_line(cur.get('branch'), 120)}`; {cur['changed_files_total']} changed file(s)"
@@ -453,12 +472,51 @@ def render_markdown(view: SessionView, d: dict[str, Any] | None = None) -> str:
         cp = notes["checkpoints"][-1]
         lines += ["", f"Last checkpoint: {_line(cp['summary'], MD_NOTE_CHARS['context'])} "
                       f"(by {_line(cp['by'], 120)})"]
+    if notes["reported_decisions"]:
+        lines += ["", "**Choices and caveats the previous agent reported** (claims):"]
+        lines += [f"- {_line(x['text'], 300)}" for x in notes["reported_decisions"]]
     if notes["last_report"]:
         r = notes["last_report"]
         lines += ["", f"Last message from the previous agent ({_line(r['source'], 40)}, "
                       f"{r['at']}; a claim): {_line(r['text'], REPORT_CHARS)}"]
     lines += ["", "## Rules", ""] + [f"- {r}" for r in RULES]
     return "\n".join(lines) + "\n"
+
+
+def _render_memory(m: dict[str, Any]) -> list[str]:
+    """The user's side of the conversation: numbered, in order, newest wins."""
+    if not m["messages"]:
+        return []
+    chats = ", ".join(f"{_line(c['source'], 40)} ({c['messages']})" for c in m["chats"])
+    lines = ["", f"## What the user asked ({m['messages']} message(s); chats: {chats})", "",
+             "_The user's own words, numbered in order. They are the requirements; when two "
+             "conflict, the higher number wins._", ""]
+    first, latest = m["first"], m["latest"]
+    if first:
+        lines.append(f"- **#{first['n']} (first request):** {_line(first['text'], 800)}"
+                     + (" _(clipped; coding_recall has it all)_" if first["clipped"] else ""))
+    entries: list[tuple[int, int, str]] = []
+    for item in m["ledger"]:
+        tag = {"revision": " (changes an earlier decision)", "answer": " (answer)"}.get(
+            item["kind"], "")
+        entries.append((item["n"], item["pos"], f"- #{item['n']}{tag}: "
+                                                 f"{_line(item['text'], 400)}"))
+    entries += [(r["n"], 0, f"- #{r['n']}: {_line(r['text'], 600)}") for r in m["recent"]]
+    lines += [text for _, _, text in sorted(entries)]   # conversation order
+    if latest:
+        lines.append(f"- **#{latest['n']} (the most recent message):** "
+                     f"{_line(latest['text'], 2100)}")
+        if latest.get("in_reply_to"):
+            asked = _line(latest["in_reply_to"], 400)
+            lines.append(f"  - in reply to the agent asking: \"{asked}\"")
+    left = m["omitted_messages"]
+    if left or m["omitted_items"]:
+        lines.append(f"- _{left} other message(s) carried no requirement (small talk, steps "
+                     "already done, pasted output)"
+                     + (f"; {m['omitted_items']} older requirement(s) beyond the budget"
+                        if m["omitted_items"] else "")
+                     + ". `coding_recall` searches all of them._")
+    return lines
 
 
 def compact(body: dict[str, Any]) -> dict[str, Any]:
