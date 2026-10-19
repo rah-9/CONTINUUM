@@ -11,8 +11,11 @@ Release candidate for client delivery: privacy, licensing, portability and packa
 - **Benchmark modes `transcript` and `two_apps`.** Turns re-imported from growing app transcripts with tool calls, and a chat that moves between Claude Code and Codex. Every memory kind 98–100% at 10–160 messages; edited files and open failures 100%; no false alarms. Pinned in `test_nf6`.
 - **Proprietary licensing.** `LICENSE`, `NOTICE`, SPDX headers in every source file, package metadata (`Private :: Do Not Upload`) and a notice in every document. `tests/unit/test_license.py` keeps it complete.
 - **CI on Windows and macOS** in addition to Linux.
+- **Release packaging.** Version 1.0.0rc1. A private release workflow on version tags builds the wheel and sdist, smoke-tests the installed wheel against PostgreSQL, and attaches them with `SHA256SUMS` to a GitHub release (no public index). `SECURITY.md` (reporting, supported versions, controls) and `docs/UPGRADING.md`.
+- **Upgrade test from a real 0.9 database** (`tests/fixtures/schema_v4_continuum_0_9.sql`): sessions, chat and checks survive, and erasure, per-person checks and capture work on the upgraded data.
 
 ### Fixed
+- **`continuum doctor` on a coding-only install.** It reported failure because no runtime tasks were registered. Only task files that do not load are a fault now.
 - **Answers across apps.** A "yes" was paired with the question before it in journal order, so a transcript imported later (another app) could lose the pairing. It now uses conversation order.
 - **Repeated words in another app.** The same words from two capture routes were always treated as one message, so a later "yes" typed in another app vanished from the brief. They are one message only when captured within 30 seconds.
 - **Windows:** CLI output into a pipe the reader already closed raised `OSError: Invalid argument` (Windows' form of a broken pipe). It is now handled like a broken pipe.
