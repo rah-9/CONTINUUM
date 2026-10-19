@@ -109,6 +109,12 @@ def _check_names(checks: list[str]) -> list[str]:
     return sorted(set(checks))
 
 
+# Lookups by repository return only the caller's own sessions and checks (D-040). Row-level
+# security enforces this for every role; the filter also scopes the schema owner, whom
+# RLS does not restrict, so an operator's own coding never joins someone else's session.
+_MINE = "owner_role = current_user"
+
+
 class CodingContinuity:
     def __init__(self, store: Store, *, clock: Clock, ids: IdGenerator,
                  redactor: Redactor | None = None) -> None:
@@ -292,7 +298,7 @@ class CodingContinuity:
         root = canonical_root(repo_path)
         with self.store.read() as q:
             row = q._one("SELECT session_id FROM coding_sessions WHERE repo_root = ANY(%s) "
-                         "AND status = 'active' ORDER BY (repo_root = %s) DESC, "
+                         f"AND {_MINE} AND status = 'active' ORDER BY (repo_root = %s) DESC, "
                          "updated_at DESC LIMIT 1",
                          (list({str(root), str(given)}), str(root)))
         if row is not None:
@@ -301,7 +307,8 @@ class CodingContinuity:
         if key is not None:
             with self.store.read() as q:
                 rows = q._all("SELECT session_id, repo_root FROM coding_sessions WHERE "
-                              "repo_key = %s AND status = 'active' ORDER BY updated_at DESC",
+                              f"repo_key = %s AND {_MINE} AND status = 'active' "
+                              "ORDER BY updated_at DESC",
                               (key,))
             if rows:
                 branch = current_branch(root)
@@ -328,8 +335,8 @@ class CodingContinuity:
         """Checks registered for this checkout; for names it lacks, checks a human
         registered for the same repository (same remote) in another checkout."""
         with self.store.read() as q:
-            rows = q._all("SELECT * FROM coding_checks WHERE repo_root = %s OR "
-                          "(%s::text IS NOT NULL AND repo_key = %s) "
+            rows = q._all(f"SELECT * FROM coding_checks WHERE {_MINE} AND (repo_root = %s OR "
+                          "(%s::text IS NOT NULL AND repo_key = %s)) "
                           "ORDER BY (repo_root = %s) DESC, registered_at DESC",
                           (root, key, key, root))
         found: dict[str, dict[str, Any]] = {}
@@ -614,7 +621,7 @@ class CodingContinuity:
         if all_sessions:
             with self.store.read() as q:
                 ids = [r["session_id"] for r in q._all(
-                    "SELECT session_id FROM coding_sessions WHERE repo_root = %s "
+                    f"SELECT session_id FROM coding_sessions WHERE repo_root = %s AND {_MINE} "
                     "ORDER BY updated_at DESC LIMIT 50", (root,))] or ids
         hits: list[tuple[int, str, dict[str, Any]]] = []
         for sid in ids:
@@ -650,12 +657,12 @@ class CodingContinuity:
         with self.store.read() as q:
             if repo_path:
                 rows = q._all("SELECT * FROM coding_sessions WHERE repo_root = ANY(%s) "
-                              "ORDER BY updated_at DESC",
+                              f"AND {_MINE} ORDER BY updated_at DESC",
                               (list({str(canonical_root(repo_path)),
                                      str(resolve_repo(repo_path))}),))
             else:
-                rows = q._all("SELECT * FROM coding_sessions ORDER BY updated_at DESC "
-                              "LIMIT 50", ())
+                rows = q._all(f"SELECT * FROM coding_sessions WHERE {_MINE} ORDER BY updated_at "
+                              "DESC LIMIT 50", ())
         return [{"session_id": r["session_id"], "repo_root": r["repo_root"], "goal": r["goal"],
                  "status": r["status"], "updated_at": _iso(r["updated_at"])} for r in rows]
 
@@ -683,7 +690,8 @@ class CodingContinuity:
         with self.store.connection() as conn:
             try:
                 row = conn.execute(
-                    b"SELECT repo_root FROM coding_sessions WHERE session_id = %s FOR UPDATE",
+                    b"SELECT repo_root, owner_role FROM coding_sessions WHERE session_id = %s "
+                    b"FOR UPDATE",
                     (session_id,)).fetchone()
                 if row is None:
                     raise NotFoundError(f"coding session {session_id} not found")
@@ -695,10 +703,10 @@ class CodingContinuity:
                 erasure_id = self.ids.new("erase")
                 conn.execute(
                     b"INSERT INTO coding_erasures (erasure_id, session_id, repo_digest, "
-                    b"events_erased, erased_by, reason, erased_at) "
-                    b"VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    b"events_erased, erased_by, reason, erased_at, owner_role) "
+                    b"VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                     (erasure_id, session_id, "sha256:" + sha256_hex(row["repo_root"]),
-                     erased, who, why, self.clock.now()))
+                     erased, who, why, self.clock.now(), row["owner_role"]))
                 conn.commit()
             except BaseException:
                 conn.rollback()
@@ -747,7 +755,8 @@ class CodingContinuity:
                 b"INSERT INTO coding_checks (repo_root, repo_key, name, argv_json, "
                 b"timeout_seconds, registered_by, registered_at) "
                 b"VALUES (%s, %s, %s, %s, %s, %s, %s) "
-                b"ON CONFLICT (repo_root, name) DO UPDATE SET argv_json = EXCLUDED.argv_json, "
+                b"ON CONFLICT (owner_role, repo_root, name) DO UPDATE SET "
+                b"argv_json = EXCLUDED.argv_json, "
                 b"repo_key = EXCLUDED.repo_key, "
                 b"timeout_seconds = EXCLUDED.timeout_seconds, "
                 b"registered_by = EXCLUDED.registered_by, "

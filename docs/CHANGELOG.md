@@ -6,8 +6,12 @@ Release candidate for client delivery: privacy, licensing, portability and packa
 
 ### Added
 - **Erasure and retention (D-039, schema v5).** `continuum coding forget SESSION` and `continuum coding forget --older-than-days N` remove a session's events and row in one transaction and leave a content-free tombstone (`coding_erasures`, immutable). Human-only: CLI with `--yes`, never MCP. `continuum coding erasures` lists them. History outside an erasure stays immutable.
+- **Several people, one database (D-040).** Each person connects with their own PostgreSQL role; row-level security shows each role only its own sessions, events, checks and tombstones. Operator commands `continuum admin grant|revoke|reassign|users`. A role without access gets `no_access` naming the fix.
 - **Proprietary licensing.** `LICENSE`, `NOTICE`, SPDX headers in every source file, package metadata (`Private :: Do Not Upload`) and a notice in every document. `tests/unit/test_license.py` keeps it complete.
 - **CI on Windows and macOS** in addition to Linux.
+
+### Fixed
+- **Windows:** CLI output into a pipe the reader already closed raised `OSError: Invalid argument` (Windows' form of a broken pipe). It is now handled like a broken pipe.
 
 ## 0.9.0 — 2026-10-18
 

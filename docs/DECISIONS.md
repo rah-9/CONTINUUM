@@ -395,6 +395,23 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 - Disabling the trigger during erasure: it is schema-wide, so a concurrent writer could change history meanwhile.
 - An MCP tool: models must not erase memory.
 
+## D-040 — Several people share a database, isolated by PostgreSQL roles and row-level security
+
+**Context.** A client deploys one database for a team. Each person's chat is personal data, and an application-level filter is one bug away from showing it to a colleague.
+
+**Decision.**
+- **Identity is the PostgreSQL role.** Each person logs in as their own role; Continuum stores no users or passwords.
+- **Ownership column.** `coding_sessions`, `coding_checks` and `coding_erasures` carry `owner_role` (default `current_user`). Events are visible exactly when their session is (policy on the session row), so the immutable event rows needed no change.
+- **RLS policies** `owner_role = current_user` for reads and writes. A role cannot insert a row for another role, move its own row to another role, or see that another's row exists.
+- **The schema owner is the operator.** RLS does not apply to it, so retention and support work across people. Repository lookups add the same filter explicitly, so the operator's own coding stays separate.
+- **Checks are per person** (primary key includes `owner_role`).
+- **`continuum admin grant|revoke|reassign|users`**, CLI only, refused (`not_operator`) unless the caller owns the schema.
+
+**Rejected.**
+- A `user_id` setting in the client: any client could claim to be anyone.
+- A schema per person: migrations, retention and support multiply, and the operator loses one place to administer.
+- FORCE RLS on the owner: retention and erasure for everyone would need a second privileged path.
+
 ---
 
 _Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

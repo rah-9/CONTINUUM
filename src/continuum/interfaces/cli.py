@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import logging
 import os
@@ -77,6 +78,17 @@ def build_parser() -> argparse.ArgumentParser:
     hk.add_argument("app")
     hk.add_argument("payload", nargs="?")
 
+    adm = sub.add_parser("admin", help="operator only: give people their own isolated "
+                                       "coding memory in one database (D-040)")
+    asub = adm.add_subparsers(dest="admin_cmd", required=True)
+    for name, text in (("grant", "let a PostgreSQL role use Continuum (sees only its own)"),
+                       ("revoke", "remove a role's access (its sessions stay)")):
+        a = asub.add_parser(name, help=text)
+        a.add_argument("role")
+    ra = asub.add_parser("reassign", help="move sessions and checks to another role")
+    ra.add_argument("old_role")
+    ra.add_argument("new_role")
+    asub.add_parser("users", help="roles with sessions or access (no content)")
     coding = sub.add_parser("coding", help="coding-session continuity across models and chats")
     csub = coding.add_subparsers(dest="coding_cmd", required=True)
     checks = csub.add_parser("checks", help="human-only: register or list repository checks")
@@ -193,8 +205,12 @@ def main(argv: list[str] | None = None) -> int:
         code = _main(argv)
         sys.stdout.flush()  # buffered output reaches a closed pipe here, not at exit
         return code
-    except BrokenPipeError:
+    except OSError as exc:
         # the reader went away (e.g. `continuum coding brief | head`): not an error.
+        # Windows reports a write into a closed pipe as EINVAL, not EPIPE.
+        if not (isinstance(exc, BrokenPipeError)
+                or (os.name == "nt" and exc.errno == errno.EINVAL)):
+            raise
         # Point stdout at devnull so the interpreter's final flush cannot raise again.
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         return 0
@@ -277,6 +293,18 @@ def _main(argv: list[str] | None = None) -> int:
                 run_stdio(sdk)
             case "coding":
                 return _coding(sdk, args)
+            case "admin":
+                from continuum.coding import access
+
+                match args.admin_cmd:
+                    case "grant":
+                        _print(access.grant(sdk.store, args.role))
+                    case "revoke":
+                        _print(access.revoke(sdk.store, args.role))
+                    case "reassign":
+                        _print(access.reassign(sdk.store, args.old_role, args.new_role))
+                    case "users":
+                        _print(access.users(sdk.store))
     except ContinuumError as exc:
         _print({"error": str(exc), "code": exc.code})
         return 2
