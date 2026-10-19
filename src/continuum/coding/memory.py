@@ -47,6 +47,7 @@ RECENT_MESSAGES = 2
 DECISION_ITEMS = 8       # agent decisions (claims), plus one per 40 reports ...
 DECISION_MAX_ITEMS = 14  # ... up to this many
 DECISION_CHARS = 260
+SHORT_REPLY_CHARS = 60   # longer messages are statements, even when they start with "ok"
 PER_MESSAGE_ITEMS = 6    # a long message cannot crowd out the rest of the chat
 
 _STRONG = re.compile(
@@ -215,7 +216,7 @@ def consolidate(turns: list[Turn]) -> dict[str, Any]:
     out["latest"] = _shown(latest, number, LATEST_CHARS, verbatim=True)
     out["latest"]["ends_chat"] = ends_chat(latest.text)
     asked = _preceding_question(latest, turns)
-    if asked and (low_information(latest.text) or _AFFIRM.match(latest.text)):
+    if asked and _is_reply(latest.text):
         out["latest"]["in_reply_to"] = _clip(asked, ITEM_CHARS)
     if len(users) > 1:
         out["first"] = _shown(users[0], number, FIRST_CHARS)
@@ -225,7 +226,7 @@ def consolidate(turns: list[Turn]) -> dict[str, Any]:
     for u in users[:-1]:
         shown_first = u is users[0] and len(" ".join(u.text.split())) <= FIRST_CHARS
         items = []
-        if _AFFIRM.match(u.text.strip()) and len(u.text) < 60:
+        if _is_reply(u.text):
             q = _preceding_question(u, turns)
             if q:
                 items.append(("answer", 3, f'asked "{_clip(q, 200)}" → "{u.text.strip()}"'))
@@ -293,6 +294,15 @@ def _shown(turn: Turn, number: dict[int, int], limit: int, *,
     text = " ".join((turn.text if verbatim else readable(turn.text)).split())
     return {"n": number[turn.seq], "text": _clip(text, limit), "at": turn.at,
             "source": turn.source, "clipped": len(text) > limit}
+
+
+def _is_reply(text: str) -> bool:
+    """A short answer ("yes", "ok, do it"), not a message that merely starts with "OK"
+    (found in a real handoff: "OK, I'm out of time. Stop here, ..." was paired with the
+    agent's open question)."""
+    text = text.strip()
+    return len(text) < SHORT_REPLY_CHARS and (low_information(text)
+                                              or _AFFIRM.match(text) is not None)
 
 
 def _preceding_question(user: Turn, turns: list[Turn]) -> str | None:

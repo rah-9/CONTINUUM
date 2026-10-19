@@ -18,6 +18,7 @@ method is described so it can be rerun. The algorithm itself is in
   - **Model B:** Haiku, Sonnet and Opus, each set up like another app.
   - **Result:** all three finished the work, **13/13** hidden tests, including four requirements stated only in messages 8, 15, 21 and 27.
   - **Without Continuum:** each model scored 9/13 and said it could not tell what was planned.
+- **Real debugging handoff (Trial 6).** Model A found the root cause without fixing it; the user added a second number format, a VAT rule and constraints in chat. Haiku, Sonnet and Opus each scored **7/7** with Continuum and 4/7 without (they fixed only the visible bug).
 - **Different LLMs.**
   - **Model-independent:** capture, consolidation and verification are plain code, so every model receives the same facts.
   - **Model-dependent:** following the rules and reading the brief correctly.
@@ -183,6 +184,7 @@ Continuum cannot change an app's own dialog. It makes either outcome safe and ch
 | **5: 30-message chat** | Sonnet in Claude Code, hooks only, 30 turns | Haiku | **13/13, 13/13** | 9/13 |
 | | | Sonnet | **13/13** | 9/13 |
 | | | Opus | **13/13** | 9/13 |
+| **6: debugging handoff** | Sonnet in Claude Code, hooks only, diagnosis without fixing | Haiku / Sonnet / Opus | **7/7** each | 4/7 each |
 
 In Trial 5 the database was down for the first minutes of model A's chat, and the hooks
 logged timeouts. Every message from that time was recovered from the transcript later: a

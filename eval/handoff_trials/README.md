@@ -47,6 +47,14 @@ Part 2 requirements and ends the chat), then run `continuum coding setup` for B.
 `--mcp-config proj/.mcp.json`. Before the B runs, move A's directory under
 `~/.claude/projects/` away, so no B can read A's chat from disk.
 
+## Debugging handoff (Trial 6)
+
+`debug_handoff/run.sh WORK WRAPPER a` runs model A (Sonnet, three turns, hooks only) on the
+`invoicer` fixture, saves A's journal with `pg_dump`, and moves A's transcript out of reach.
+`run.sh WORK WRAPPER b MODEL continuum|baseline` then runs one model B in its own checkout and
+schema, and judges it with `judge.py` (hidden; 7 criteria). WRAPPER runs `claude` in a clean
+environment and passes `VAR=value` arguments through (see `run.sh`).
+
 ## GPT → Claude (cross-vendor)
 
 The trial is vendor-neutral. Use **Codex CLI** (a GPT model) as model A and **Claude Code**
