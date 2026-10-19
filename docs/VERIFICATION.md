@@ -146,7 +146,7 @@ A full fenced runtime run (`inventory_upload_v1`, fake models) issues 271 SQL st
 - Fake and emulated providers prove protocol and safety properties, not a live model's reasoning quality. Live runs need verified profiles and keys.
 - Mock services prove the **modeled** connector contracts. A real connector needs its own contract test before its manifest is trusted.
 - Performance numbers are single-host baselines for regression detection, not capacity claims.
-- The real handoff trials are small: six trials, one or two runs per arm, with Haiku, Sonnet and Opus as the next model in Trials 5 and 6. Continuum scored full marks in every run and the baseline never did, but the token and time figures are not statistics. A GPT → Claude trial is packaged in `eval/handoff_trials/` but has not run yet: it needs an OpenAI key and network access in the trial environment.
+- The real handoff trials are small: six trials, one or two runs per arm, with Haiku, Sonnet and Opus as the next model in Trials 5 and 6. When requirements existed only in the chat (Trials 2–6), Continuum scored full marks in every run after the fixes each trial found (Haiku's first Trial 5 run scored 9/13 before them), and the baseline never did; in the easy Trial 1 both scored 7/7. The token and time figures are not statistics. A GPT → Claude trial is packaged in `eval/handoff_trials/` but has not run yet: it needs an OpenAI key and network access in the trial environment.
 
 ---
 
