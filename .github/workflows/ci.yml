@@ -56,3 +56,37 @@ jobs:
         with:
           name: lab-smoke-report
           path: results/smoke/
+
+  # The same product on the other operating systems clients use. PostgreSQL is installed
+  # on the runner itself (service containers exist only on Linux).
+  portability:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ikalnytskyi/action-setup-postgres@v6
+        id: postgres
+        with:
+          username: continuum
+          password: continuum
+          database: continuum_test
+          port: 5432
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: uv pip install -e ".[dev,mcp,live]"
+      - name: Unit + property tests
+        env:
+          CONTINUUM_TEST_DATABASE_URL: postgresql://continuum:continuum@localhost:5432/continuum_test
+          CONTINUUM_DATABASE_URL: postgresql://continuum:continuum@localhost:5432/continuum_test
+        run: uv run --no-sync pytest tests/unit -q
+      - name: Integration tests (coding continuity, capture, hooks, CLI, MCP, portability)
+        env:
+          CONTINUUM_TEST_DATABASE_URL: postgresql://continuum:continuum@localhost:5432/continuum_test
+          CONTINUUM_DATABASE_URL: postgresql://continuum:continuum@localhost:5432/continuum_test
+        run: uv run --no-sync pytest tests/integration tests/contract -q -p no:cacheprovider
