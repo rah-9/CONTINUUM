@@ -124,18 +124,21 @@ def messages_from(payload: dict[str, Any], history: list[Message] | None = None
     The transcript is re-imported idempotently (occurrences are counted within it). This
     turn's fields (``prompt``, ``input-messages``, ``last-assistant-message``) are new
     messages, except when the transcript already ends with them."""
-    from continuum.coding.transcript import Message
+    from continuum.coding.transcript import Message, clean_user_text
 
     if history is None:
         history, _ = _read(payload, "transcript", None)
     turn: list[Message] = []
+    # what the app injects into a prompt (reminders, background-task notices) is not the
+    # user's words, whichever route it arrives by
     prompt = payload.get("prompt")
-    if isinstance(prompt, str) and prompt.strip():
-        turn.append(Message("user", prompt))
+    if isinstance(prompt, str) and clean_user_text(prompt):
+        turn.append(Message("user", clean_user_text(prompt)))
     for key in USER_KEYS:
         items = payload.get(key)
         if isinstance(items, list):
-            turn += [Message("user", m) for m in items if isinstance(m, str) and m.strip()]
+            turn += [Message("user", clean_user_text(m)) for m in items
+                     if isinstance(m, str) and clean_user_text(m)]
     agent = _first_str(payload, AGENT_KEYS)
     if agent:
         turn.append(Message("agent", agent))

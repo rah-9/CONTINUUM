@@ -96,6 +96,22 @@ All durable state lives in PostgreSQL. The schema is executable in `src/continuu
 
 Upgrades: re-running `continuum db-init` adds new constraints and indexes to an existing database idempotently.
 
+## Hooks, the local spool, and unknown outcomes
+
+- **Hooks never wait for the database** (D-042). Each one redacts the payload, writes it to `$CONTINUUM_HOME/spool/` (owner-only) and starts a background drainer.
+  - The drainer writes the journal in order and deletes a file only after its transaction commits.
+  - With the database down, files wait and are applied later. A payload that cannot be applied goes to `spool/failed/` and is logged in `hooks.log`.
+  - Measured in real Claude Code, median: 99 ms before a tool call, 120 ms after (including the content snapshot).
+- **What gets snapshotted:** before and after every call that can write files (edits, shell commands), the hook stores the working copy's content as a git tree in the repository's own object store. Unreferenced objects are pruned by `git gc` as usual.
+- **Unknown outcomes.** A call that could change something outside the repository and has no recorded result blocks new external calls (`PreToolUse` denies them; local work continues). After checking what really happened:
+
+  ```bash
+  continuum coding unresolved SESSION                  # what is open
+  continuum coding resolve SESSION CALL --outcome applied|not_applied|accepted_unknown \
+      --actor alice --reason "the push never reached origin"
+  ```
+- **Drill-down:** `continuum coding show SESSION --seq N` (or `--blob ID`) prints any `[#N]` from the brief, or a stored output or diff.
+
 ## Data retention and erasure (coding sessions)
 
 Coding sessions hold what people typed, and a client may ask for it to be deleted. History
@@ -110,7 +126,7 @@ continuum coding forget --older-than-days 90 --actor ops --reason "90-day retent
 continuum coding erasures
 ```
 
-- **What is removed:** every event of the session and its row. Nothing of its content is left in Continuum's tables.
+- **What is removed:** every event of the session, its stored outputs and diffs, and its row. Nothing of its content is left in Continuum's tables.
 - **What is kept:** a tombstone in `coding_erasures` with the session id, a hash of the repository path, the event count, the person and the reason (redacted). Tombstones are immutable.
 - **How the guard works:** the `coding_events` trigger refuses every UPDATE and DELETE unless the transaction has set `continuum.erasure = on`, which only `forget` does, inside the same transaction that writes the tombstone. The setting is transaction-local. TRUNCATE is always refused.
 - **Retention** erases closed sessions only, unless `--include-active` is given. Schedule it with cron or a task scheduler.

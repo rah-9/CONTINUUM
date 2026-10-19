@@ -18,6 +18,7 @@ How Continuum is tested, what each layer proves, and the latest results. The req
 | Continuity scenarios | `tests/integration/test_scenarios.py` (S1–S16), `tests/unit/test_transcript.py` | end-to-end through the apps' entry points (hook payloads, transcripts, MCP-equivalent calls, CLI) | app switch with an abrupt end and no agent notes, another checkout, repeated and concurrent hooks, a hook with the database down, long sessions with recall, non-git projects, secrets in chat, setup, schema upgrade ([MEMORY-ALGORITHM.md](MEMORY-ALGORITHM.md) §5) |
 | Memory quality | `continuum_lab.memory_bench`, `tests/nonfunctional::test_nf6_long_chat_memory_quality`, `tests/unit/test_memory.py` (with a Hypothesis property test) | planted-fact benchmark + invariants | what the user said anywhere in a 10–160-message chat reaches the next model: requirements, changes of mind, answers, agent decisions; no pasted noise; within budget ([MEMORY-QUALITY.md](MEMORY-QUALITY.md)) |
 | Portability | `tests/integration/test_portability.py`; the whole unit, integration and contract suites in CI on Linux, Windows and macOS | cross-OS behaviour | UTF-8 output on any console, launch-directory independence, Windows check-command resolution, closed pipes on Windows |
+| Capture of everything the agent did | `tests/unit/test_activity.py`, `test_transcript.py`, `tests/integration/test_scenarios.py` (S15, S15b, S15c), Trial 7 | functional, end-to-end through the hook code with real git and PostgreSQL, live Claude Code | every tool call with its result from four apps' hooks and transcripts, observed file impact (including shell commands), unknown outcomes and the external block, subagents, skills, MCP, compaction, full outputs found again |
 | Privacy and isolation | `tests/integration/test_privacy.py`, `test_isolation.py`, `test_upgrade.py` | security, with real PostgreSQL roles | erasure leaves no content and a tombstone; history is otherwise immutable; each role sees, changes and erases only its own memory; operator-only administration; a real 0.9 database upgrades without loss |
 | Regression | everywhere | regression | every defect found has a test, see below |
 | Experiment | `continuum-lab` | paired B0/C1 study | safety and progress metrics with uncertainty (`docs/lab-reports/`) |
@@ -51,6 +52,10 @@ eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-sw
 | Coding handoff test | Running the tests wrote `__pycache__`, changing the fingerprint, so a just-passed check never counted | `test_running_tests_does_not_change_the_fingerprint` |
 | Shell-agent CLI test | `checks add … --actor X -- cmd` lost `--actor` to argparse `REMAINDER` | `test_c11_shell_only_agents_use_the_same_protocol_via_cli` |
 | Shell-agent CLI test | CLI hit a missing table on a database from an older version | `test_ensure_schema_migrates_only_when_needed` |
+| Live capture trial, Trial 7 (v1.0.0rc2) | Each hook took ~730 ms: the `continuum` command loaded the CLI and database stack before the hook | `continuum.interfaces.entry` (hooks dispatched first; ~100 ms measured) |
+| Live capture trial, Trial 7 | A background subagent's notice (`<task-notification>`) became a user message; its report (only in `SubagentStop`) was lost; a piped test run that failed looked ok | `test_app_notifications_are_never_the_users_words`, `test_s15c_background_subagents_reports_and_hidden_test_failures` |
+| Scenario test (v1.0.0rc2) | The end of a long error (where the real error is) was cut off | `test_s15_everything_the_agent_did_is_journaled_with_results_and_impact` |
+| Benchmark (v1.0.0rc2) | A change of mind in the most recent message did not mark what it replaced; a failure fixed in another app stayed flagged | `test_nf6_long_chat_memory_quality` (update correctness, false alarms) |
 | Two-app benchmark (v1.0) | A "yes" was paired with its question by journal order, so a transcript imported later (another app) lost the pairing; the same words typed later in another app were dropped as a copy | `test_s16_the_same_short_answer_in_two_apps_is_two_answers`, `test_nf6_long_chat_memory_quality` |
 | Real debugging handoff, Trial 6 (v1.0) | "OK, I'm out of time. Stop here, …" was shown as the answer to the agent's open question | `test_a_long_message_starting_with_ok_is_not_an_answer` |
 | Real transcript replay (v1.0) | Old experiments' failed commands would be flagged as open failures; heredoc bodies flooded the command list | `test_s15_the_next_model_sees_what_the_previous_agent_did_and_what_failed` |
@@ -76,7 +81,7 @@ eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-sw
 
 ## Latest results (2026-10-19, v1.0.0rc1)
 
-- `make check`: ruff clean, `mypy --strict` clean. **383 passed**, 5 live tests skipped (opt-in). CI runs the same gates against PostgreSQL 16 on Linux, and the unit, integration and contract suites on Windows and macOS.
+- `make check`: ruff clean, `mypy --strict` clean. **408 passed**, 5 live tests skipped (opt-in). CI runs the same gates against PostgreSQL 16 on Linux, and the unit, integration and contract suites on Windows and macOS.
 - **Hardened schema:** the whole suite, including chaos, runs against the new CHECK constraints with zero violations. The runtime never writes a state the database considers invalid.
 - **Property search:** 150 random interleavings × 12 steps per connector mode (450 scenarios). All invariants held at every step.
 - **Non-functional baselines** (this container, PostgreSQL 16, fake models):

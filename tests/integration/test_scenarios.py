@@ -634,6 +634,8 @@ def test_s15c_background_subagents_reports_and_hidden_test_failures(coding, repo
         hooks.handle("claude-code", {"cwd": root, "session_id": "c", **payload}, coding)
 
     hook({"hook_event_name": "UserPromptSubmit", "prompt": "Find TODOs and run the tests."})
+    hook({"hook_event_name": "UserPromptSubmit", "prompt": "<task-notification><task-id>ag9"
+          "</task-id><status>completed</status></task-notification>"})
     hook({"hook_event_name": "PostToolUse", "tool_name": "Task", "tool_use_id": "t1",
           "tool_input": {"description": "List TODO comments"},
           "tool_response": {"agentId": "ag9", "isAsync": True, "status": "async_launched"}})
@@ -650,3 +652,4 @@ def test_s15c_background_subagents_reports_and_hidden_test_failures(coding, repo
     assert [f["target"] for f in brief["work_log"]["failures"]] == [
         "python -m pytest -q 2>&1 | tail -30"]
     assert "output reports failures" in brief["markdown"]
+    assert brief["user_requests"]["messages"] == 1          # the app's notice is not a turn

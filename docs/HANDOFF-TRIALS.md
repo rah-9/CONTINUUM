@@ -214,6 +214,45 @@ regression tests with the requested names.
 - **In the brief:** the user's last message ("OK, I'm out of time. Stop here, …") was labelled as a reply to A's open question, because it starts with "OK". Fixed: only short messages count as replies (`test_a_long_message_starting_with_ok_is_not_an_answer`).
 - **In the harness:** the first judging ran under a Python without pytest, so "regression tests" and "all tests pass" failed for every run. The runner now uses the project's environment, and all runs were re-judged.
 
+## Trial 7: capture fidelity — does Continuum record everything a real agent does?
+
+**Setup** (`eval/handoff_trials/capture_fidelity/`):
+- **Model A** (Sonnet) ran one turn in real Claude Code, with only Continuum's hooks installed.
+- **What A did:**
+  - ran the failing tests (piped into `tail`, so the exit code was 0)
+  - fixed `parse.py` with an edit
+  - ran a script that writes `invoicer/rates_table.py`
+  - used a subagent to list the TODOs
+  - used a project skill (`release-notes`)
+  - created a ticket through an MCP server that writes outside the repository
+- **The check:** `check.py` compares the journal with Claude Code's own transcripts, read independently of Continuum's parser, and with `git status`. A timing wrapper measured every hook.
+
+| | result |
+|---|---|
+| tool calls captured (of Claude Code's record, incl. the subagent's own call) | **10/10**, all with a result, 0 status mismatches |
+| kinds | 4 built-in, 3 shell, 1 subagent (its call tagged), 1 skill (`release-notes`), 1 MCP (`mcp__tickets__create_ticket`, result `TCK-100`) |
+| files changed: git vs. observed by Continuum | **3/3** (`parse.py`, the script's `rates_table.py`, `RELEASE_NOTES.md`) |
+| hook time, median (max) | PreToolUse 99 ms (108), PostToolUse 120 ms (311), others 92–146 ms, SessionStart 776 ms |
+
+**Handoff** (`handoff.sh`):
+- **Model B** ran in a new chat, in another checkout of the same repository. Neither arm had the tickets MCP server.
+- **The question:** which test was failing, which files changed, the ticket id, and which TODOs the subagent found.
+
+| Model B | with Continuum | without | cost with / without |
+|---|---|---|---|
+| Haiku | **4/4** | 3/4 | $0.003 / $0.006 |
+| Sonnet | **4/4** | 3/4 | $0.045 / $0.084 |
+| Opus | **4/4** | 3/4 | $0.100 / $0.179 |
+
+**Without Continuum,** every model rebuilt the repository facts from git and grep, at about twice the cost. None could know the ticket id: it exists only in the tracker and in Continuum's journal. The same holds for any effect outside the repository: a push, a deploy, a message.
+
+**What this trial found** (all fixed, with regression tests):
+- **Hooks were slow.** They took about 730 ms each: the `continuum` command loaded the CLI and database stack first. It now dispatches hooks first (about 100 ms).
+- **A notice became a user message.** A background subagent's notice (`<task-notification>`) was captured as a user message.
+- **A subagent's report was missing.** A background subagent's tool result is only a handle; the report comes with `SubagentStop` and is now kept.
+- **A failing test run looked ok.** The piped run exited 0; output signals now flag it.
+- **"Read" listed a tool search** among the files read.
+
 ## Defects the trials found in Continuum (all fixed, with regression tests)
 
 1. **Corrupting redaction.** The README's local database password is the word

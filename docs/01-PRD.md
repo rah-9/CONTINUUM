@@ -67,7 +67,7 @@ Tools run as **trusted, explicitly registered Python adapters** with schema vali
 
 **R15 Per-person isolation:** several people may share one database. Each connects as their own PostgreSQL role and sees, changes and erases only their own coding sessions, events, checks and tombstones, enforced by row-level security. The schema owner administers access (`continuum admin grant|revoke|reassign|users`), retention and support (D-040).
 
-**R16 What the agent did:** the agent's tool calls in the app's transcript (Claude Code, Codex, Gemini) are journaled as one-line actions with their failure status and shown in the brief as recorded, not verified. A failure among the agent's last commands is flagged (D-041).
+**R16 What the agent did:** every tool call the user's app reports (Claude Code, Codex, Gemini CLI, Cursor; built-in tools, shell commands, MCP tools, skills, subagents) is journaled with its input and full redacted result, live from hooks and from transcripts, each call once. What each call changed in the files is observed by Continuum with content snapshots, not taken from the app or a model. A call with no recorded result has an unknown outcome; while an external one is unresolved, new external calls are denied until a person records what happened (AGENTS.md invariants 5 and 8). Hooks never wait for the database. The brief summarizes the work with an event id on every line, recall searches full outputs, and `coding_show` opens any record (D-042, D-043). A change of mind that names what it replaces marks the earlier requirement replaced, from the user's words only (D-044).
 
 ## 5. Non-functional requirements
 

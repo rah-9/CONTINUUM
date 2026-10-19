@@ -13,6 +13,18 @@ an older installation stops with `schema_too_new`.
 4. **Check** with `continuum doctor`. It must report `"ok": true`.
 5. **Upgrade every machine** that uses the same database. An older Continuum refuses to start on the newer schema instead of writing to it.
 
+## 1.0.0rc1 → 1.0.0rc2
+
+Schema v5 → v6. Automatic; nothing is rewritten. Adding the full-text column builds an index
+over existing events once.
+
+| Change | What you do |
+|---|---|
+| **Tool calls with results, file impact, unknown outcomes** (D-042). New event types and the `coding_blobs` table. | Re-run `continuum coding setup` in each repository (or update the Claude Code plugin) to install the tool-call hooks. Codex/Gemini/Cursor: add their tool hooks (`integrations/README.md`). |
+| **Several people:** blobs follow the same isolation. | `continuum admin grant <role>` again for each person (adds access to `coding_blobs`). |
+| **External calls can be blocked** while an earlier one's outcome is unknown. | Tell your team: `continuum coding resolve` unblocks after a person checks. |
+| **The `continuum` command** dispatches hooks first. | Reinstall the package so the entry point updates. |
+
 ## 0.9.x → 1.0.0
 
 Schema v4 → v5. Automatic; no data is rewritten.

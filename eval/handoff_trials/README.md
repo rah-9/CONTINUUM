@@ -55,6 +55,21 @@ Part 2 requirements and ends the chat), then run `continuum coding setup` for B.
 schema, and judges it with `judge.py` (hidden; 7 criteria). WRAPPER runs `claude` in a clean
 environment and passes `VAR=value` arguments through (see `run.sh`).
 
+## Capture fidelity (Trial 7)
+
+`capture_fidelity/run.sh WORK WRAPPER [MODEL]` runs one real Claude Code turn with only
+Continuum's hooks (through a timing wrapper):
+- failing tests
+- an edit
+- a script that writes a file
+- a subagent
+- a project skill
+- a ticket created through `tickets_mcp.py`, a small MCP server that writes outside the repository
+
+`check.py` compares the journal with Claude Code's own transcripts and `git status`, and
+reports hook latency. `handoff.sh WORK WRAPPER MODEL continuum|baseline` then asks a new chat,
+in another checkout, what the previous agent did, and scores 4 answers.
+
 ## GPT → Claude (cross-vendor)
 
 The trial is vendor-neutral. Use **Codex CLI** (a GPT model) as model A and **Claude Code**
