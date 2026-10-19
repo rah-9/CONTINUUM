@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 # Long-chat trial, model A: the user's 30 messages, one Claude Code turn each, in ONE chat.
 #   run_a.sh WORKDIR CLAUDE_WRAPPER [MODEL]
 # Only Continuum's Claude Code hooks are installed: no rules, no MCP, no mention of

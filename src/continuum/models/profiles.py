@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Capability profiles for model versions, including ones added after release.
 
 Switching a run to a newer model version (``claude-opus-4-8`` -> ``claude-opus-5-5``,

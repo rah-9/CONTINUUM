@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Handoff brief quality: bounded size for long sessions, and observed history (v0.7.0)."""
 
 import json

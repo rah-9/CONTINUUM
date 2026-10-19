@@ -227,3 +227,7 @@ These are ordered by value to the core idea. Each item should become its own bra
 - Ledger, state and recovery behaviour change only after a failing test.
 - `make check` (ruff, mypy `--strict`, all tests) must pass locally. CI repeats it against PostgreSQL plus a lab smoke run. Merge only on green.
 - Results are reported honestly: unknown cost is never zero, pauses are never successes, and fake-model results are never presented as live evidence.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

@@ -235,3 +235,11 @@ Each change follows [`docs/06-DEV-WORKFLOW.md`](docs/06-DEV-WORKFLOW.md):
 5. CI runs the same gates against PostgreSQL 16, plus a lab smoke run.
 
 Results are reported honestly: unknown cost is never zero, pauses are not successes, and fake-model results are not presented as live evidence.
+
+## License
+
+Proprietary software. All rights reserved. Use, copying and distribution are permitted only under a separate written agreement with the copyright holder ([`LICENSE`](LICENSE), [`NOTICE`](NOTICE)). The package is marked `Private :: Do Not Upload`, so public package indexes refuse it.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](LICENSE)._

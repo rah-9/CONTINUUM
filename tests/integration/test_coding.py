@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Coding-session continuity: real coding work carries across models and chats (C1-C8)."""
 
 import subprocess

@@ -182,3 +182,7 @@ real-world check of the "hooks never break the agent, and catch up" design.
 - **Small samples.** Real trials are 1–2 runs per arm. The benchmark has 20 conversations
   per row and is deterministic.
 - **GPT not measured here** (no OpenAI access in this environment).
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

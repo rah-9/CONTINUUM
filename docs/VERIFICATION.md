@@ -138,3 +138,7 @@ A full fenced runtime run (`inventory_upload_v1`, fake models) issues 271 SQL st
 - Mock services prove the **modeled** connector contracts. A real connector needs its own contract test before its manifest is trusted.
 - Performance numbers are single-host baselines for regression detection, not capacity claims.
 - The real handoff trials are small (four Opus runs on one task, Sonnet → Opus). They show a clear direction, not a statistical result. A GPT → Claude trial is packaged in `eval/handoff_trials/` but has not run yet: it needs an OpenAI key and network access in the trial environment.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Provider-neutral model contract (docs/05 sections 2-3)."""
 
 from __future__ import annotations

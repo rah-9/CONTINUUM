@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Model sessions and cross-provider handoff (docs/05 sections 3-5, R8, R9).
 
 A session is one model's turn at the run. It starts from a deterministic

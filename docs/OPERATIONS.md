@@ -101,3 +101,7 @@ Upgrades: re-running `continuum db-init` adds new constraints and indexes to an 
 - One host, one database. Several controller processes on that host are safe; leases and epochs fence them.
 - The HTTP API is loopback-only and unauthenticated by design. Do not expose it.
 - Back up PostgreSQL normally. The event log is the source of truth, and projections can always be rebuilt from it (`inspect` reports any difference).
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

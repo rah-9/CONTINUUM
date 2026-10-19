@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Extract the conversation from a coding agent's chat transcript, without an LLM.
 
 Every coding agent stores its chats differently, and the formats change between

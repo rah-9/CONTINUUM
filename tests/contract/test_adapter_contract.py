@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Provider adapter contract through the full runtime, with a stubbed LiteLLM transport.
 
 Provider-format tool calls (JSON-string arguments, provider call IDs) must be

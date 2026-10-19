@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Non-functional requirements (docs/01 section 5) as executable checks.
 
 * NF1 no database lock is held across a tool or model call

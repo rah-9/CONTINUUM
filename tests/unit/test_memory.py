@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Conversation consolidation (coding/memory.py): rules and invariants."""
 
 from hypothesis import given, settings

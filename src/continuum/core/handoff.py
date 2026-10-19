@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Deterministic portable continuation packet (docs/05 section 4).
 
 The packet is canonical JSON derived only from the task spec, durable

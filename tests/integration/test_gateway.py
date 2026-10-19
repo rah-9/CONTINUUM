@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Tool gateway: identity, dedupe, conflict, permissions, blocking (R4, I4, I5)."""
 
 from continuum.core.state import ActionStatus

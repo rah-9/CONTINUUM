@@ -69,3 +69,7 @@ To use MCP tools rather than the CLI, connect `continuum mcp` to each agent as s
 
 In a Claude Code cloud environment, the GPT side needs `OPENAI_API_KEY` as an environment
 secret and `api.openai.com` in the environment's allowed domains.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../../LICENSE)._

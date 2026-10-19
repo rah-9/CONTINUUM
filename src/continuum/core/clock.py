@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Injectable clocks. Production uses wall/monotonic time; tests use FakeClock."""
 
 from __future__ import annotations

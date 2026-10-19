@@ -130,3 +130,7 @@ continuum coding close SESSION --reason "merged" --actor alice
 - **Notes are claims.** A previous model can be wrong. The brief labels notes as claims, and the rules tell the next model to confirm anything critical against the code.
 - **Tamper evidence, not prevention.** An agent with shell access could run `continuum coding checks add` itself, because Continuum can't tell a person from a process on the same machine. Every registration records who and when, the brief flags checks (re)registered during the session, and changed definitions invalidate verification. Review those flags (D-029).
 - Continuum doesn't edit code, doesn't drive the agent and doesn't store the chat. It is the agent-independent record of the work.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

@@ -116,3 +116,6 @@ Repository paths are contained: never `/` or the home directory itself, and insi
 
 **Limit:** an agent with shell access could run the human CLI to register a check. Continuum cannot authenticate the local user, so it makes this **tamper-evident**, not impossible. See D-029.
 
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

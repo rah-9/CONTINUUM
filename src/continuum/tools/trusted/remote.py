@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Remote-effect tools backed by service clients: object store, database, messages.
 
 Each write tool's manifest mirrors the connector's *actual* contract mode:

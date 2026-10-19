@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Continuity scenarios (docs/MEMORY-ALGORITHM.md §5): one test per way real work moves
 between models, chats, apps and machines. Each drives the same entry points the apps use
 (hook payloads, MCP-equivalent service calls, the CLI) against PostgreSQL and real git."""

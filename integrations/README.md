@@ -130,3 +130,7 @@ Then connect the agent:
 that path. Cloud environments normally check a repo out at the same path every time, which works. If
 your checkout path changes between containers, keep it stable (for example with a symlink). Keying by
 git remote is planned (docs/PROJECT-JOURNAL.md §5).
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

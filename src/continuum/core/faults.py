@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Named crash boundaries used by deterministic fault injection.
 
 Production code calls :meth:`FaultInjector.checkpoint` at each boundary listed

@@ -377,3 +377,7 @@ Packet excludes untrusted model transcript; see `05-MODEL-ADAPTERS.md` for exact
 - **I6:** competing controllers cannot both hold an unexpired lease or commit transitions under stale epochs.
 - **I7:** drift invalidates affected milestone and dependency descendants, without deleting confirmed action history.
 - **I8:** event inspection/replay never invokes real tools or models.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

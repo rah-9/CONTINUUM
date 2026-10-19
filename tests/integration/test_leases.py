@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Lease acquisition, takeover epochs and fencing (R3, U6, I6)."""
 
 import pytest

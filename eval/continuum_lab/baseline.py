@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """B0: plain tool loop + retries + transcript handoff (docs/07 section 2).
 
 Same task objective, allowed tools, provider routing, endpoint behaviour,

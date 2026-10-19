@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Evidence drift invalidates milestones and dependents (U5, R7, I3, I7)."""
 
 import pytest

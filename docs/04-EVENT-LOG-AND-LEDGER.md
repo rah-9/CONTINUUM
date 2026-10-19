@@ -142,3 +142,7 @@ timeout_seconds: 20
 - `retry_at_risk`: explicitly opts into an action attempt that may duplicate, with warning recorded; never counted as automatically safe recovery.
 
 No implicit decision from model text. Protect local HTTP decision endpoint from arbitrary remote access; v1 is loopback only. On resume, process unresolved decisions **before** any new side-effecting action.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

@@ -12,5 +12,6 @@
     "mcp",
     "idempotency",
     "handoff"
-  ]
+  ],
+  "license": "Proprietary (see LICENSE)"
 }

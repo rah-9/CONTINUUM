@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Check e1 (Part 1): the export function. Registered as a human check."""
 
 from continuum.coding.export import export_session

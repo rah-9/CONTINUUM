@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Memory benchmark: does what the user said in a long chat reach the next model?
 
 Generates realistic coding conversations of N user messages, each followed by the agent's

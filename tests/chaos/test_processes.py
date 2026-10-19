@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Real OS processes: lease races, hard kills, and a stale owner returning (U6, I6)."""
 
 from __future__ import annotations
