@@ -57,6 +57,19 @@ def target(call: dict[str, Any], relative: Any) -> str:
     return ""
 
 
+def _agent_id(text: str) -> str | None:
+    import json
+    import re
+
+    try:
+        data = json.loads(text)
+    except ValueError:
+        m = re.search(r'"agentId"\s*:\s*"([^"]+)"', text)
+        return m.group(1) if m else None
+    value = data.get("agentId") if isinstance(data, dict) else None
+    return value if isinstance(value, str) else None
+
+
 def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
     """``tools``: the session's tool, impact and compaction events in journal order, each
     ``{"seq", "type", "p" (payload), "at"}``."""
@@ -64,6 +77,7 @@ def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
     order: list[str] = []
     impacts: list[dict[str, Any]] = []
     compactions: list[dict[str, Any]] = []
+    reports: dict[str, dict[str, Any]] = {}
     unresolved: dict[str, dict[str, Any]] = {}
     closed: set[str] = set()
     for e in tools:
@@ -84,6 +98,8 @@ def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
             impacts.append({**p, "seq": e["seq"], "at": e["at"]})
         elif kind == "CompactionObserved":
             compactions.append({**p, "seq": e["seq"]})
+        elif kind == "SubagentReported":
+            reports[p["agent_id"]] = {**p, "seq": e["seq"]}
     ordered = [calls[k] for k in order]
     by_kind: dict[str, int] = {}
     apps: dict[str, int] = {}
@@ -119,9 +135,12 @@ def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
 
     def summary(c: dict[str, Any]) -> dict[str, Any]:
         r = c["result"]
+        status = r["status"] if r else ("unknown" if c["call_key"] in unresolved
+                                        else "no result yet")
+        if status == "ok" and r and "tests_failed" in r.get("signals", []):
+            status = "reports_failures"      # exit 0, but its own output says tests failed
         return {"tool": c["tool"], "kind": c["kind"], "target": target(c, relative),
-                "status": r["status"] if r else ("unknown" if c["call_key"] in unresolved
-                                                 else "no result yet"),
+                "status": status,
                 "exit_code": r.get("exit_code") if r else None, "seq": c["seq"],
                 "result_seq": r["seq"] if r else None,
                 "output_blob": r.get("output_blob") if r else None,
@@ -141,7 +160,8 @@ def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
     failures = []
     for c in newest.values():
         r = c["result"]
-        if r and r["status"] == "error" and c["call_key"] in recent_keys:
+        failed = r and (r["status"] == "error" or "tests_failed" in r.get("signals", []))
+        if failed and c["call_key"] in recent_keys:
             text = (r.get("error") or r.get("output_excerpt") or "").strip()
             failures.append({**summary(c), "error_tail": text[-ERROR_TAIL:]})
     failures = sorted(failures, key=lambda f: f["seq"])[-FAILURES_SHOWN:]
@@ -153,15 +173,32 @@ def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
             m["calls"] += 1
             m["last"] = summary(c)
     subagents = []
+    unclaimed = list(reports.values())
     for c in ordered:
         if c["kind"] == "subagent":
             s = summary(c)
             r = c["result"]
-            s["report"] = (r.get("output_excerpt") or "")[-600:] if r else None
+            text = (r.get("output_excerpt") or "") if r else ""
+            # a background subagent's tool result is a handle ({"agentId": ...}); its
+            # report arrives with SubagentStop
+            agent = _agent_id(text)
+            report = reports.get(agent) if agent else None
+            if report is None and agent is None and unclaimed and not text.strip():
+                report = unclaimed[0]
+            if report is not None:
+                if report in unclaimed:
+                    unclaimed.remove(report)
+                text = report["report_excerpt"]
+                s["report_seq"] = report["seq"]
+            s["report"] = text[-600:] or None
             subagents.append(s)
     reads: dict[str, None] = {}
     for c in ordered:
-        if c["effect"] == "read" and c["kind"] == "builtin":
+        raw = c.get("input")
+        data: dict[str, Any] = raw if isinstance(raw, dict) else {}
+        if c["effect"] == "read" and c["kind"] == "builtin" and any(
+                isinstance(data.get(k), str) for k in ("file_path", "path", "notebook_path",
+                                                        "filePath", "absolute_path")):
             t = target(c, relative)
             if t:
                 reads.pop(t, None)
@@ -224,6 +261,7 @@ def render(w: dict[str, Any], session_id: str, line: Any) -> list[str]:
         for c in w["commands"]:
             state = {"ok": "ok", "error": f"**failed** (exit {c['exit_code']})"
                      if c["exit_code"] is not None else "**failed**",
+                     "reports_failures": "**exit 0, but its output reports failures**",
                      "denied": "denied", "interrupted": "**interrupted**",
                      "unknown": "**outcome unknown**"}.get(c["status"], c["status"])
             out.append(f"  - `{line(c['target'], 200)}` — {state} [#{c['seq']}]")

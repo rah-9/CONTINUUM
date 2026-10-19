@@ -39,7 +39,7 @@ dev = [
 ]
 
 [project.scripts]
-continuum = "continuum.interfaces.cli:main"
+continuum = "continuum.interfaces.entry:main"
 continuum-lab = "continuum_lab.runner:main"
 
 [tool.hatch.build.targets.wheel]

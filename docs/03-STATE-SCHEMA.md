@@ -410,7 +410,7 @@ SELECT continuum_add_constraint('coding_events', 'coding_events_type_valid', $c$
   'SessionStarted', 'AgentJoined', 'TaskAdded', 'TaskStatusChanged', 'NoteRecorded',
   'CheckpointCaptured', 'CheckRan', 'ChatCaptured', 'SessionClosed', 'ToolCallStarted',
   'ToolCallFinished', 'ToolCallUnresolved', 'ToolCallResolved', 'FileImpactObserved',
-  'CompactionObserved'))$c$);
+  'CompactionObserved', 'SubagentReported'))$c$);
 CREATE INDEX IF NOT EXISTS idx_coding_events_call_key ON coding_events
   (session_id, (payload_json->>'call_key'), type) WHERE payload_json ? 'call_key';
 

@@ -26,6 +26,7 @@ class CodingEventType(StrEnum):
     TOOL_CALL_RESOLVED = "ToolCallResolved"
     FILE_IMPACT_OBSERVED = "FileImpactObserved"
     COMPACTION_OBSERVED = "CompactionObserved"
+    SUBAGENT_REPORTED = "SubagentReported"
 
 
 NoteKind = Literal["decision", "context", "next_step", "blocker"]
@@ -175,6 +176,9 @@ class ToolCallFinished(_P):
     output_chars: int = 0
     error: str | None = None
     untrusted: bool = False
+    # what the output itself reports, matched deterministically (e.g. "3 failed" from a
+    # test runner whose exit code a pipe hid): "tests_failed", "traceback"
+    signals: list[str] = Field(default_factory=list)
     tree_after: str | None = None
     source: str
     chat_id: str | None = None
@@ -217,6 +221,18 @@ class FileImpactObserved(_P):
     source: str
 
 
+class SubagentReported(_P):
+    """A subagent's final report (``SubagentStop``): the subagent model's words, a claim.
+    Background subagents return only a handle from their tool call; this is the report."""
+
+    agent_id: str
+    agent_type: str | None = None
+    report_excerpt: str = ""
+    report_blob: str | None = None
+    source: str
+    chat_id: str | None = None
+
+
 class CompactionObserved(_P):
     """The app compacted its chat. The summary is the app's model's text: a claim."""
 
@@ -245,5 +261,6 @@ PAYLOADS: dict[CodingEventType, type[_P]] = {
     CodingEventType.TOOL_CALL_RESOLVED: ToolCallResolved,
     CodingEventType.FILE_IMPACT_OBSERVED: FileImpactObserved,
     CodingEventType.COMPACTION_OBSERVED: CompactionObserved,
+    CodingEventType.SUBAGENT_REPORTED: SubagentReported,
 }
 TYPE_OF: dict[type[_P], CodingEventType] = {v: k for k, v in PAYLOADS.items()}

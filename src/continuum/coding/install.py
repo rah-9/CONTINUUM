@@ -26,7 +26,10 @@ from typing import Any
 BEGIN = "<!-- continuum:begin (managed by `continuum coding setup`) -->"
 END = "<!-- continuum:end -->"
 HOOK_COMMAND = "continuum hook claude-code"
-CLAUDE_HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "Stop", "PreCompact", "SessionEnd")
+CLAUDE_HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+                      "PostToolUseFailure", "SubagentStop", "PreCompact", "PostCompact",
+                      "Stop", "SessionEnd")
+TOOL_EVENTS = frozenset({"PreToolUse", "PostToolUse", "PostToolUseFailure"})
 HOOK_TIMEOUT = 15
 
 CODEX_SNIPPET = """\
@@ -75,8 +78,11 @@ def _claude_settings(existing: dict[str, Any]) -> dict[str, Any]:
                       for g in groups if isinstance(g, dict)
                       for h in g.get("hooks", []) if isinstance(h, dict))
         if not present:
-            groups.append({"hooks": [{"type": "command", "command": HOOK_COMMAND,
-                                      "timeout": HOOK_TIMEOUT}]})
+            group: dict[str, Any] = {"hooks": [{"type": "command", "command": HOOK_COMMAND,
+                                                "timeout": HOOK_TIMEOUT}]}
+            if event in TOOL_EVENTS:     # every tool, including MCP tools, skills, subagents
+                group = {"matcher": "*", **group}
+            groups.append(group)
     return existing
 
 

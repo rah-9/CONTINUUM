@@ -135,3 +135,14 @@ def test_snapshots_give_the_exact_diff_of_any_change(tmp_path):
     assert snapshot.diff(repo, after["tree"], after["tree"])["files"] == []  # type: ignore[index]
     assert snapshot.take(tmp_path / "not-git" if (tmp_path / "not-git").mkdir() is None
                          else tmp_path) is None
+
+
+def test_outputs_that_report_failures_despite_exit_0():
+    """Trial 7: `pytest -q | tail -30` exits 0 although tests failed."""
+    from continuum.coding.recorder import signals
+
+    assert signals("== 1 failed, 3 passed in 0.21s ==") == ["tests_failed"]
+    assert signals("FAILED tests/test_a.py::test_x - AssertionError") == ["tests_failed"]
+    assert signals("Tests: 2 failed, 10 passed") == ["tests_failed"]
+    assert signals("Traceback (most recent call last):\n  File x") == ["traceback"]
+    assert signals("3 passed, 0 failed") == [] and signals("all good") == []
