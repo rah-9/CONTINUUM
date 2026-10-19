@@ -266,3 +266,25 @@ def test_nf5_coding_observation_cost(tmp_path):
           f"{elapsed * 1000:.0f} ms, {len(calls)} git calls")
     assert len(calls) <= 5 and len(state.changed_files) == 40
     assert elapsed < 5.0
+
+
+def test_nf6_long_chat_memory_quality(store, tmp_path):
+    """What the user said anywhere in a long chat reaches the next model, within budget
+    (continuum_lab.memory_bench; docs/MEMORY-QUALITY.md). Pinned so no change to the brief
+    can silently lose memory again."""
+    from continuum.coding.service import CodingContinuity
+    from continuum.core.clock import SystemClock
+    from continuum.core.ids import RandomIds
+    from continuum_lab.memory_bench import run_one, summarize
+
+    coding = CodingContinuity(store, clock=SystemClock(), ids=RandomIds())
+    for n, verbose, seeds, max_tokens in ((40, False, 5, 1600), (160, True, 2, 3300)):
+        results = [run_one(coding, seed, n, tmp_path, verbose=verbose) for seed in range(seeds)]
+        new, old = summarize(results, "new"), summarize(results, "legacy")
+        print(f"\nNF6 n={n}{' verbose' if verbose else ''}: "
+              + " ".join(f"{k}={v:.2f}" for k, v in new.items() if isinstance(v, float)))
+        for kind in ("explicit", "revision", "answer", "agent_decision", "fresh2"):
+            assert new[kind] >= 0.95, (kind, new[kind])
+        assert new["noise_leaks"] == 0
+        assert new["tokens_max"] <= max_tokens
+        assert new["explicit"] > old["explicit"]

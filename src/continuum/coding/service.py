@@ -191,6 +191,7 @@ class CodingContinuity:
         if current is None:
             current = observe(root)
         view = build_view(session, events, current, checks)
+        view.now = self.clock.now()
         if current.vcs == "git":
             view.session_changes = session_changes(root, view.base_head)
         elif isinstance(session["created_at"], datetime):
@@ -456,7 +457,8 @@ class CodingContinuity:
     # ===== chat capture (hooks, transcript import; never an MCP tool) =================
 
     def capture(self, repo_path: str, messages: list[Message], *, source: str,
-                chat_id: str | None = None, autostart: bool = True) -> dict[str, Any]:
+                chat_id: str | None = None, autostart: bool = True,
+                history: bool = False) -> dict[str, Any]:
         """Record chat messages verbatim (redacted, bounded) in the repository's session.
 
         Called by an app's hooks or a transcript import, not by a model: user messages
@@ -466,7 +468,12 @@ class CodingContinuity:
         message starts one, so the work is journaled even if no agent ever called
         ``coding_start`` (inside a git repository only: a hook installed for every project
         must not journal arbitrary directories). Only the newest agent message is kept
-        (the turn's report)."""
+        (the turn's report).
+
+        The same words can legitimately recur ("yes", "continue"), so a message's key also
+        counts its occurrence: ``history=True`` means ``messages`` is a chat transcript in
+        order (occurrences are counted within it, so re-importing it is idempotent);
+        otherwise the messages are new turns (counted after what is already stored)."""
         label = " ".join(_clean(self.redactor.text(source)).split())[:MAX_SOURCE] or "cli"
         chat = None if chat_id is None else _clean(self.redactor.text(chat_id))[:120]
         prepared: list[ChatCaptured] = []
@@ -497,10 +504,10 @@ class CodingContinuity:
                         "reason": "no active coding session for this repository"}
             goal = " ".join(first.split())[:300]
             sid = self.start(repo_path, goal, agent=f"capture:{label}")["session_id"]
-        return self._append_captured(sid, prepared, f"capture:{label}")
+        return self._append_captured(sid, prepared, f"capture:{label}", history=history)
 
     def _append_captured(self, session_id: str, items: list[ChatCaptured],
-                         actor: str) -> dict[str, Any]:
+                         actor: str, *, history: bool) -> dict[str, Any]:
         """All new messages in one transaction under the session lock (gapless seq)."""
         with self.store.connection() as conn:
             try:
@@ -511,11 +518,25 @@ class CodingContinuity:
                     conn.rollback()
                     return {"captured": 0, "skipped": len(items), "session_id": session_id,
                             "reason": "session not active"}
-                keys = [i.key for i in items]
-                seen = {r["k"] for r in conn.execute(
+                bases = list({i.key for i in items})
+                stored = [r["k"] for r in conn.execute(
                     b"SELECT payload_json->>'key' AS k FROM coding_events WHERE "
                     b"session_id = %s AND type = 'ChatCaptured' AND "
-                    b"payload_json->>'key' = ANY(%s)", (session_id, keys)).fetchall()}
+                    b"split_part(payload_json->>'key', '#', 1) = ANY(%s)",
+                    (session_id, bases)).fetchall()]
+                seen = set(stored)
+                count: dict[str, int] = {}
+                if not history:  # new turns: continue after the occurrences stored
+                    for k in stored:
+                        base = k.split("#", 1)[0]
+                        count[base] = count.get(base, 0) + 1
+                keyed = []
+                for item in items:
+                    n = count.get(item.key, 0) + 1
+                    count[item.key] = n
+                    key = item.key if n == 1 else f"{item.key}#{n}"
+                    keyed.append(item.model_copy(update={"key": key}))
+                items = keyed
                 seq = row["last_seq"]
                 fresh = []
                 for item in items:

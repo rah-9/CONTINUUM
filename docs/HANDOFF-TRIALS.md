@@ -133,6 +133,44 @@ trial's write-up and every pointer to it, and refuses to start if the requiremen
 anywhere in the project. In that discarded run, Continuum's B also scored 4/4 under the
 corrected judge (below).
 
+## Trial 5: a 30-message chat, continued by three different models
+
+**Setup.**
+- The project is a small CLI built from scratch over **30 user messages** (`eval/handoff_trials/long_chat/`).
+- **Model A (Sonnet)** worked in real Claude Code, one turn per message, in one chat. Only the hooks were installed, and A never used Continuum.
+- Requirements arrive throughout the chat:
+  - Ten were implemented by A: storage location, id format and reuse, list markers, priorities with a change of mind, sorting, delete confirmation, title rules, error format, timestamps.
+  - Four were for the remaining export work, stated early "for later": the header in message 8, done as yes/no in 15, no overwrite without `--force` in 21, sort order in 27.
+- The chat also contains small talk, "continue", questions and a pasted stack trace that says "must".
+- The last message ends the chat: *"Stop here and don't start the export; the next model will do it."*
+
+Then **model B** continued, prompted only with *"Continue where we left off"*:
+- with Continuum: configured like another app (rules + MCP, no hooks, no brief at session start)
+- without Continuum
+
+Each B ran on its own copy of the project and of the journal, and A's chat files were moved
+out of reach. A hidden judge (`judge_taskr.py`, 13 tests) checked the result.
+
+| Model B | with Continuum | without |
+|---|---|---|
+| Haiku | **13/13** (2 runs) | 9/13 |
+| Sonnet | **13/13** | 9/13 |
+| Opus | **13/13** | 9/13 |
+
+**Without Continuum,** every model kept the ten implemented requirements (they are in the
+code) and did not build the export. Each said it could not tell what was planned.
+
+**With Continuum,** the brief was ~2.1k tokens and carried all four export requirements from
+messages 8–27, the change of mind on the default priority, and the code map. By the end of the
+chat, model A was carrying ~135k tokens of history per call.
+
+**What this trial found:**
+- **Defects in the brief:**
+  - Haiku's first run scored 9/13. It treated the previous agent's open proposal as a reason to stop, and it read the user's "stop here" (said to model A) as its own instruction. Both are fixed: a keep-going rule, and the most recent message is now labelled as such, with an Attention line when it ended the chat. Haiku then scored 13/13 twice.
+  - In real use, a second identical message ("continue") was dropped at capture. Fixed: message keys count occurrences.
+- **Defects in the harness:** the judge first assumed a bare `export` prints to stdout, which the user never asked for. It now tests only what was asked (`export --out`).
+- **Resilience:** PostgreSQL was down for A's first minutes. The hooks logged timeouts, A was unaffected, and every message was recovered from the transcript afterwards.
+
 ## Defects the trials found in Continuum (all fixed, with regression tests)
 
 1. **Corrupting redaction.** The README's local database password is the word

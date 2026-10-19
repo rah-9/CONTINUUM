@@ -207,6 +207,12 @@ U9_continuity_across_apps_machines_and_abrupt_ends:
   - tests/integration/test_scenarios.py::test_s10_setup_wires_any_repo_idempotently_and_keeps_existing_config
   - tests/integration/test_scenarios.py::test_s11_a_v3_database_upgrades_in_place
   - tests/integration/test_scenarios.py::test_s12_hooks_installed_for_every_project_only_journal_git_repositories
+  - tests/integration/test_scenarios.py::test_s13_repeated_words_in_one_chat_are_all_kept_and_reimports_add_nothing
+  - tests/nonfunctional/test_nonfunctional.py::test_nf6_long_chat_memory_quality
+  - tests/unit/test_memory.py::test_requirements_from_the_middle_of_a_long_chat_are_kept
+  - tests/unit/test_memory.py::test_pasted_output_is_never_a_requirement
+  - tests/unit/test_memory.py::test_short_answers_are_paired_with_the_question_they_answer
+  - tests/unit/test_memory.py::test_invariants_hold_for_any_conversation
   - tests/unit/test_transcript.py::test_claude_code_transcript_keeps_only_what_the_person_typed
   - tests/unit/test_transcript.py::test_codex_rollout_without_injected_context_or_duplicates
   - tests/unit/test_transcript.py::test_gemini_and_generic_chat_exports
