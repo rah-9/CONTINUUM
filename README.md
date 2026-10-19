@@ -236,6 +236,13 @@ Each change follows [`docs/06-DEV-WORKFLOW.md`](docs/06-DEV-WORKFLOW.md):
 
 Results are reported honestly: unknown cost is never zero, pauses are not successes, and fake-model results are not presented as live evidence.
 
+## Releases, security and upgrades
+
+- **Releases** are private: tagging `v<version>` builds the wheel and sdist, checks that the wheel installs and works on its own, and attaches both (with `SHA256SUMS`) to a GitHub release in this repository (`.github/workflows/release.yml`). Nothing is published to a public index.
+- **Security:** how to report a vulnerability, supported versions and the security controls are in [SECURITY.md](SECURITY.md).
+- **Upgrading:** the schema migrates itself; back up first. See [docs/UPGRADING.md](docs/UPGRADING.md).
+- **Several people, one database:** per-person isolation with PostgreSQL roles, plus erasure and retention, in [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
 ## License
 
 Proprietary software. All rights reserved. Use, copying and distribution are permitted only under a separate written agreement with the copyright holder ([`LICENSE`](LICENSE), [`NOTICE`](NOTICE)). The package is marked `Private :: Do Not Upload`, so public package indexes refuse it.

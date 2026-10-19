@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
+#
+# Private release: on a version tag (v1.0.0rc1, v1.0.0, ...), build the wheel and sdist,
+# check that the version matches the tag and that the wheel installs and runs, and attach
+# them to a GitHub release in this (private) repository. Nothing is uploaded to PyPI:
+# the package is proprietary (classifier "Private :: Do Not Upload").
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: continuum
+          POSTGRES_PASSWORD: continuum
+          POSTGRES_DB: continuum_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U continuum" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      CONTINUUM_DATABASE_URL: postgresql://continuum:continuum@localhost:5432/continuum_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel and sdist
+        run: uv build --out-dir dist
+      - name: Version matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          ls dist/continuum-"$want"-py3-none-any.whl dist/continuum-"$want".tar.gz
+      - name: The wheel installs and works on its own
+        run: |
+          uv venv /tmp/smoke -p 3.12
+          uv pip install -p /tmp/smoke/bin/python "$(ls dist/*.whl)[mcp]"
+          cd /tmp
+          /tmp/smoke/bin/continuum db-init
+          /tmp/smoke/bin/continuum doctor
+          git init -q /tmp/repo
+          /tmp/smoke/bin/continuum coding capture --repo /tmp/repo --role user "It must work."
+          /tmp/smoke/bin/continuum coding brief --repo /tmp/repo | grep -q "It must work."
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: continuum-dist
+          path: dist/
+      - name: GitHub release (private repository)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=""
+          if [[ "$GITHUB_REF_NAME" =~ (a|b|rc)[0-9]+$ ]]; then pre="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" dist/* $pre --title "Continuum $GITHUB_REF_NAME" \
+            --notes "Proprietary and confidential. See docs/CHANGELOG.md and docs/UPGRADING.md."

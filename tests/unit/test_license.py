@@ -27,3 +27,20 @@ def test_package_metadata_is_proprietary_and_never_uploaded():
     plugin = json.loads((ROOT / "integrations/claude-code/.claude-plugin/plugin.json")
                         .read_text())
     assert plugin["license"].startswith("Proprietary")
+
+
+def test_one_version_everywhere_and_release_files_present():
+    """The package, the plugin and the changelog agree on the version; the release has
+    its security policy, upgrade notes and a private-release workflow (never PyPI)."""
+    import continuum
+
+    root = Path(__file__).resolve().parents[2]
+    meta = tomllib.loads((root / "pyproject.toml").read_text())["project"]
+    plugin = json.loads((root / "integrations" / "claude-code" / ".claude-plugin"
+                         / "plugin.json").read_text())
+    assert meta["version"] == continuum.__version__ == plugin["version"]
+    assert f"## {meta['version']}" in (root / "docs" / "CHANGELOG.md").read_text()
+    assert (root / "SECURITY.md").is_file() and (root / "docs" / "UPGRADING.md").is_file()
+    release = (root / ".github" / "workflows" / "release.yml").read_text()
+    assert "gh release create" in release
+    assert "twine" not in release and "gh-action-pypi-publish" not in release
