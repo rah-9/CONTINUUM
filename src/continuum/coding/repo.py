@@ -15,29 +15,26 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import shutil
-import subprocess
-import tempfile
 from pathlib import Path
 from typing import Any
 
 from continuum.coding.models import RepoState
-from continuum.core.errors import ContinuumError, PathContainmentError, SpecValidationError
+from continuum.coding.snapshot import (  # noqa: F401 - re-exported for existing callers
+    NOISE_SUFFIXES,
+    SKIP_DIRS,
+    TOP_LEVEL_BUILD_DIRS,
+    ObservationError,
+    content_tree,
+    parse_status,
+)
+from continuum.coding.snapshot import git as _git
+from continuum.coding.snapshot import is_noise as _is_noise
+from continuum.coding.snapshot import must as _must
+from continuum.coding.snapshot import show as _show
+from continuum.core.errors import PathContainmentError, SpecValidationError
 
-# Never project content: dependency trees, virtualenvs and caches, skipped at any depth.
-SKIP_DIRS = frozenset({".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__",
-                       ".mypy_cache", ".ruff_cache", ".pytest_cache", ".continuum", ".tox",
-                       ".idea", ".next"})
-# Build output skipped only at the project root (``src/build/`` can be real source).
-TOP_LEVEL_BUILD_DIRS = frozenset({"dist", "build", "target"})
 MAX_FILES = 50_000
 MAX_LISTED_CHANGES = 200
-
-
-class ObservationError(ContinuumError):
-    """The repository could not be observed; never guess a fingerprint."""
-
-    code = "observation_failed"
 
 
 def _allowed_roots() -> list[Path]:
@@ -126,32 +123,6 @@ def current_branch(root: Path) -> str | None:
     return ref.decode("utf-8", errors="replace").strip() if ref else "(detached)"
 
 
-GIT = shutil.which("git")
-
-
-def _git(root: Path, *args: str, env: dict[str, str] | None = None,
-         stdin: bytes | None = None) -> bytes | None:
-    if GIT is None:
-        return None
-    try:
-        # Constant git subcommands; arguments never come from a model.
-        out = subprocess.run([GIT, "-C", str(root), *args],  # noqa: S603
-                             capture_output=True, timeout=60, check=False, input=stdin,
-                             env={**os.environ, **env} if env else None)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return out.stdout if out.returncode == 0 else None
-
-
-def _must(root: Path, *args: str, env: dict[str, str] | None = None,
-          stdin: bytes | None = None) -> bytes:
-    out = _git(root, *args, env=env, stdin=stdin)
-    if out is None:
-        raise ObservationError(f"`git {' '.join(args[:2])}` failed in {root}; "
-                               "cannot fingerprint the code")
-    return out
-
-
 def _file_sha(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as fh:
@@ -160,71 +131,12 @@ def _file_sha(path: Path) -> str:
     return h.hexdigest()
 
 
-NOISE_SUFFIXES = (".pyc", ".pyo")
-
-
-def _is_noise(rel: str) -> bool:
-    """Caches that running checks creates (e.g. ``__pycache__``) and top-level build output.
-
-    Without this, merely running the tests changes the fingerprint and no check could
-    ever count as "passed on the current code"."""
-    parts = rel.rstrip("/").split("/")
-    return (any(part in SKIP_DIRS for part in parts) or parts[0] in TOP_LEVEL_BUILD_DIRS
-            or rel.endswith(NOISE_SUFFIXES))
-
-
 def observe(root: Path) -> RepoState:
     probe = _git(root, "rev-parse", "--is-inside-work-tree", "--absolute-git-dir")
     lines = probe.splitlines() if probe else []
     if len(lines) == 2 and lines[0].strip() == b"true":
         return _observe_git(root, Path(os.fsdecode(lines[1].strip())))
     return _observe_files(root)
-
-
-def _show(raw: bytes) -> str:
-    """A path for display/storage: valid UTF-8 always (PostgreSQL rejects surrogates)."""
-    return raw.decode("utf-8", errors="replace")
-
-
-# Fields before the path in `git status --porcelain=v2` records (1: ordinary change,
-# 2: rename/copy, followed by the original path as its own NUL-terminated record,
-# u: unmerged).
-_V2_PATH_FIELD = {b"1": 8, b"2": 9, b"u": 10}
-
-
-def _parse_status(status: bytes) -> tuple[str | None, str | None, list[str], list[bytes]]:
-    """Parse ``git status --porcelain=v2 --branch -z --untracked-files=all`` once.
-
-    Returns HEAD's commit (None before the first commit), the branch, the changed paths
-    (for display) and the untracked paths (raw bytes; .gitignore already applied)."""
-    head: str | None = None
-    branch: str | None = None
-    changed: set[str] = set()
-    untracked: list[bytes] = []
-    records = status.split(b"\0")
-    i = 0
-    while i < len(records):
-        record = records[i]
-        i += 1
-        if record.startswith(b"# branch.oid "):
-            oid = record.split(b" ", 2)[2].decode()
-            head = None if oid == "(initial)" else oid
-        elif record.startswith(b"# branch.head "):
-            branch = record.split(b" ", 2)[2].decode(errors="replace")
-        elif record[:2] in (b"? ",) or record[:1] in _V2_PATH_FIELD:
-            if record[:2] == b"? ":
-                raw = record[2:]
-            else:
-                raw = record.split(b" ", _V2_PATH_FIELD[record[:1]])[-1]
-                if record[:1] == b"2":
-                    i += 1  # the original path of a rename/copy
-            shown = _show(raw)
-            if _is_noise(shown):
-                continue
-            changed.add(shown)
-            if record[:2] == b"? ":
-                untracked.append(raw)
-    return head, branch, sorted(changed), untracked
 
 
 def _submodules(root: Path) -> list[bytes]:
@@ -236,42 +148,21 @@ def _submodules(root: Path) -> list[bytes]:
             if line.startswith(b"160000 ") and b"\t" in line]
 
 
-def _content_tree(root: Path, gitdir: Path, untracked: list[bytes]) -> bytes:
-    """Git tree id of the working tree's *content*: tracked files as they are on disk plus
-    the given untracked files (non-ignored, cache noise already removed).
-
-    Built in a private copy of the index, so the user's index is never touched and
-    git's stat cache keeps it cheap. Staging, committing or amending identical content
-    yields the same tree; any content change (edit, add, delete, mode, symlink target)
-    yields a different one. Names are bytes to git, so any file name works."""
-    with tempfile.TemporaryDirectory(prefix="continuum-index-") as tmp:
-        index = Path(tmp) / "index"
-        env = {"GIT_INDEX_FILE": str(index), "GIT_LITERAL_PATHSPECS": "1"}
-        if (gitdir / "index").is_file():  # no index yet: nothing is tracked
-            shutil.copyfile(gitdir / "index", index)
-            # tracked edits and deletions, whole tree; no pathspec, so newer gits cannot
-            # fail with "pathspec did not match" (git 2.55 does in an empty repository)
-            _must(root, "add", "--update", env=env)
-        if untracked:  # exact names from `git status`, as bytes (any encoding)
-            _must(root, "add", "--pathspec-from-file=-", "--pathspec-file-nul", env=env,
-                  stdin=b"\0".join(untracked))
-        return _must(root, "write-tree", env=env).strip()
-
-
 def _observe_git(root: Path, gitdir: Path) -> RepoState:
     status = _must(root, "status", "--porcelain=v2", "--branch", "-z",
                    "--untracked-files=all")
-    head, branch, changed, untracked = _parse_status(status)
+    head, branch, changed, untracked = parse_status(status)
     # The fingerprint is the code's content, not its history: a commit is not a change.
+    tree = content_tree(root, gitdir, untracked)
     h = hashlib.sha256()
-    h.update(b"tree:" + _content_tree(root, gitdir, untracked))
+    h.update(b"tree:" + tree.encode())
     # A gitlink records only the submodule's commit: fingerprint its content too.
     for rel in sorted(_submodules(root)):
         sub = root / os.fsdecode(rel)
         if (sub / ".git").exists():
             h.update(b"\nsubmodule:" + rel + b":" + observe(sub).fingerprint.encode())
     return RepoState(fingerprint="sha256:" + h.hexdigest(), vcs="git", head=head,
-                     branch=branch, dirty=bool(changed),
+                     branch=branch, dirty=bool(changed), tree=tree,
                      changed_files=changed[:MAX_LISTED_CHANGES])
 
 
@@ -324,7 +215,7 @@ def session_changes(root: Path, base: str | None) -> dict[str, Any] | None:
             defined = _show(m.group(1))
             if defined not in current["defines"] and len(current["defines"]) < MAP_NAMES:
                 current["defines"].append(defined)
-    _, _, _, untracked = _parse_status(status)
+    _, _, _, untracked = parse_status(status)
     for raw in untracked:
         path = _show(raw)
         file = root / os.fsdecode(raw)

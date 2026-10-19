@@ -23,7 +23,7 @@ from continuum.coding.install import BEGIN, HOOK_COMMAND, setup
 from continuum.coding.service import CodingContinuity
 from continuum.coding.transcript import Message
 from continuum.core.clock import SystemClock
-from continuum.core.errors import NotFoundError
+from continuum.core.errors import NotFoundError, SpecValidationError
 from continuum.core.ids import RandomIds
 from continuum.core.redaction import REDACTED
 from tests.conftest import DSN
@@ -191,8 +191,7 @@ def test_s3_hooks_fire_repeatedly_and_concurrently_without_duplicates(coding, re
     # second "yes" must not be lost), and REQ_2 via another source is kept in the journal.
     # every agent text message of the transcript is kept, not only the turn's last one
     assert [(e["payload_json"]["role"], e["payload_json"]["text"][:12]) for e in captured] == [
-        ("user", REQ_1[:12]), ("agent", "Reading lib/"), ("action", "tool: Read"),
-        ("user", REQ_2[:12]),
+        ("user", REQ_1[:12]), ("agent", "Reading lib/"), ("user", REQ_2[:12]),
         ("agent", "done"), ("user", REQ_1[:12]), ("user", REQ_2[:12])]
     # in order: #1 REQ_1, #2 REQ_2 (the copy from another source is not repeated),
     # #3 REQ_1 again: the latest message
@@ -464,73 +463,143 @@ def test_s14_both_sides_of_the_chat_are_kept_exactly_through_an_outage(coding, r
     assert any("line number" in i["text"] for i in brief["user_requests"]["ledger"])
 
 
-def test_s15_the_next_model_sees_what_the_previous_agent_did_and_what_failed(
-        coding, repo, tmp_path):
-    """A debugging chat ends mid-way: the agent edited a file, the tests failed, and the
-    chat ended. The next model learns which files were touched, which commands ran, that
-    the last test run failed, and secrets in commands are redacted, from the app's own
-    record (hooks only; the agent never called Continuum)."""
+def test_s15_everything_the_agent_did_is_journaled_with_results_and_impact(
+        coding, repo, tmp_path, monkeypatch):
+    """A real debugging turn through the hook code path (D-042): every tool call with its
+    result, what each call changed in the files (observed with snapshots, including a
+    shell command's changes), a failing test, an MCP write whose result was lost, a skill,
+    a subagent, compaction, and a secret in a command. The next model gets all of it, and
+    a person must resolve the lost external call before new external calls run."""
+    monkeypatch.setenv("CONTINUUM_HOME", str(tmp_path / "home"))
     root = str(repo)
+    secret = "sk-live-" + "a1b2c3d4" * 4
+    long_log = "\n".join(f"line {i}: ok" for i in range(4000)) + "\nERROR zeta-917 at the end"
 
-    def use(i, name, args, *, text=None):
-        content = ([{"type": "text", "text": text}] if text else []) + [
-            {"type": "tool_use", "id": f"t{i}", "name": name, "input": args}]
-        return {"type": "assistant", "uuid": f"a{i}", "timestamp": f"2026-10-19T10:00:{i:02d}Z",
-                "message": {"role": "assistant", "content": content}}
+    def hook(payload, app="claude-code"):
+        payload = {"cwd": root, "session_id": "chat-1", **payload}
+        out, entry = hooks.fast(app, payload)
+        hooks.handle(app, entry["payload"], coding, entry["snapshot"])
+        return out
 
-    def result(i, error):
-        return {"type": "user", "uuid": f"r{i}", "timestamp": f"2026-10-19T10:00:{i:02d}Z",
-                "message": {"role": "user", "content": [
-                    {"type": "tool_result", "tool_use_id": f"t{i}", "is_error": error,
-                     "content": "Exit code 1" if error else "ok"}]}}
+    def call(i, tool, tool_input, response=None, *, error=None, edit=None):
+        hook({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": tool_input,
+              "tool_use_id": f"t{i}"})
+        if edit:
+            edit()
+        if error is not None:
+            hook({"hook_event_name": "PostToolUseFailure", "tool_name": tool,
+                  "tool_input": tool_input, "tool_use_id": f"t{i}", "error": error})
+        elif response is not None:
+            hook({"hook_event_name": "PostToolUse", "tool_name": tool,
+                  "tool_input": tool_input, "tool_use_id": f"t{i}",
+                  "tool_response": response, "duration_ms": 40})
 
-    records = [
-        {"type": "user", "uuid": "u1", "timestamp": "2026-10-19T10:00:00Z",
-         "message": {"role": "user", "content": "The invoice totals are off by a cent. Fix it."}},
-        use(1, "Read", {"file_path": f"{root}/billing/totals.py"}, text="Looking at totals."),
-        result(1, False),
-        use(2, "Bash", {"command": "pytest -q tests/test_totals.py"}), result(2, True),
-        use(3, "Edit", {"file_path": f"{root}/billing/totals.py", "old_string": "a",
-                        "new_string": "b"}), result(3, False),
-        use(4, "Bash", {"command": "curl -H 'Authorization: Bearer sk-live-abcdef1234567890' "
-                                   "https://api.example.com/rates"}), result(4, False),
-        use(5, "Write", {"file_path": "/home/someone/.claude/memory.md", "content": "x"}),
-        result(5, False),
-        use(6, "Bash", {"command": "pytest -q tests/test_totals.py"}), result(6, True),
-        {"type": "user", "uuid": "u2", "timestamp": "2026-10-19T10:00:30Z",
-         "message": {"role": "user", "content": "stop here, the next model will continue"}},
-    ]
-    transcript = tmp_path / "chat.jsonl"
-    transcript.write_text("".join(json.dumps(r) + "\n" for r in records))
-    for event in ("UserPromptSubmit", "Stop", "SessionEnd"):
-        hooks.handle("claude-code", {"hook_event_name": event, "cwd": root,
-                                     "transcript_path": str(transcript)}, coding)
+    hook({"hook_event_name": "UserPromptSubmit", "prompt": "Totals are off by a cent; fix it."})
     sid = coding.latest_active(root)
+    call(1, "Read", {"file_path": f"{root}/lib/app.py"}, {"file": {"content": "def main()"}})
+    call(2, "Edit", {"file_path": f"{root}/lib/app.py"}, {"filePath": "lib/app.py"},
+         edit=lambda: (repo / "lib" / "app.py").write_text("def main():\n    return 1\n"))
+    call(3, "Bash", {"command": "python gen.py"}, {"stdout": "generated", "stderr": ""},
+         edit=lambda: (repo / "lib" / "gen_out.py").write_text("TABLE = [1, 2]\n"))
+    call(4, "Bash", {"command": f"curl -s -H 'Authorization: Bearer {secret}' localhost"},
+         {"stdout": "{}", "stderr": ""})
+    call(5, "Bash", {"command": "pytest -q tests/test_totals.py"}, error="Exit code 1\n"
+         + long_log)
+    call(6, "Skill", {"skill": "pdf"}, {"result": "loaded"})
+    call(7, "Task", {"description": "find callers of round_half"},
+         {"content": [{"type": "text", "text": "Callers: billing.py:12, invoice.py:40"}]})
+    call(8, "mcp__github__create_issue", {"title": "rounding bug"})      # result lost
+    hook({"hook_event_name": "PostCompact", "compact_summary": "Working on rounding."})
+    hook({"hook_event_name": "Stop", "last_assistant_message": "Stopping for today."})
+
     brief = coding.brief(sid)
     work, md = brief["work_log"], brief["markdown"]
-    assert work["edited"] == ["billing/totals.py"] and work["edited_outside_repo"] == 1
-    assert work["read"] == ["billing/totals.py"]
-    assert [(c["command"][:6], c["failed"]) for c in work["commands"]] == [
-        ("pytest", True), ("curl -", False), ("pytest", True)]
-    assert work["still_failing"] == ["pytest -q tests/test_totals.py"]
-    assert any("pytest -q tests/test_totals.py" in a and "failed" in a
-               for a in brief["attention"])
-    assert "## What the previous agent did" in md and "`billing/totals.py`" in md
-    assert "sk-live-abcdef1234567890" not in json.dumps(brief)      # redacted at capture
-    # the user's side is unchanged by the actions in between
-    assert _said(brief)[0].startswith("The invoice totals are off")
-    # the same transcript again (every hook re-reads it) adds nothing
-    again = coding.capture(root, __import__("continuum.coding.transcript",
-                                            fromlist=["x"]).read_transcript(transcript),
-                           source="claude-code", history=True)
-    assert again["captured"] == 0
-    # a later successful run clears the alarm
-    records += [use(7, "Bash", {"command": "pytest -q tests/test_totals.py"}),
-                result(7, False)]
-    transcript.write_text("".join(json.dumps(r) + "\n" for r in records))
-    hooks.handle("claude-code", {"hook_event_name": "Stop", "cwd": root,
-                                 "transcript_path": str(transcript)}, coding)
-    assert coding.brief(sid)["work_log"]["still_failing"] == []
+    changed = {f["path"]: f for f in work["files_changed"]}
+    assert set(changed) == {"lib/app.py", "lib/gen_out.py"}        # the shell's file too
+    assert changed["lib/gen_out.py"]["status"] == "added"
+    assert work["by_kind"] == {"builtin": 2, "shell": 3, "skill": 1, "subagent": 1, "mcp": 1}
+    assert [f["target"] for f in work["failures"]] == ["pytest -q tests/test_totals.py"]
+    assert "zeta-917" in work["failures"][0]["error_tail"]          # the end of the output
+    assert work["skills"] == ["pdf"] and "billing.py:12" in work["subagents"][0]["report"]
+    assert work["compactions"] == 1
+    [lost] = work["unresolved"]
+    assert lost["tool"] == "mcp__github__create_issue" and lost["effect"] == "external"
+    assert "Outcome UNKNOWN" in md and "continuum coding resolve" in md
+    assert "## What the previous agent did" in md and "`lib/gen_out.py`" in md
+    assert secret not in json.dumps(coding.show(sid, seq=1)) and secret not in md
+    with psycopg.connect(DSN) as conn:
+        dump = conn.execute(f'SELECT string_agg(content, \'\') FROM "{coding.store.schema}"'
+                            f'.coding_blobs'.encode()).fetchone()[0]
+        events = json.dumps(conn.execute(f'SELECT payload_json FROM "{coding.store.schema}"'
+                                         f'.coding_events'.encode()).fetchall())
+    assert secret not in dump and secret not in events
+    # the full output is kept and found: the brief has its end, recall and show the rest
+    hit = coding.recall("line 2500", session_id=sid)["matches"][0]
+    assert hit.get("blob") and "line 2500" in coding.show(sid, blob=hit["blob"],
+                                                          limit=100_000)["content"]
+    diff_seq = changed["lib/gen_out.py"]["seq"]
+    diff = coding.show(sid, seq=diff_seq)["payload"]
+    assert "+TABLE = [1, 2]" in coding.show(sid, blob=diff["diff_blob"])["content"]
+    # a new external call is denied until a person resolves the lost one; local work is not
+    denied = hook({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                   "tool_input": {"command": "git push"}, "tool_use_id": "t9"})
+    assert json.loads(denied)["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert hook({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                 "tool_input": {"command": "pytest -q"}, "tool_use_id": "t10"}) == ""
+    with pytest.raises(SpecValidationError):
+        coding.resolve_unknown(sid, lost["short"], "applied", actor="", reason="checked")
+    coding.resolve_unknown(sid, lost["short"], "not_applied", actor="alice",
+                           reason="no such issue on GitHub")
+    from continuum.coding import spool
+
+    spool.set_blocks(coding.sessions_root(sid), coding.unresolved(sid))
+    assert hook({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                 "tool_input": {"command": "git push"}, "tool_use_id": "t11"}) == ""
+    assert coding.brief(sid)["work_log"]["unresolved"] == []
+    # the app's transcript of the same calls adds nothing twice
+    before = len(coding._events(sid)[1])
+    transcript = tmp_path / "chat.jsonl"
+    transcript.write_text("\n".join(json.dumps(r) for r in [
+        {"type": "assistant", "uuid": "a1", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t1", "name": "Read",
+             "input": {"file_path": f"{root}/lib/app.py"}},
+            {"type": "tool_use", "id": "t5", "name": "Bash",
+             "input": {"command": "pytest -q tests/test_totals.py"}}]}},
+        {"type": "user", "uuid": "u1", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "def main()"},
+            {"type": "tool_result", "tool_use_id": "t5", "is_error": True,
+             "content": "Exit code 1"}]}}]) + "\n")
+    hook({"hook_event_name": "UserPromptSubmit", "prompt": "continue",
+          "transcript_path": str(transcript)})
+    added = [e["type"] for e in coding._events(sid)[1][before:]]
+    assert "ToolCallStarted" not in added[:1] and added.count("ToolCallFinished") <= 1
+
+
+def test_s15b_a_crashed_chat_leaves_unknown_outcomes_for_the_next_chat(coding, repo, tmp_path,
+                                                                        monkeypatch):
+    """The app was killed during a deploy: no result, no turn end. When the next chat
+    starts, that call is unknown (not failed), and external calls are blocked."""
+    monkeypatch.setenv("CONTINUUM_HOME", str(tmp_path / "home"))
+    root = str(repo)
+    hooks.handle("claude-code", {"hook_event_name": "UserPromptSubmit", "cwd": root,
+                                 "session_id": "old", "prompt": "Deploy the fix."}, coding)
+    hooks.handle("claude-code", {"hook_event_name": "PreToolUse", "cwd": root,
+                                 "session_id": "old", "tool_name": "Bash",
+                                 "tool_input": {"command": "kubectl apply -f prod.yaml"},
+                                 "tool_use_id": "k1"}, coding)
+    hooks.handle("claude-code", {"hook_event_name": "PreToolUse", "cwd": root,
+                                 "session_id": "old", "tool_name": "Read",
+                                 "tool_input": {"file_path": "x"}, "tool_use_id": "r1"},
+                 coding)
+    brief = hooks.handle("claude-code", {"hook_event_name": "SessionStart", "cwd": root,
+                                         "session_id": "new"}, coding)
+    assert "Outcome UNKNOWN" in brief and "kubectl apply" in brief
+    sid = coding.latest_active(root)
+    assert [u["tool"] for u in coding.unresolved(sid)] == ["Bash"]    # the read: no matter
+    out, _ = hooks.fast("claude-code", {"hook_event_name": "PreToolUse", "cwd": root,
+                                        "tool_name": "mcp__slack__post_message",
+                                        "tool_input": {"text": "deployed"}})
+    assert "deny" in out
 
 
 def test_s16_the_same_short_answer_in_two_apps_is_two_answers(coding, repo):

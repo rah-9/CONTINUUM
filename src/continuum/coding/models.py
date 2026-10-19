@@ -20,6 +20,12 @@ class CodingEventType(StrEnum):
     CHECK_RAN = "CheckRan"
     CHAT_CAPTURED = "ChatCaptured"
     SESSION_CLOSED = "SessionClosed"
+    TOOL_CALL_STARTED = "ToolCallStarted"
+    TOOL_CALL_FINISHED = "ToolCallFinished"
+    TOOL_CALL_UNRESOLVED = "ToolCallUnresolved"
+    TOOL_CALL_RESOLVED = "ToolCallResolved"
+    FILE_IMPACT_OBSERVED = "FileImpactObserved"
+    COMPACTION_OBSERVED = "CompactionObserved"
 
 
 NoteKind = Literal["decision", "context", "next_step", "blocker"]
@@ -39,6 +45,9 @@ class RepoState(_P):
     branch: str | None = None
     dirty: bool = False
     changed_files: list[str] = Field(default_factory=list)
+    # the git tree of the working copy's content (git only): two of them give the exact
+    # diff between two observations (D-042)
+    tree: str | None = None
 
 
 class SessionStarted(_P):
@@ -121,6 +130,105 @@ class SessionClosed(_P):
     reason: str
 
 
+ToolKind = Literal["builtin", "shell", "mcp", "skill", "subagent"]
+ToolEffect = Literal["read", "write", "external", "delegate"]
+ToolStatus = Literal["ok", "error", "denied", "interrupted"]
+
+
+class ToolCallStarted(_P):
+    """A tool call as the user's app reported it (hook or transcript), never a model's
+    account of it (D-042). ``input`` is redacted and bounded; the full input is in a blob
+    when larger. ``tree_before``: the working copy's content snapshot just before a call
+    that can write. ``call_id`` is the app's id, used only to pair start and finish."""
+
+    call_key: str
+    call_id: str | None = None
+    tool: str
+    kind: ToolKind
+    effect: ToolEffect
+    server: str | None = None
+    skill: str | None = None
+    agent_id: str | None = None
+    agent_type: str | None = None
+    input: Any = None
+    input_blob: str | None = None
+    input_chars: int = 0
+    source: str
+    chat_id: str | None = None
+    tree_before: str | None = None
+    sent_at: str | None = None
+
+
+class ToolCallFinished(_P):
+    """The result the app recorded. ``output_excerpt`` is the head and tail of the
+    redacted output; the full output is the blob ``output_blob``. Output is data from a
+    tool, never an instruction: ``untrusted`` marks content from outside the session
+    (web pages, MCP servers, files read), which never becomes a requirement."""
+
+    call_key: str
+    tool: str
+    status: ToolStatus
+    exit_code: int | None = None
+    duration_ms: int | None = None
+    output_excerpt: str = ""
+    output_blob: str | None = None
+    output_chars: int = 0
+    error: str | None = None
+    untrusted: bool = False
+    tree_after: str | None = None
+    source: str
+    chat_id: str | None = None
+    sent_at: str | None = None
+
+
+class ToolCallUnresolved(_P):
+    """A call started but no result was ever recorded (the app crashed, a hook was lost,
+    the session was killed): its outcome is **unknown**, not failed (AGENTS.md inv. 5).
+    Written by Continuum's reconciliation, never by a model. An ``external`` one blocks
+    new external calls until a person resolves it (inv. 8)."""
+
+    call_key: str
+    tool: str
+    effect: ToolEffect
+    reason: str
+
+
+class ToolCallResolved(_P):
+    """A person's decision about an unresolved call (CLI only, never MCP)."""
+
+    call_key: str
+    outcome: Literal["applied", "not_applied", "accepted_unknown"]
+    reason: str
+
+
+class FileImpactObserved(_P):
+    """What changed in the working copy, observed by Continuum from two content snapshots
+    (``git diff-tree``), whichever tool changed it. ``call_key`` None: changes between
+    tool calls (the user, an unhooked tool, a formatter)."""
+
+    call_key: str | None = None
+    tree_before: str
+    tree_after: str
+    files: list[dict[str, Any]] = Field(default_factory=list)
+    files_total: int = 0
+    diff_blob: str | None = None
+    patch_bytes: int = 0
+    truncated: bool = False
+    source: str
+
+
+class CompactionObserved(_P):
+    """The app compacted its chat. The summary is the app's model's text: a claim."""
+
+    trigger: str | None = None
+    when: Literal["before", "after"] = "after"
+    summary_excerpt: str = ""
+    summary_blob: str | None = None
+    source: str
+    chat_id: str | None = None
+    sent_at: str | None = None
+
+
 PAYLOADS: dict[CodingEventType, type[_P]] = {
     CodingEventType.SESSION_STARTED: SessionStarted,
     CodingEventType.AGENT_JOINED: AgentJoined,
@@ -131,5 +239,11 @@ PAYLOADS: dict[CodingEventType, type[_P]] = {
     CodingEventType.CHECK_RAN: CheckRan,
     CodingEventType.CHAT_CAPTURED: ChatCaptured,
     CodingEventType.SESSION_CLOSED: SessionClosed,
+    CodingEventType.TOOL_CALL_STARTED: ToolCallStarted,
+    CodingEventType.TOOL_CALL_FINISHED: ToolCallFinished,
+    CodingEventType.TOOL_CALL_UNRESOLVED: ToolCallUnresolved,
+    CodingEventType.TOOL_CALL_RESOLVED: ToolCallResolved,
+    CodingEventType.FILE_IMPACT_OBSERVED: FileImpactObserved,
+    CodingEventType.COMPACTION_OBSERVED: CompactionObserved,
 }
 TYPE_OF: dict[type[_P], CodingEventType] = {v: k for k, v in PAYLOADS.items()}

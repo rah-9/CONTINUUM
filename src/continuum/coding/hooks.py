@@ -15,9 +15,19 @@ argument (Codex ``notify``). The payload is read by meaning, not by one app's sc
 * ``hook_event_name == SessionStart``                    -> print the brief, which the
   app adds to the new chat's context (memory restored before the model's first turn)
 
-A hook must never break or slow down the agent: every failure is logged to
-``$CONTINUUM_HOME/hooks.log`` and the command still exits 0. ``CONTINUUM_HOOKS=off``
-disables it. No model is called.
+Tool calls (D-042): ``PreToolUse``/``PostToolUse``/``PostToolUseFailure`` (Claude Code,
+Codex), ``BeforeTool``/``AfterTool`` (Gemini CLI), Cursor's shell, MCP and file-edit hooks.
+Each is normalized by ``activity.from_hook``. Before and after a call that can write, the
+working copy's content is snapshotted, so the journal holds exactly what changed.
+
+A hook must never break or slow down the agent. It does not wait for the database: it
+redacts the payload, writes it to a local spool and starts a background drainer
+(``spool``), so it costs milliseconds and loses nothing when the database is down. Only
+``SessionStart`` waits (briefly) to print the brief. One deliberate exception to "never
+interfere": while a call that could change something outside the repository has an
+unknown outcome, ``PreToolUse`` denies new external calls until a person resolves it
+(AGENTS.md invariant 8). Failures are logged to ``$CONTINUUM_HOME/hooks.log`` and the
+command still exits 0. ``CONTINUUM_HOOKS=off`` disables it. No model is called.
 """
 
 from __future__ import annotations
@@ -30,7 +40,9 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from continuum.coding.transcript import Message, read_transcript
+from continuum.coding import activity
+from continuum.coding import spool as spool_mod
+from continuum.coding.transcript import Message, read_all
 
 CHAT_KEYS = ("session_id", "sessionId", "thread-id", "thread_id", "conversation_id",
              "conversationId")
@@ -43,7 +55,9 @@ HOOK_DB_TIMEOUT = "3"  # seconds; a hook waits at most this long for the databas
 # was captured when it was submitted), so a long chat does not slow every turn down. At
 # compaction and session end the whole transcript is re-read to catch up anything missed.
 TURN_TAIL_BYTES = 2 << 20
-TURN_EVENTS = frozenset({"stop", "subagentstop", "agent-turn-complete", "aftermodel"})
+TURN_EVENTS = frozenset({"stop", "agent-turn-complete", "afteragent", "sessionend",
+                         "stop_hook"})
+SESSION_START_DRAIN_SECONDS = 8.0   # SessionStart waits at most this long for the spool
 
 CONTEXT_HEADER = (
     "Continuum: this repository has an active coding session. The brief below is the "
@@ -89,18 +103,25 @@ def _event(payload: dict[str, Any]) -> str:
                or payload.get("type") or "").lower()
 
 
-def messages_from(payload: dict[str, Any]) -> tuple[list[Message], list[Message]]:
+def _read(payload: dict[str, Any], app: str, chat: str | None
+          ) -> tuple[list[Message], list[dict[str, Any]]]:
+    path = _first_str(payload, TRANSCRIPT_KEYS)
+    if not path or not Path(path).expanduser().is_file():
+        return [], []
+    tail = TURN_TAIL_BYTES if _event(payload) in TURN_EVENTS else None
+    return read_all(Path(path).expanduser(), app=app, chat=chat,
+                    **({"tail_bytes": tail} if tail else {}))
+
+
+def messages_from(payload: dict[str, Any], history: list[Message] | None = None
+                  ) -> tuple[list[Message], list[Message]]:
     """What a hook payload carries: (the chat transcript in order, this turn's messages).
 
     The transcript is re-imported idempotently (occurrences are counted within it). This
     turn's fields (``prompt``, ``input-messages``, ``last-assistant-message``) are new
     messages, except when the transcript already ends with them."""
-    history: list[Message] = []
-    path = _first_str(payload, TRANSCRIPT_KEYS)
-    if path and Path(path).expanduser().is_file():
-        tail = TURN_TAIL_BYTES if _event(payload) in TURN_EVENTS else None
-        history = read_transcript(Path(path).expanduser(), **(
-            {"tail_bytes": tail} if tail else {}))
+    if history is None:
+        history, _ = _read(payload, "transcript", None)
     turn: list[Message] = []
     prompt = payload.get("prompt")
     if isinstance(prompt, str) and prompt.strip():
@@ -118,27 +139,74 @@ def messages_from(payload: dict[str, Any]) -> tuple[list[Message], list[Message]
     return history, turn
 
 
-def handle(app: str, payload: dict[str, Any], coding: Any) -> str:
-    """Apply one hook call; returns what to print (context for the app, or nothing)."""
+def handle(app: str, payload: dict[str, Any], coding: Any,
+           snap: dict[str, Any] | None = None) -> str:
+    """Apply one hook call to the journal; returns what to print (context, or nothing).
+
+    Called by the drainer for spooled payloads (and directly in tests)."""
     from continuum.core.errors import NotFoundError
 
     cwd = _first_str(payload, CWD_KEYS) or os.getcwd()
     event = _event(payload)
+    chat = _first_str(payload, CHAT_KEYS)
     if event == "sessionstart":
         try:
-            brief = coding.brief(coding.follow(cwd, agent=f"capture:{app}"))
+            sid = coding.follow(cwd, agent=f"capture:{app}")
         except NotFoundError:
             return ""
-        return CONTEXT_HEADER + str(brief["markdown"])
-    history, turn = messages_from(payload)
-    chat = _first_str(payload, CHAT_KEYS)
+        coding.record_activity(cwd, [], source=app, reconcile="session_start", chat_id=chat)
+        _update_blocks(coding, sid)
+        return CONTEXT_HEADER + str(coding.brief(sid)["markdown"])
+    env = activity.from_hook(app, payload)
+    if env is not None:
+        if snap:
+            env["snapshot"] = snap
+        if payload.get("continuum_denied"):
+            env = {**env, "phase": "start_finish", "status": "denied",
+                   "output": str(payload["continuum_denied"])}
+        envs = [env]
+        if env["phase"] == "subagent_stop":
+            envs = _subagent_activity(env, app)
+        if envs:
+            coding.record_activity(cwd, envs, source=app)
+        return ""
+    history, tools = _read(payload, app, chat)
+    _, turn = messages_from(payload, history)
     # this turn first, then the transcript: the transcript's copy of a message captured
     # live is then recognised as the same message (an alias), never a second one
     if turn:
         coding.capture(cwd, turn, source=app, chat_id=chat)
     if history:
         coding.capture(cwd, history, source=app, chat_id=chat, history=True)
+    if snap and event in TURN_EVENTS:
+        tools = [*tools, {"v": 1, "app": app, "chat": chat, "phase": "turn_end",
+                          "snapshot": snap}]
+    if tools or event in TURN_EVENTS:
+        out = coding.record_activity(cwd, tools, source=app, chat_id=chat,
+                                     reconcile="turn_end" if event in TURN_EVENTS else None)
+        if out.get("session_id"):
+            _update_blocks(coding, out["session_id"])
     return ""
+
+
+def _subagent_activity(env: dict[str, Any], app: str) -> list[dict[str, Any]]:
+    """A subagent finished: its own tool calls, from its transcript, under its id."""
+    path = env.get("transcript")
+    if not isinstance(path, str) or not Path(path).expanduser().is_file():
+        return []
+    _, tools = read_all(Path(path).expanduser(), app=app, chat=env.get("chat"))
+    for t in tools:
+        t["agent_id"] = t.get("agent_id") or env.get("agent_id")
+        t["agent_type"] = env.get("agent_type")
+    return tools
+
+
+def _update_blocks(coding: Any, session_id: str) -> None:
+    try:
+        root = coding.sessions_root(session_id)
+        spool_mod.set_blocks(root, coding.unresolved(session_id))
+    except Exception as exc:  # blocks are a convenience copy; the journal is the truth
+        _log(f"blocks: {type(exc).__name__}")
 
 
 def _log(line: str) -> None:
@@ -151,32 +219,132 @@ def _log(line: str) -> None:
         pass
 
 
+DENY_REASON = (
+    "Continuum: a previous call that could change something outside this repository has "
+    "an unknown outcome ({tools}). New external actions are blocked until a person checks "
+    "and records what happened: `continuum coding resolve SESSION CALL --outcome "
+    "applied|not_applied|accepted_unknown --actor NAME --reason TEXT`. Local work "
+    "(reading, editing, tests) is not blocked.")
+
+
+def fast(app: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
+    """The hook's hot path, without the database: (what to print, entry to spool)."""
+    event = _event(payload)
+    cwd = _first_str(payload, CWD_KEYS) or os.getcwd()
+    entry: dict[str, Any] = {"app": app, "payload": payload, "snapshot": None}
+    env = activity.from_hook(app, payload)
+    out = ""
+    from continuum.coding import snapshot
+
+    # what a call changed: snapshots around calls that can change files (edits, shell
+    # commands), and at the end of a turn (changes made between tool calls)
+    can_write = env is not None and env["phase"] in ("start", "finish", "start_finish") \
+        and (env["effect"] == "write" or env["kind"] == "shell")
+    if can_write or event in TURN_EVENTS:
+        entry["snapshot"] = snapshot.take(cwd)
+    if env is not None and env["phase"] == "start" and env["effect"] == "external":
+        found = snapshot.git_dir(Path(cwd))
+        root = str(found[0]) if found else cwd
+        blocked = spool_mod.blocks(root)
+        if blocked:
+            reason = DENY_REASON.format(tools=", ".join(b["tool"] for b in blocked[:3]))
+            payload["continuum_denied"] = reason
+            out = json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                "permissionDecisionReason": reason}})
+    return out, entry
+
+
+def drain(coding: Any, *, deadline: float | None = None) -> int:
+    """Apply spooled hook payloads in order. Returns how many were applied."""
+    lock = spool_mod.Lock()
+    # SessionStart waits for a running drainer to finish, so the brief is complete
+    while not lock.acquire():
+        if deadline is None or time.monotonic() > deadline:
+            return 0
+        time.sleep(0.05)
+    applied = 0
+    try:
+        for path, entry in spool_mod.entries():
+            if deadline is not None and time.monotonic() > deadline:
+                break
+            if entry is None or not isinstance(entry.get("payload"), dict):
+                spool_mod.quarantine(path)
+                continue
+            try:
+                handle(str(entry.get("app") or "generic")[:40], entry["payload"], coding,
+                       entry.get("snapshot"))
+            except Exception as exc:
+                from continuum.core.errors import ContinuumError
+
+                if isinstance(exc, ContinuumError) and exc.code not in (
+                        "database_unavailable",):
+                    _log(f"spool: {path.name} not applied ({exc.code}); moved to failed/")
+                    spool_mod.quarantine(path)
+                    continue
+                raise   # the database is unreachable: keep the file, retry later
+            path.unlink(missing_ok=True)
+            applied += 1
+            lock.touch()
+    finally:
+        lock.release()
+    return applied
+
+
+def _with_sdk(work: Any) -> Any:
+    os.environ.setdefault("CONTINUUM_DB_TIMEOUT_SECONDS", HOOK_DB_TIMEOUT)
+    from continuum.interfaces.sdk import Continuum
+
+    sdk = Continuum()
+    try:
+        sdk.ensure_schema()
+        return work(sdk.coding)
+    finally:
+        sdk.close()
+
+
 def main(argv: list[str]) -> int:
-    """``continuum hook APP [PAYLOAD_JSON]``. Always exits 0."""
+    """``continuum hook APP [PAYLOAD_JSON]`` (or ``--drain``). Always exits 0."""
     if os.environ.get("CONTINUUM_HOOKS", "").lower() in ("off", "0", "false"):
+        return 0
+    if argv[:1] == ["--drain"]:
+        try:
+            _with_sdk(drain)
+        except Exception as exc:
+            _log(f"drain: {_masked(exc)}")
         return 0
     app = (argv[0] if argv else "generic")[:40]
     try:
         payload = parse_payload(argv[1] if len(argv) > 1 else None, sys.stdin)
-        os.environ.setdefault("CONTINUUM_DB_TIMEOUT_SECONDS", HOOK_DB_TIMEOUT)
-        from continuum.interfaces.sdk import Continuum
-
-        sdk = Continuum()
-        try:
-            sdk.ensure_schema()
-            out = handle(app, payload, sdk.coding)
-        finally:
-            sdk.close()
+        out, entry = fast(app, payload)
+        if _event(payload) == "sessionstart":
+            def start(coding: Any) -> str:
+                drain(coding, deadline=time.monotonic() + SESSION_START_DRAIN_SECONDS)
+                return handle(app, payload, coding)
+            out = _with_sdk(start)
+        elif entry is not None:
+            spool_mod.write(entry)
+            if os.environ.get("CONTINUUM_HOOKS_SYNC"):
+                _with_sdk(drain)
+            else:
+                spool_mod.start_drainer()
         if out:
             sys.stdout.write(out)
     except Exception as exc:  # a hook never breaks the agent
-        try:
-            from continuum.core.redaction import Redactor
-
-            message = Redactor.from_environment().text(f"{type(exc).__name__}: {exc}")
-        except Exception:
-            message = type(exc).__name__
-        _log(f"hook {app}: {message[:500]}")
+        _log(f"hook {app}: {_masked(exc)}")
         if os.environ.get("CONTINUUM_HOOKS_DEBUG"):
             _log(traceback.format_exc())
     return 0
+
+
+def _masked(exc: BaseException) -> str:
+    try:
+        from continuum.core.redaction import Redactor
+
+        return Redactor.from_environment().text(f"{type(exc).__name__}: {exc}")[:500]
+    except Exception:
+        return type(exc).__name__
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

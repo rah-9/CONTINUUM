@@ -34,11 +34,6 @@ MD_MAP_FILES = 15
 REPORT_CHARS = 1500
 STALE_DAYS = 3
 SAME_MESSAGE_SECONDS = 30    # one message seen by two capture routes (seconds apart)
-# What the previous agent did (its tool calls, as the app recorded them).
-WORK_EDITED = 15
-WORK_COMMANDS = 8
-WORK_READ = 8
-RECENT_COMMANDS = 3      # a failure among these is flagged in Attention
 
 
 def _clip(text: str, limit: int) -> str:
@@ -98,6 +93,7 @@ class SessionView:
     base_head: str | None = None  # HEAD when the session started
     session_changes: dict[str, Any] | None = None
     chat: list[dict[str, Any]] = field(default_factory=list)
+    tools: list[dict[str, Any]] = field(default_factory=list)   # D-042 activity events
     moves: list[dict[str, Any]] = field(default_factory=list)  # checkout changes
     start_branch: str | None = None
     updated_at: datetime | None = None   # the session's last write
@@ -245,53 +241,39 @@ class SessionView:
         return path
 
     def work_log(self) -> dict[str, Any]:
-        """What the previous agents did, from their tool calls as the user's app recorded
-        them: files edited and read, commands run and whether they failed. Recorded, not
-        verified: the code map and checks say what the code is now."""
-        actions = [c for c in self.chat if c["role"] == "action"]
-        outside = 0
-        edited: dict[str, None] = {}
-        read: dict[str, None] = {}
-        commands: list[dict[str, Any]] = []
-        other = 0
-        for a in actions:
-            verb, _, what = a["text"].partition(": ")
-            if verb == "edit":
-                for path in what.split(", "):
-                    rel = self._relative(path)
-                    if _absolute(rel):          # e.g. the app's own memory files
-                        outside += 1
-                        continue
-                    edited.pop(rel, None)
-                    edited[rel] = None                    # newest last
-            elif verb == "read":
-                read.pop(self._relative(what), None)
-                read[self._relative(what)] = None
-            elif verb == "run":
-                commands.append({"command": what, "failed": a["failed"], "at": a["at"],
-                                 "n": len(commands) + 1})
-            else:
-                other += 1
-        # The agent's last few commands that failed and were not run again successfully:
-        # older failures were usually experiments it moved past (seen in a real transcript).
-        recent = commands[-RECENT_COMMANDS:]
-        last: dict[str, dict[str, Any]] = {}
-        for c in recent:
-            last[c["command"]] = c
-        failing = [c for c in last.values() if c["failed"]]
-        files = list(reversed(edited))
-        seen = list(reversed(read))
-        return {
-            "actions": len(actions),
-            "edited": files[:WORK_EDITED], "edited_total": len(files),
-            "read": seen[:WORK_READ], "read_total": len(seen),
-            "commands": commands[-WORK_COMMANDS:], "commands_total": len(commands),
-            "still_failing": [c["command"] for c in failing],
-            "edited_outside_repo": outside,
-            "other_tools": other,
-            "trust": "the agent's tool calls as recorded by the user's app: what it did, "
-                     "not whether it worked (checks and the code map are the facts)",
-        }
+        """What the previous agents did (D-042): their tool calls as the user's app recorded
+        them, with results, and the file changes Continuum observed. Recorded and observed,
+        not claimed; the checks and the code map still say what the code is now."""
+        from continuum.coding import worklog
+
+        return worklog.build(self.tools + self._legacy_actions(), self._relative)
+
+    def _legacy_actions(self) -> list[dict[str, Any]]:
+        """Sessions recorded by v1.0.0rc1 kept tool calls as one-line chat 'actions'
+        (D-041): shown through the same summary."""
+        out: list[dict[str, Any]] = []
+        for c in self.chat:
+            if c["role"] != "action":
+                continue
+            verb, _, what = c["text"].partition(": ")
+            key = f"legacy:{c['seq']}"
+            tool, kind, effect, data = {
+                "run": ("Bash", "shell", "write", {"command": what}),
+                "edit": ("Edit", "builtin", "write", {"file_path": what}),
+                "read": ("Read", "builtin", "read", {"file_path": what}),
+            }.get(verb, (verb or "tool", "builtin", "external", {"name": what}))
+            out.append({"seq": c["seq"], "type": "ToolCallStarted", "at": c["at"], "p": {
+                "call_key": key, "tool": tool, "kind": kind, "effect": effect, "input": data,
+                "source": c["source"], "skill": None}})
+            out.append({"seq": c["seq"], "type": "ToolCallFinished", "at": c["at"], "p": {
+                "call_key": key, "tool": tool, "status": "error" if c.get("failed") else "ok",
+                "exit_code": None, "output_excerpt": "", "output_blob": None}})
+            if verb == "edit" and not _absolute(self._relative(what)):
+                out.append({"seq": c["seq"], "type": "FileImpactObserved", "at": c["at"],
+                            "p": {"call_key": key, "files": [{
+                                "path": self._relative(what), "status": "modified",
+                                "added": 0, "deleted": 0}]}})
+        return out
 
     def _last_report(self) -> dict[str, Any] | None:
         reports = [c for c in self.chat if c["role"] == "agent"]
@@ -319,11 +301,28 @@ class SessionView:
             out.append("The user's most recent message is newer than the last recorded next "
                        "step: it says what to do now.")
         work = self.work_log()
-        if work["still_failing"]:
-            shown = "; ".join(f"`{_line(c, 120)}`" for c in work["still_failing"][-3:])
-            out.append(f"Among the previous agent's last {RECENT_COMMANDS} commands, these "
-                       f"failed (recorded by the app): {shown}. Check whether that failure is "
-                       "still open before building on its work.")
+        external = [u for u in work["unresolved"] if u["effect"] == "external"]
+        local = [u for u in work["unresolved"] if u["effect"] != "external"]
+        for u in external[:3]:
+            out.append(f"⛔ Outcome UNKNOWN: `{_line(u['tool'], 80)}` "
+                       f"{_line(u['target'], 160)} [#{u['seq']}] could have changed something "
+                       "outside this repository and its result was never recorded. New "
+                       "external actions are blocked until a person checks and records what "
+                       f"happened: `continuum coding resolve {self.session_id} {u['short']} "
+                       "--outcome applied|not_applied|accepted_unknown --actor NAME "
+                       "--reason TEXT`. Local work may continue; do not repeat the call.")
+        if local:
+            shown = "; ".join(f"`{_line(u['tool'], 60)}` {_line(u['target'], 100)} "
+                              f"[#{u['seq']}]" for u in local[:3])
+            out.append(f"The result of {len(local)} local call(s) was never recorded: "
+                       f"{shown}. Compare the files under 'Files changed' and the code map "
+                       "with what they were meant to do before continuing.")
+        if work["failures"]:
+            shown = "; ".join(f"`{_line(f['target'] or f['tool'], 120)}` [#{f['seq']}]"
+                              for f in work["failures"])
+            out.append(f"Recent call(s) failed and were not re-run successfully: {shown}. "
+                       "Check whether each failure is still open before building on that "
+                       "work (the output is under 'Recent failures').")
         last_cp = self.checkpoints[-1] if self.checkpoints else None
         mapped = bool(self.session_changes and self.session_changes.get("files"))
         if mapped and (last_cp is None or last_cp["fingerprint"] != self.current.fingerprint):
@@ -420,6 +419,9 @@ def build_view(session: dict[str, Any], events: list[dict[str, Any]], current: R
                                   "sent_at": p.get("sent_at"),
                                   "failed": bool(p.get("failed", False)),
                                   "occurred_at": e["occurred_at"]})
+            case ("ToolCallStarted" | "ToolCallFinished" | "ToolCallUnresolved"
+                  | "ToolCallResolved" | "FileImpactObserved" | "CompactionObserved"):
+                view.tools.append({"seq": e["seq"], "type": e["type"], "p": p, "at": at})
             case "SessionClosed":
                 view.closed_reason = p["reason"]
     # Messages recovered from a transcript after a missed hook are stored late. Order by
@@ -523,7 +525,9 @@ def render_markdown(view: SessionView, d: dict[str, Any] | None = None) -> str:
         if changes["total_files"] > MD_MAP_FILES:
             lines.append(f"- … {changes['total_files'] - MD_MAP_FILES} more "
                          "(`detail=\"full\"`)")
-    lines += _render_work(d["work_log"])
+    from continuum.coding import worklog
+
+    lines += worklog.render(d["work_log"], view.session_id, _line)
     lines += ["", "## Tasks", ""]
     if not d["tasks"]:
         lines.append("_No tasks recorded. Plan them with coding_add_task._")
@@ -567,30 +571,6 @@ def _absolute(path: str) -> bool:
     return path.startswith(("/", "~")) or (len(path) > 2 and path[1] == ":")
 
 
-def _render_work(w: dict[str, Any]) -> list[str]:
-    """The previous agent's work, from the app's record of its tool calls."""
-    if not w["actions"]:
-        return []
-    lines = ["", f"## What the previous agent did ({w['actions']} recorded tool call(s); "
-                 "recorded by the app, not verified)", ""]
-    if w["edited"]:
-        more = w["edited_total"] - len(w["edited"])
-        lines.append("- Edited (newest first): " + ", ".join(
-            f"`{_line(f, 100)}`" for f in w["edited"]) + (f", … {more} more" if more else ""))
-    if w.get("edited_outside_repo"):
-        lines.append(f"- {w['edited_outside_repo']} edit(s) outside the repository "
-                     "(e.g. the app's own files) not listed")
-    if w["commands"]:
-        lines.append(f"- Commands ({w['commands_total']} run; newest last):")
-        lines += [f"  - `{_line(c['command'], 240)}`" + (" — **failed**" if c["failed"] else "")
-                  for c in w["commands"]]
-    if w["read"]:
-        more = w["read_total"] - len(w["read"])
-        lines.append("- Read (newest first): " + ", ".join(
-            f"`{_line(f, 100)}`" for f in w["read"]) + (f", … {more} more" if more else ""))
-    return lines
-
-
 def _render_memory(m: dict[str, Any]) -> list[str]:
     """The user's side of the conversation: numbered, in order, newest wins."""
     if not m["messages"]:
@@ -605,6 +585,11 @@ def _render_memory(m: dict[str, Any]) -> list[str]:
                      + (" _(clipped; coding_recall has it all)_" if first["clipped"] else ""))
     entries: list[tuple[int, int, str]] = []
     for item in m["ledger"]:
+        if item.get("replaced_by"):
+            entries.append((item["n"], item["pos"], f"- ~~#{item['n']}~~ (replaced by "
+                                                     f"#{item['replaced_by']}): "
+                                                     f"~~{_line(item['text'], 160)}~~"))
+            continue
         tag = {"revision": " (changes an earlier decision)", "answer": " (answer)"}.get(
             item["kind"], "")
         entries.append((item["n"], item["pos"], f"- #{item['n']}{tag}: "

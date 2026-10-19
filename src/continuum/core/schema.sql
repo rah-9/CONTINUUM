@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-INSERT INTO schema_meta (key, value) VALUES ('schema_version', '5')
+INSERT INTO schema_meta (key, value) VALUES ('schema_version', '6')
   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- TRUNCATE would bypass the row-level immutability trigger.
@@ -347,3 +347,49 @@ CREATE POLICY coding_events_own ON coding_events
   USING (EXISTS (SELECT 1 FROM coding_sessions s WHERE s.session_id = coding_events.session_id))
   WITH CHECK (EXISTS (SELECT 1 FROM coding_sessions s
                       WHERE s.session_id = coding_events.session_id));
+
+
+-- Schema v6: everything the agent did (D-042). Tool calls as the app reported them, what
+-- each changed in the working copy, compaction; full outputs and diffs as content-addressed
+-- blobs owned by the session (same row-level security and human-only erasure as events).
+ALTER TABLE coding_events DROP CONSTRAINT IF EXISTS coding_events_type_valid;
+SELECT continuum_add_constraint('coding_events', 'coding_events_type_valid', $c$CHECK (type IN (
+  'SessionStarted', 'AgentJoined', 'TaskAdded', 'TaskStatusChanged', 'NoteRecorded',
+  'CheckpointCaptured', 'CheckRan', 'ChatCaptured', 'SessionClosed', 'ToolCallStarted',
+  'ToolCallFinished', 'ToolCallUnresolved', 'ToolCallResolved', 'FileImpactObserved',
+  'CompactionObserved'))$c$);
+CREATE INDEX IF NOT EXISTS idx_coding_events_call_key ON coding_events
+  (session_id, (payload_json->>'call_key'), type) WHERE payload_json ? 'call_key';
+
+CREATE TABLE IF NOT EXISTS coding_blobs (
+  session_id    TEXT NOT NULL REFERENCES coding_sessions(session_id),
+  digest        TEXT NOT NULL,                -- sha256 of the stored (redacted) content
+  media_type    TEXT NOT NULL,                -- text/plain | text/x-diff | application/json
+  chars         BIGINT NOT NULL,              -- length of the redacted original
+  content       TEXT NOT NULL,                -- head and tail when longer than the cap
+  truncated     BOOLEAN NOT NULL DEFAULT false,
+  created_at    TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (session_id, digest)
+);
+DROP TRIGGER IF EXISTS coding_blobs_immutable ON coding_blobs;
+CREATE TRIGGER coding_blobs_immutable BEFORE UPDATE OR DELETE ON coding_blobs
+  FOR EACH ROW EXECUTE FUNCTION continuum_coding_events_guard();
+DROP TRIGGER IF EXISTS coding_blobs_no_truncate ON coding_blobs;
+CREATE TRIGGER coding_blobs_no_truncate BEFORE TRUNCATE ON coding_blobs
+  FOR EACH STATEMENT EXECUTE FUNCTION continuum_events_immutable();
+ALTER TABLE coding_blobs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS coding_blobs_own ON coding_blobs;
+CREATE POLICY coding_blobs_own ON coding_blobs
+  USING (EXISTS (SELECT 1 FROM coding_sessions s WHERE s.session_id = coding_blobs.session_id))
+  WITH CHECK (EXISTS (SELECT 1 FROM coding_sessions s
+                      WHERE s.session_id = coding_blobs.session_id));
+
+-- Full-text recall over everything remembered (D-043): every string in an event, and the
+-- first 64 KiB of every blob (a tsvector is bounded; recall still finds the blob's event).
+ALTER TABLE coding_events ADD COLUMN IF NOT EXISTS search tsvector
+  GENERATED ALWAYS AS (jsonb_to_tsvector('english'::regconfig, payload_json, '["string"]'))
+  STORED;
+CREATE INDEX IF NOT EXISTS idx_coding_events_search ON coding_events USING gin (search);
+ALTER TABLE coding_blobs ADD COLUMN IF NOT EXISTS search tsvector
+  GENERATED ALWAYS AS (to_tsvector('english'::regconfig, left(content, 65536))) STORED;
+CREATE INDEX IF NOT EXISTS idx_coding_blobs_search ON coding_blobs USING gin (search);

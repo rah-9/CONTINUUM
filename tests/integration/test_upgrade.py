@@ -45,7 +45,8 @@ def test_a_0_9_database_upgrades_to_1_0_without_losing_anything(store, old_schem
         for table in ("coding_sessions", "coding_events", "coding_checks"):
             cols = [r[0] for r in conn.execute(
                 b"SELECT column_name FROM information_schema.columns WHERE table_schema = %s "
-                b"AND table_name = %s AND column_name <> 'owner_role' ORDER BY ordinal_position",
+                b"AND table_name = %s AND column_name NOT IN ('owner_role', 'search') "
+                b"ORDER BY ordinal_position",
                 (store.schema, table)).fetchall()]
             names = ", ".join(cols)
             conn.execute(f'INSERT INTO "{old_schema}".{table} ({names}) '
@@ -72,6 +73,6 @@ def test_a_0_9_database_upgrades_to_1_0_without_losing_anything(store, old_schem
             rls = conn.execute(b"SELECT relrowsecurity FROM pg_class "
                                b"WHERE oid = 'coding_sessions'::regclass").fetchone()
             conn.rollback()
-        assert version == "5" and rls["relrowsecurity"] is True
+        assert version == "6" and rls["relrowsecurity"] is True
     finally:
         old.close()

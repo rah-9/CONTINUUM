@@ -22,7 +22,7 @@ EXPECTED_TOOLS = {"list_tasks", "run_task", "resume_run", "cancel_run", "get_sta
                   "coding_resume", "coding_start", "coding_brief", "coding_add_task",
                   "coding_set_task_status", "coding_complete_task", "coding_note",
                   "coding_checkpoint", "coding_run_check", "coding_sessions", "coding_close",
-                  "coding_recall"}
+                  "coding_recall", "coding_show"}
 
 
 @pytest.fixture
