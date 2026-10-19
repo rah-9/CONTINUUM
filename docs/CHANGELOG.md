@@ -7,10 +7,14 @@ Release candidate for client delivery: privacy, licensing, portability and packa
 ### Added
 - **Erasure and retention (D-039, schema v5).** `continuum coding forget SESSION` and `continuum coding forget --older-than-days N` remove a session's events and row in one transaction and leave a content-free tombstone (`coding_erasures`, immutable). Human-only: CLI with `--yes`, never MCP. `continuum coding erasures` lists them. History outside an erasure stays immutable.
 - **Several people, one database (D-040).** Each person connects with their own PostgreSQL role; row-level security shows each role only its own sessions, events, checks and tombstones. Operator commands `continuum admin grant|revoke|reassign|users`. A role without access gets `no_access` naming the fix.
+- **What the previous agent did (D-041).** Tool calls in the app's transcript (Claude Code, Codex, Gemini) are kept as one-line actions with a failed mark. The brief lists edited files, recent commands and files read; Attention flags a failing command among the agent's last three. On the real 30-message transcript: 52 of 52 tool calls kept, in order, none duplicated.
+- **Benchmark modes `transcript` and `two_apps`.** Turns re-imported from growing app transcripts with tool calls, and a chat that moves between Claude Code and Codex. Every memory kind 98–100% at 10–160 messages; edited files and open failures 100%; no false alarms. Pinned in `test_nf6`.
 - **Proprietary licensing.** `LICENSE`, `NOTICE`, SPDX headers in every source file, package metadata (`Private :: Do Not Upload`) and a notice in every document. `tests/unit/test_license.py` keeps it complete.
 - **CI on Windows and macOS** in addition to Linux.
 
 ### Fixed
+- **Answers across apps.** A "yes" was paired with the question before it in journal order, so a transcript imported later (another app) could lose the pairing. It now uses conversation order.
+- **Repeated words in another app.** The same words from two capture routes were always treated as one message, so a later "yes" typed in another app vanished from the brief. They are one message only when captured within 30 seconds.
 - **Windows:** CLI output into a pipe the reader already closed raised `OSError: Invalid argument` (Windows' form of a broken pipe). It is now handled like a broken pipe.
 
 ## 0.9.0 — 2026-10-18

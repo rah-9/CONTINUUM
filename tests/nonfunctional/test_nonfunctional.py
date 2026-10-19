@@ -290,3 +290,12 @@ def test_nf6_long_chat_memory_quality(store, tmp_path):
         assert new["noise_leaks"] == 0
         assert new["tokens_max"] <= max_tokens
         assert new["explicit"] > old["explicit"]
+    # the same memory when the chat moves between two apps and each turn's tool calls
+    # are re-imported from the apps' transcripts; what the agent did is kept too
+    results = [run_one(coding, seed, 40, tmp_path, mode="two_apps") for seed in range(4)]
+    both = summarize(results, "new")
+    for kind in ("explicit", "revision", "answer", "agent_decision", "fresh2",
+                 "edited_file", "open_failure"):
+        assert both[kind] >= 0.95, (kind, both[kind])
+    assert both["false_alarms"] == 0 and both["noise_leaks"] == 0
+    assert both["tokens_max"] <= 1800

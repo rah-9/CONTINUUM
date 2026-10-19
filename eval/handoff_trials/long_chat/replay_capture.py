@@ -79,14 +79,14 @@ def main() -> None:
                     print("  ", e["seq"], repr(p["text"][:20]), p["key"][-30:], p.get("alias"))
         shown = [e["payload_json"] for e in events
                  if e["type"] == "ChatCaptured" and not e["payload_json"].get("alias")]
-        for role in ("user", "agent"):
+        for role in ("user", "agent", "action"):
             want = Counter(m.text for m in truth if m.role == role)
             got = Counter(p["text"] for p in shown if p["role"] == role)
             missing, extra = want - got, got - want
             if os.environ.get("REPLAY_DEBUG"):
                 print("  extra:", [t[:40] for t in extra.elements()],
                       "missing:", [t[:40] for t in missing.elements()])
-            print(f"{role:5s}: transcript {sum(want.values())}, journal "
+            print(f"{role:6s}: transcript {sum(want.values())}, journal "
                   f"{sum(got.values())}, missing {sum(missing.values())}, "
                   f"duplicated {sum(extra.values())}")
         print("brief sees the transcript's order:", view_order == [m.text for m in truth])

@@ -487,12 +487,14 @@ class CodingContinuity:
         chat = None if chat_id is None else _clean(self.redactor.text(chat_id))[:120]
         prepared: list[ChatCaptured] = []
         idents: list[str | None] = []
-        # A transcript is kept whole: every user message and every agent text message (tool
-        # calls and tool output are not conversation). New turns without a transcript keep
-        # the turn's final agent message.
+        # A transcript is kept whole: every user message, every agent text message and
+        # every tool call as a one-line action (tool output is not kept). New turns
+        # without a transcript keep the turn's final agent message.
         last_agent = max((i for i, m in enumerate(messages) if m.role == "agent"), default=-1)
         for i, msg in enumerate(messages):
             if msg.role == "agent" and not history and i != last_agent:
+                continue
+            if msg.role == "action" and not history:   # tool calls come from transcripts
                 continue
             text = _clean(self.redactor.text(msg.text.strip()))
             if not text:
@@ -502,7 +504,8 @@ class CodingContinuity:
             prepared.append(ChatCaptured(role=msg.role, text=text[:MAX_CAPTURE], source=label,
                                          chat_id=chat, key=key,
                                          chars_omitted=max(0, len(text) - MAX_CAPTURE),
-                                         sent_at=_timestamp(msg.at)))
+                                         sent_at=_timestamp(msg.at),
+                                         failed=msg.role == "action" and msg.failed))
             idents.append(msg.ident if history else None)
         if not prepared:
             return {"captured": 0, "skipped": 0, "session_id": None}
