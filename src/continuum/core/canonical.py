@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Canonical JSON encoding and content digests.
 
 Every hash in Continuum (args digests, fingerprints, packet hashes, evidence

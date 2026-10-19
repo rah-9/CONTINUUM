@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Metric definitions and uncertainty (docs/07 section 7).
 
 Proportions use Wilson score intervals; matched C1-B0 differences use a

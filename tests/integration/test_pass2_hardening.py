@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Second-pass audit regressions (v0.6.3). Each test failed before its fix."""
 
 import asyncio

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Shared fixture for the export-feature handoff trial (hidden from the agents).
 
 A real coding session with a note and a check run whose output contains a "customer"

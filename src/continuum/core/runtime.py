@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Run controller: start, resume, step loop and human decisions (docs/02).
 
 The controller owns run lifecycle and the step loop. It composes focused

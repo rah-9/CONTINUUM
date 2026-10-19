@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Typed runtime errors. Each carries a stable machine-readable ``code``."""
 
 from __future__ import annotations

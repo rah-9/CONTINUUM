@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Task factory used by ``config/tasks/*.yaml`` to expose lab tasks to the SDK/CLI.
 
 Options:

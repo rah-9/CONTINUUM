@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Structured JSON local tracing (docs/01 section 5).
 
 One JSON object per line on the ``continuum`` logger hierarchy. Callers pass

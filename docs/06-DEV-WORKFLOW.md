@@ -142,3 +142,7 @@ Done when: tests and type checks pass; docs and changelog updated if contracts c
 - Continuum Lab is internal `eval/`; not a separate service/product.
 
 Future components may be recorded in `DECISIONS.md` but should not generate implementation tickets until MVP evidence justifies them.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

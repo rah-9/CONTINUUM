@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Continuum as an MCP plugin: real stdio protocol round-trips against `continuum mcp`."""
 
 import asyncio

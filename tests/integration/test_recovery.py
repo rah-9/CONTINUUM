@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Crash, restart and model handoff continuity (U1, U2, R3, R8)."""
 
 import pytest

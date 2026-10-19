@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Audit regressions for the core runtime and interfaces (v0.6.2).
 
 Each test reproduces a defect found by the full-codebase audit before it was fixed.

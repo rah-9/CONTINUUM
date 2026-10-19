@@ -100,3 +100,7 @@ Use Wilson intervals for binomial proportions with adequate samples; paired boot
 Produce a short Markdown report containing: sample sizes; coverage matrix; B0 vs C1 results with uncertainty; provider handoff matrix; committed vs attempted duplicates; human pauses; progress retention; cost/latency; failed cases; limitations and reproduction commands.
 
 **Release safety requirements on deterministic fixtures:** no unauthorized effect; no blind retry of opaque unknown; no extra commit in deduped fixture; no successful completion after verifier drift; no double dispatch from two active lease owners; no tool invocation during diagnostic replay. C1 need **not** outperform B0 on every metric, but any claimed improvement must be shown with actual data.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

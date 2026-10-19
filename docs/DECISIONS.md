@@ -380,3 +380,6 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 - Matching live and transcript messages by text alone: it loses repeated words, which was the v0.8 bug.
 - Re-ordering stored events: the journal is immutable.
 
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Side-effect-free diagnostic replay and trace export (R11, I8).
 
 Everything here reads committed events and content-addressed blobs only. It

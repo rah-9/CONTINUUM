@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """The coding handoff brief: what a new model or chat needs to continue the work.
 
 Built only from the append-only journal plus a fresh observation of the

@@ -143,3 +143,7 @@ routing:
 - Token/cost `unknown` stays unknown; no negative usage; measured provider configuration recorded.
 - Two providers generate valid packets and resume fake-workflow milestones; a third provider configuration passes contract tests for evaluation.
 - No tool support -> explicit incompatibility; small context -> capacity error without dropping essential references.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

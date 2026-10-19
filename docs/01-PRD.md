@@ -96,3 +96,7 @@ Target **15–20 checkable tasks**, three provider configurations, two or more r
 ## 8. Delivery checkpoints
 
 Week 1: state/event transactions, lease and ledger. Week 2: gateway, reconciliation and verifiers with fake agents. Week 3: model adapter and cross-provider handoff. Week 4: CLI/local API, fault injection, baseline and report. See `06-DEV-WORKFLOW.md` for exact acceptance tests.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

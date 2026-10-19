@@ -220,3 +220,7 @@ The realistic trial is packaged in [`eval/handoff_trials/`](../eval/handoff_tria
 setup script, exact prompts, hidden acceptance tests, chat-requirement judge, and a judging
 script. It reproduces the verdicts above (`judge.sh` gives 4/4 for the Continuum runs and 1/4
 for the baselines).
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

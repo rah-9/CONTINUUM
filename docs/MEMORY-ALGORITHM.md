@@ -278,3 +278,7 @@ in [MEMORY-QUALITY.md](MEMORY-QUALITY.md).
   check registration). Every entry records its source (D-029).
 - **One active session per checkout.** Two unrelated tasks in one checkout share a session
   until it is closed; recall and the newest-wins rule keep this workable.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

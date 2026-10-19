@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Deterministic fault injection at named boundaries (docs/07 section 4)."""
 
 from __future__ import annotations

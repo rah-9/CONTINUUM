@@ -64,3 +64,7 @@ From an agent (MCP): `resume_run(run_id="…", model_alias="openai/gpt-6.1")`.
 
 Live provider behaviour is covered only by the opt-in tests (`CONTINUUM_LIVE=1`). The emulators
 enforce documented request rules. They cannot prove a specific new model's reasoning quality.
+
+---
+
+_Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

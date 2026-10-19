@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Conversation consolidation: what a long chat must hand to the next model, in a budget.
 
 Keeping "the first and the newest few messages" loses everything said in the middle of a

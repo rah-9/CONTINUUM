@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Permission + tool gateway: the single dispatch path (docs/02 section 4, docs/04 section 4).
 
 Every model proposal and every trusted verifier/reconciler read goes through

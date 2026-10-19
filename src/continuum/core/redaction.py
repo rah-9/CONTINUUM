@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Secret redaction applied before anything is persisted or sent to a model.
 
 Secrets come only from environment/config. Two layers: (1) values of known

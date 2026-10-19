@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Continuum-Proprietary
+# Copyright (c) 2026 the Continuum copyright holder. All rights reserved.
 """Replay a real Claude Code transcript through the hook sequence it produced, and check
 that the journal kept the whole conversation: every user message (repeats included) and
 every agent text message, with no duplicates.
