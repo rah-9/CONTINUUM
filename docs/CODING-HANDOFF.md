@@ -20,7 +20,8 @@ Chat history does not survive the switch, and it shouldn't be trusted anyway. Co
 | Which checks passed, on which code, with which definition | `CheckRan` events, compared with the code now | fact |
 | Tasks, and whether each is **verified** or needs re-verification | evidence fingerprints vs the code now | fact |
 | Checks registered by a human, and whether any changed this session | `coding_checks` | fact |
-| **What the user asked**, verbatim, in every earlier chat and app | captured by the app's hooks, never by a model | the user's words: requirements, newest wins |
+| **What the user asked**: every requirement, change of mind and answer from the whole chat, in order and numbered (consolidated, not just the newest messages) | captured by the app's hooks, never by a model | the user's words: requirements, the higher number wins |
+| Choices and caveats the previous agent reported | captured agent reports | claim |
 | The previous agent's last message | captured by the app's hooks | claim |
 | Attention: what is missing or changed (no capture, uncheckpointed code, failing checks, a moved session) | computed from the journal | fact |
 | Decisions, context, blockers and next steps | notes recorded by previous agents, kept whole | claim |
@@ -90,6 +91,12 @@ without warning (quota, crash, closed window):
    prompt, through the SessionStart hook.
 
 The exact algorithm and every tested scenario: [`MEMORY-ALGORITHM.md`](MEMORY-ALGORITHM.md).
+
+## Before you switch (optional)
+
+In Claude Code, `/continuum:handoff` has the current model record its decisions, a
+checkpoint and the next step before you change model, chat or app. `/continuum:resume`
+starts the new chat from the brief. The hooks capture your own messages either way.
 
 ## Switching: GPT-5.6 → GPT-6.1 in Codex
 

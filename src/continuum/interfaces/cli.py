@@ -314,7 +314,8 @@ def _coding(sdk: Continuum, args: argparse.Namespace) -> int:
             from continuum.coding.transcript import read_transcript
 
             _print(coding.capture(args.repo, read_transcript(args.transcript),
-                                  source=args.source, chat_id=args.chat or args.transcript))
+                                  source=args.source, chat_id=args.chat or args.transcript,
+                                  history=True))
         case "recall":
             _print(coding.recall(args.query, session_id=args.session,
                                  repo_path=None if args.session else args.repo,

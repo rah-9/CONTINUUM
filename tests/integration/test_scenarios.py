@@ -33,6 +33,16 @@ REQ_1 = ("Build `fetch_rates` in lib/rates.py. Requirement: retry a failed reque
 REQ_2 = "Also: amounts are Decimal, rounded half-even to 2 places, never float."
 
 
+def _said(brief: dict) -> list[str]:
+    """What the brief carries of the user's words, in conversation order."""
+    m = brief["user_requests"]
+    parts = ([(m["first"]["n"], 0, m["first"]["text"])] if m["first"] else [])
+    parts += [(i["n"], i["pos"], i["text"]) for i in m["ledger"]]
+    parts += [(r["n"], 0, r["text"]) for r in m["recent"]]
+    parts += [(m["latest"]["n"], 99, m["latest"]["text"])] if m["latest"] else []
+    return [text for _, _, text in sorted(parts)]
+
+
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True,
                           text=True).stdout
@@ -174,9 +184,16 @@ def test_s3_hooks_fire_repeatedly_and_concurrently_without_duplicates(coding, re
     coding.capture(str(repo), [Message("user", REQ_2)], source="transcript", chat_id="x")
     sid = coding.latest_active(str(repo))
     captured = [e for e in coding._events(sid)[1] if e["type"] == "ChatCaptured"]
-    assert len(captured) == 4   # REQ_1, REQ_2, the report, and REQ_2 from another source
-    items = [r["text"] for r in coding.brief(sid)["user_requests"]["items"]]
-    assert items == [REQ_1, REQ_2]                               # shown once each
+    # The transcript re-imports (5 hook calls, 4 concurrent) add nothing twice. REQ_1
+    # submitted again as a new prompt IS a new message (people repeat themselves, and a
+    # second "yes" must not be lost), and REQ_2 via another source is kept in the journal.
+    # every agent text message of the transcript is kept, not only the turn's last one
+    assert [(e["payload_json"]["role"], e["payload_json"]["text"][:12]) for e in captured] == [
+        ("user", REQ_1[:12]), ("agent", "Reading lib/"), ("user", REQ_2[:12]),
+        ("agent", "done"), ("user", REQ_1[:12]), ("user", REQ_2[:12])]
+    # in order: #1 REQ_1, #2 REQ_2 (the copy from another source is not repeated),
+    # #3 REQ_1 again: the latest message
+    assert _said(coding.brief(sid)) == [REQ_1, REQ_2, REQ_1]
 
 
 # S4 ---------------------------------------------------------------------------------------
@@ -217,6 +234,7 @@ def test_s4b_hook_cli_round_trip_over_a_real_database(schema, repo, tmp_path):
 def test_s5_long_sessions_stay_bounded_and_nothing_is_forgotten(coding, repo):
     msgs = [Message("user", f"request {i}: " + ("detail " * 40)) for i in range(60)]
     msgs[7] = Message("user", "request 7: the cache directory must be ~/cache-zeta")
+    msgs[12] = Message("user", "Why is the build slow on the `orbit-x9` runner?")
     msgs[30] = Message("user", "continue")
     coding.capture(str(repo), msgs, source="claude-code", chat_id="c")
     sid = coding.latest_active(str(repo))
@@ -229,9 +247,10 @@ def test_s5_long_sessions_stay_bounded_and_nothing_is_forgotten(coding, repo):
     md = small["markdown"]
     assert len(json.dumps(small)) / 4 < 4000
     assert "request 0:" in md and "request 59:" in md          # first and newest kept
-    assert "zeta" not in md and "QX-551" not in md             # bounded out ...
-    hit = coding.recall("cache-zeta directory", repo_path=str(repo))["matches"][0]
-    assert "~/cache-zeta" in hit["text"] and hit["kind"] == "user"      # ... but recalled
+    assert "~/cache-zeta" in md                  # a requirement from message 8 of 60 is kept
+    assert "orbit-x9" not in md and "QX-551" not in md         # questions, old notes: out
+    hit = coding.recall("orbit-x9 runner", repo_path=str(repo))["matches"][0]
+    assert "orbit-x9" in hit["text"] and hit["kind"] == "user"          # ... but recalled
     assert "QX-551" in coding.recall("QX-551", session_id=sid)["matches"][0]["text"]
 
 
@@ -273,9 +292,11 @@ def test_s8_short_replies_and_conflicting_requests(coding, repo):
                                Message("user", "Actually use PostgreSQL, not SQLite."),
                                Message("user", "yes")], source="codex", chat_id="t")
     brief = coding.brief(coding.latest_active(str(repo)))
-    items = [r["text"] for r in brief["user_requests"]["items"]]
-    assert items == ["Use SQLite for storage.", "Actually use PostgreSQL, not SQLite.", "yes"]
-    assert brief["user_requests"]["omitted_low_information"] == 2
+    m = brief["user_requests"]
+    assert _said(brief) == ["Use SQLite for storage.", "Actually use PostgreSQL, not SQLite.",
+                            "yes"]
+    assert m["ledger"][0]["kind"] == "revision" and m["ledger"][0]["n"] == 4
+    assert m["omitted_messages"] == 2                            # "ok", "continue"
     assert any("newer one wins" in rule for rule in brief["rules"])
 
 
@@ -355,4 +376,86 @@ def test_s12_hooks_installed_for_every_project_only_journal_git_repositories(cod
     assert out == "" and coding.sessions(str(folder)) == []
     sid = coding.start(str(folder), "notes cleanup", agent="m")["session_id"]
     coding.capture(str(folder), [Message("user", "keep the headings")], source="cli")
-    assert coding.brief(sid)["user_requests"]["items"][0]["text"] == "keep the headings"
+    assert _said(coding.brief(sid)) == ["keep the headings"]
+
+
+# S13 --------------------------------------------------------------------------------------
+
+def test_s13_repeated_words_in_one_chat_are_all_kept_and_reimports_add_nothing(
+        coding, repo, tmp_path):
+    """A second "yes" or "continue" in the same chat was dropped as a duplicate (found in the
+    30-message trial). Each submitted prompt is a message; a transcript re-import is not."""
+    turns = [("Should I drop `v1`?", "yes"), ("And `v2`?", "yes"), ("And `v3`?", "no")]
+    for question, reply in turns:
+        hooks.handle("codex", {"type": "agent-turn-complete", "thread-id": "t",
+                               "cwd": str(repo), "input-messages": ["go on"],
+                               "last-assistant-message": question}, coding)
+        hooks.handle("codex", {"type": "agent-turn-complete", "thread-id": "t",
+                               "cwd": str(repo), "input-messages": [reply],
+                               "last-assistant-message": "Done."}, coding)
+    sid = coding.latest_active(str(repo))
+    users = [e["payload_json"]["text"] for e in coding._events(sid)[1]
+             if e["type"] == "ChatCaptured" and e["payload_json"]["role"] == "user"]
+    assert users == ["go on", "yes", "go on", "yes", "go on", "no"]
+    answers = [i["text"] for i in coding.brief(sid)["user_requests"]["ledger"]
+               if i["kind"] == "answer"]
+    assert any("v1" in a for a in answers) and any("v2" in a for a in answers)
+    assert "v3" in coding.brief(sid)["user_requests"]["latest"]["in_reply_to"]
+
+    # the same chat as a transcript, imported twice: nothing is added
+    path = tmp_path / "t.jsonl"
+    path.write_text("".join(json.dumps({"role": "user", "content": u}) + "\n" for u in users))
+    before = len(coding._events(sid)[1])
+    for _ in range(2):
+        coding.capture(str(repo), [Message("user", u) for u in users], source="codex",
+                       chat_id="t", history=True)
+    assert len(coding._events(sid)[1]) == before
+
+
+# S14 --------------------------------------------------------------------------------------
+
+def test_s14_both_sides_of_the_chat_are_kept_exactly_through_an_outage(coding, repo, tmp_path):
+    """Everything the user AND the agent wrote is kept: no message missing, none twice, in
+    the order written. Shaped like a real Claude Code transcript (found in Trial 5's): each
+    message record has a uuid and a timestamp; the file also holds uuid-less request/cache
+    copies of messages; words repeat ("continue", "Done."); hooks fail for the first turns
+    (database down) and catch up later."""
+    script = [("user", "Build the parser."), ("agent", "Reading the grammar first."),
+              ("agent", "I chose a recursive-descent parser because the grammar is LL(1)."),
+              ("user", "continue"), ("agent", "Done."),
+              ("user", "Errors must include the line number."), ("agent", "Done."),
+              ("user", "continue"), ("agent", "Note: unicode identifiers are not handled yet."),
+              ("agent", "Done.")]
+    lines, starts = [], []
+    for i, (role, text) in enumerate(script):
+        kind = "user" if role == "user" else "assistant"
+        if role == "user":
+            starts.append(len(lines))
+        lines.append(json.dumps({"type": kind, "uuid": f"u{i}",
+                                 "timestamp": f"2026-10-18T10:{i:02d}:00Z",
+                                 "message": {"role": kind, "content": [
+                                     {"type": "text", "text": text}]}}))
+        lines.append(json.dumps({"type": "api-request-blob", "hash": f"h{i}",
+                                 "message": {"role": kind, "content": text}}))
+    starts.append(len(lines))
+    partial = tmp_path / "t.jsonl"
+    base = {"session_id": "chat-1", "cwd": str(repo)}
+    for t in range(len(starts) - 1):
+        if t < 2:
+            continue                       # database down: these hooks only logged errors
+        prompt = json.loads(lines[starts[t]])["message"]["content"][0]["text"]
+        hooks.handle("claude-code", {**base, "hook_event_name": "UserPromptSubmit",
+                                     "prompt": prompt}, coding)
+        partial.write_text("\n".join(lines[:starts[t + 1]]) + "\n")
+        hooks.handle("claude-code", {**base, "hook_event_name": "Stop",
+                                     "transcript_path": str(partial)}, coding)
+    for _ in range(2):                     # session end re-reads it all (twice: idempotent)
+        partial.write_text("\n".join(lines) + "\n")
+        hooks.handle("claude-code", {**base, "hook_event_name": "SessionEnd",
+                                     "transcript_path": str(partial)}, coding)
+    view = coding._view(coding.latest_active(str(repo)))
+    assert [(c["role"], c["text"]) for c in view.chat] == script
+    brief = coding.brief(view.session_id)
+    decisions = " ".join(d["text"] for d in brief["agent_notes"]["reported_decisions"])
+    assert "recursive-descent" in decisions and "unicode identifiers" in decisions
+    assert any("line number" in i["text"] for i in brief["user_requests"]["ledger"])

@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -191,6 +191,7 @@ class CodingContinuity:
         if current is None:
             current = observe(root)
         view = build_view(session, events, current, checks)
+        view.now = self.clock.now()
         if current.vcs == "git":
             view.session_changes = session_changes(root, view.base_head)
         elif isinstance(session["created_at"], datetime):
@@ -456,7 +457,8 @@ class CodingContinuity:
     # ===== chat capture (hooks, transcript import; never an MCP tool) =================
 
     def capture(self, repo_path: str, messages: list[Message], *, source: str,
-                chat_id: str | None = None, autostart: bool = True) -> dict[str, Any]:
+                chat_id: str | None = None, autostart: bool = True,
+                history: bool = False) -> dict[str, Any]:
         """Record chat messages verbatim (redacted, bounded) in the repository's session.
 
         Called by an app's hooks or a transcript import, not by a model: user messages
@@ -466,16 +468,23 @@ class CodingContinuity:
         message starts one, so the work is journaled even if no agent ever called
         ``coding_start`` (inside a git repository only: a hook installed for every project
         must not journal arbitrary directories). Only the newest agent message is kept
-        (the turn's report)."""
+        (the turn's report).
+
+        The same words can legitimately recur ("yes", "continue"), so a message's key also
+        counts its occurrence: ``history=True`` means ``messages`` is a chat transcript in
+        order (occurrences are counted within it, so re-importing it is idempotent);
+        otherwise the messages are new turns (counted after what is already stored)."""
         label = " ".join(_clean(self.redactor.text(source)).split())[:MAX_SOURCE] or "cli"
         chat = None if chat_id is None else _clean(self.redactor.text(chat_id))[:120]
         prepared: list[ChatCaptured] = []
-        agent_seen = False
-        for msg in reversed(messages):  # newest first, to keep only the last agent report
-            if msg.role == "agent":
-                if agent_seen:
-                    continue
-                agent_seen = True
+        idents: list[str | None] = []
+        # A transcript is kept whole: every user message and every agent text message (tool
+        # calls and tool output are not conversation). New turns without a transcript keep
+        # the turn's final agent message.
+        last_agent = max((i for i, m in enumerate(messages) if m.role == "agent"), default=-1)
+        for i, msg in enumerate(messages):
+            if msg.role == "agent" and not history and i != last_agent:
+                continue
             text = _clean(self.redactor.text(msg.text.strip()))
             if not text:
                 continue
@@ -483,8 +492,9 @@ class CodingContinuity:
                 "\0".join((label, chat or "", msg.role, text)).encode()).hexdigest()
             prepared.append(ChatCaptured(role=msg.role, text=text[:MAX_CAPTURE], source=label,
                                          chat_id=chat, key=key,
-                                         chars_omitted=max(0, len(text) - MAX_CAPTURE)))
-        prepared.reverse()
+                                         chars_omitted=max(0, len(text) - MAX_CAPTURE),
+                                         sent_at=_timestamp(msg.at)))
+            idents.append(msg.ident if history else None)
         if not prepared:
             return {"captured": 0, "skipped": 0, "session_id": None}
         try:
@@ -497,11 +507,20 @@ class CodingContinuity:
                         "reason": "no active coding session for this repository"}
             goal = " ".join(first.split())[:300]
             sid = self.start(repo_path, goal, agent=f"capture:{label}")["session_id"]
-        return self._append_captured(sid, prepared, f"capture:{label}")
+        return self._append_captured(sid, prepared, idents, f"capture:{label}",
+                                     history=history)
 
     def _append_captured(self, session_id: str, items: list[ChatCaptured],
-                         actor: str) -> dict[str, Any]:
-        """All new messages in one transaction under the session lock (gapless seq)."""
+                         idents: list[str | None], actor: str, *,
+                         history: bool) -> dict[str, Any]:
+        """All new messages in one transaction under the session lock (gapless seq).
+
+        Keys (``payload.key``): ``<text key>`` and ``<text key>#n`` for messages without a
+        transcript id (the n-th occurrence of the same words in that chat), and
+        ``<text key>@<id hash>`` for transcript messages with an id. A transcript message
+        whose words were already captured live (by a prompt or notify hook, without an id)
+        is stored as an ``alias`` of that message: never shown twice, and remembered so a
+        re-import stays idempotent."""
         with self.store.connection() as conn:
             try:
                 row = conn.execute(
@@ -511,20 +530,50 @@ class CodingContinuity:
                     conn.rollback()
                     return {"captured": 0, "skipped": len(items), "session_id": session_id,
                             "reason": "session not active"}
-                keys = [i.key for i in items]
-                seen = {r["k"] for r in conn.execute(
+                bases = list({i.key for i in items})
+                stored = [r["k"] for r in conn.execute(
                     b"SELECT payload_json->>'key' AS k FROM coding_events WHERE "
                     b"session_id = %s AND type = 'ChatCaptured' AND "
-                    b"payload_json->>'key' = ANY(%s)", (session_id, keys)).fetchall()}
+                    b"split_part(split_part(payload_json->>'key', '#', 1), '@', 1) = ANY(%s)",
+                    (session_id, bases)).fetchall()]
+                seen = set(stored)
+                live: dict[str, int] = {}      # captured without an id, per text key
+                aliases: dict[str, int] = {}   # transcript copies of live messages
+                for k in stored:
+                    if "@" in k:
+                        if k.endswith("!"):
+                            base = k.split("@", 1)[0]
+                            aliases[base] = aliases.get(base, 0) + 1
+                    else:
+                        base = k.split("#", 1)[0]
+                        live[base] = live.get(base, 0) + 1
+                count: dict[str, int] = {} if history else dict(live)
                 seq = row["last_seq"]
                 fresh = []
-                for item in items:
-                    if item.key in seen:
-                        continue
-                    seen.add(item.key)
+                for item, ident in zip(items, idents, strict=True):
+                    base = item.key
+                    if ident is not None:
+                        key = f"{base}@{hashlib.sha256(ident.encode()).hexdigest()[:24]}"
+                        if key in seen or key + "!" in seen:
+                            continue
+                        # an unmatched live copy of these words exists: this is it
+                        alias = aliases.get(base, 0) < live.get(base, 0)
+                        if alias:
+                            aliases[base] = aliases.get(base, 0) + 1
+                            key += "!"
+                        item = item.model_copy(update={"key": key, "alias": alias})
+                    else:
+                        n = count.get(base, 0) + 1
+                        count[base] = n
+                        key = base if n == 1 else f"{base}#{n}"
+                        if key in seen:
+                            continue
+                        item = item.model_copy(update={"key": key})
+                    seen.add(key)
                     seq = self._insert(conn, session_id, seq + 1, item, actor)
-                    fresh.append(item)
-                if fresh:
+                    if not item.alias:
+                        fresh.append(item)
+                if seq != row["last_seq"]:
                     conn.execute(b"UPDATE coding_sessions SET last_seq = %s, updated_at = %s "
                                  b"WHERE session_id = %s", (seq, self.clock.now(), session_id))
                 conn.commit()
@@ -651,6 +700,19 @@ def _iso(value: Any) -> str:
     return value.isoformat() if isinstance(value, datetime) else str(value)
 
 
+def _timestamp(value: str | None) -> str | None:
+    """A transcript timestamp, normalized to UTC ISO-8601; None if absent or unparseable."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(UTC).isoformat()
+
+
 def _searchable(event: dict[str, Any]) -> str:
     p = event["payload_json"]
     match event["type"]:
@@ -660,8 +722,10 @@ def _searchable(event: dict[str, Any]) -> str:
             return str(p.get("title", ""))
         case "TaskStatusChanged":
             return f"{p.get('status', '')}: {p.get('note', '')}" if p.get("note") else ""
-        case "NoteRecorded" | "ChatCaptured":
+        case "NoteRecorded":
             return str(p.get("text", ""))
+        case "ChatCaptured":
+            return "" if p.get("alias") else str(p.get("text", ""))
         case "CheckpointCaptured":
             return str(p.get("summary", ""))
         case "CheckRan":

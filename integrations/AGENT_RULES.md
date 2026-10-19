@@ -26,26 +26,31 @@ Follow these rules in every session:
      claims against the code.
    - The brief is bounded. To find anything older (a decision, an error, something the user
      said), call `coding_recall(query)` instead of guessing or re-reading the repository.
-3. **Don't redo verified work.**
+3. **Keep going; don't stall on old open questions.**
+   - Continue with the user's latest instruction. If the previous agent left an open question
+     that the user's words do not answer, pick the safest reasonable option, record it with
+     `coding_note(kind="decision")`, and mention it. Ask first only when the choice is
+     destructive or irreversible.
+4. **Don't redo verified work.**
    - A task marked verified is done unless `needs_reverification` is true; re-run its checks if
      it is.
    - Continue from the most recent `next_steps` and the open tasks.
-4. **Leave a trail as you work.**
+5. **Leave a trail as you work.**
    - `coding_note(kind="decision")` for choices and why.
    - `coding_note(kind="context")` for things the next model must know.
    - `coding_note(kind="blocker")` for anything blocking.
    - `coding_checkpoint(summary)` after each meaningful change.
-5. **Done means proven.**
+6. **Done means proven.**
    - Before claiming a task is done, run its checks with `coding_run_check`, then call
      `coding_complete_task`. If it is refused, the code changed since the checks ran, or a check
      failed. Fix it and re-run; do not argue with the refusal.
    - A task without checks can be completed, but it is recorded as unverified. Prefer naming a
      check.
-6. **Before you stop**, record a `next_step` note saying exactly what the next model should do
+7. **Before you stop**, record a `next_step` note saying exactly what the next model should do
    first.
-7. **Never change how checks are defined.** Only a human registers checks
+8. **Never change how checks are defined.** Only a human registers checks
    (`continuum coding checks add`). Do not edit tests just to make a check pass.
-8. **Never record secrets** in notes. Continuum redacts known secrets, but do not rely on it.
+9. **Never record secrets** in notes. Continuum redacts known secrets, but do not rely on it.
 
 **Without MCP** (for example a shell-only agent), use the same protocol through the CLI. The
 `--agent` value is your exact model id.
