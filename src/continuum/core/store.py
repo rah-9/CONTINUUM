@@ -388,7 +388,8 @@ class Store:
                 row = conn.execute(
                     b"SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
                 conn.rollback()
-        except psycopg.errors.UndefinedTable:
+        except (psycopg.errors.UndefinedTable, psycopg.errors.InsufficientPrivilege):
+            self._require_access()
             row = None
         if row is not None:
             stored, ours = int(row["value"]), int(self.SCHEMA_VERSION)
@@ -400,6 +401,20 @@ class Store:
                     "upgrade continuum", code="schema_too_new")
         self.migrate()
         return True
+
+    def _require_access(self) -> None:
+        """The schema exists but this role may not use it: say who must grant what,
+        instead of failing later with "relation does not exist" (D-040)."""
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                b"SELECT current_user AS me, has_schema_privilege(n.oid, 'USAGE') AS usable "
+                b"FROM pg_namespace n WHERE n.nspname = %s", (self.schema,)).fetchone()
+            conn.rollback()
+        if row is not None and not row["usable"]:
+            raise ContinuumError(
+                f"PostgreSQL role {row['me']} has no access to Continuum schema {self.schema}; "
+                f"the operator grants it with: continuum admin grant {row['me']}",
+                code="no_access")
 
     def migrate(self) -> None:
         """Idempotent DDL, serialized across processes by an advisory lock so concurrent
