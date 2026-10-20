@@ -167,8 +167,13 @@ def start_drainer() -> None:
 
 # ---- external-effect blocks (AGENTS.md inv. 8) ---------------------------------------
 
+# Namespace of deny-list file names (see ``snapshot._STORE_NAMESPACE``).
+_BLOCK_NAMESPACE = bytes.fromhex("636f6e74696e75756d2d626c6f636b73")
+
+
 def _block_file(root: str) -> Path:
-    digest = hashlib.sha256(os.path.normcase(str(Path(root).resolve())).encode()).hexdigest()
+    digest = hashlib.sha256(_BLOCK_NAMESPACE + os.path.normcase(
+        str(Path(root).resolve())).encode()).hexdigest()
     folder = home() / "blocks"
     folder.mkdir(parents=True, exist_ok=True)
     return folder / f"{digest[:32]}.json"

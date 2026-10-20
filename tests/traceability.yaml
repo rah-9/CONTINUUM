@@ -251,3 +251,20 @@ R16_agent_actions_remembered:
   - tests/integration/test_scenarios.py::test_s15b_a_crashed_chat_leaves_unknown_outcomes_for_the_next_chat
   - tests/integration/test_scenarios.py::test_s15_everything_the_agent_did_is_journaled_with_results_and_impact
   - tests/nonfunctional/test_nonfunctional.py::test_nf6_long_chat_memory_quality
+R17_lossless_memory:
+  - tests/integration/test_lossless_memory.py::test_a_long_message_is_kept_whole
+  - tests/integration/test_lossless_memory.py::test_images_in_chats_and_tool_results_are_stored_and_viewable
+  - tests/integration/test_lossless_memory.py::test_an_edited_and_resent_message_is_not_a_requirement
+  - tests/integration/test_lossless_memory.py::test_a_codex_rollback_withdraws_the_turns_it_undid
+  - tests/integration/test_lossless_memory.py::test_recall_finds_identifiers_by_their_parts_and_fuses_rankings
+  - tests/integration/test_mcp_stdio.py::test_a_screenshot_from_the_chat_is_shown_to_the_next_model_over_mcp
+  - tests/unit/test_segments.py::test_stack_traces_become_error_signatures_in_the_projects_own_code
+  - tests/unit/test_segments.py::test_each_kind_of_paste_is_typed_and_summarised
+  - tests/unit/test_segments.py::test_prose_is_never_mistaken_for_a_paste
+  - tests/unit/test_memory.py::test_a_long_chat_has_an_index_of_every_stretch_by_its_own_words
+  - tests/unit/test_memory.py::test_requirements_the_work_touched_rank_above_ones_it_did_not
+  - tests/nonfunctional/test_nonfunctional.py::test_nf6_long_chat_memory_quality
+R18_unknown_outcomes_resolved_by_proof:
+  - tests/integration/test_capture_review.py::test_a_lost_push_is_checked_against_the_remote_never_assumed
+  - tests/unit/test_activity.py::test_push_commands_are_parsed_for_a_read_only_probe
+  - tests/unit/test_activity.py::test_a_probe_never_runs_with_injected_options

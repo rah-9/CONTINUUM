@@ -11,6 +11,7 @@ import logging
 import os
 import sys
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -159,6 +160,11 @@ def build_parser() -> argparse.ArgumentParser:
     shw.add_argument("--seq", type=int)
     shw.add_argument("--blob")
     shw.add_argument("--offset", type=int, default=0)
+    med = csub.add_parser("media", help="save an image or document from the chat or a tool "
+                                        "result ([image #...] in the brief) to a file")
+    med.add_argument("session")
+    med.add_argument("image")
+    med.add_argument("--out", required=True, help="file to write")
     unr = csub.add_parser("unresolved", help="calls whose outcome is unknown")
     unr.add_argument("session")
     rsv = csub.add_parser("resolve", help="human-only: record what happened to a call whose "
@@ -400,6 +406,10 @@ def _coding(sdk: Continuum, args: argparse.Namespace) -> int:
         case "show":
             _print(coding.show(args.session, seq=args.seq, blob=args.blob,
                                offset=args.offset))
+        case "media":
+            found = coding.media(args.session, args.image)
+            Path(args.out).write_bytes(found.pop("content"))
+            _print({**found, "written": args.out})
         case "unresolved":
             _print(coding.unresolved(args.session))
         case "resolve":

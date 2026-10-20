@@ -73,6 +73,6 @@ def test_a_0_9_database_upgrades_to_1_0_without_losing_anything(store, old_schem
             rls = conn.execute(b"SELECT relrowsecurity FROM pg_class "
                                b"WHERE oid = 'coding_sessions'::regclass").fetchone()
             conn.rollback()
-        assert version == "6" and rls["relrowsecurity"] is True
+        assert version == "7" and rls["relrowsecurity"] is True
     finally:
         old.close()
