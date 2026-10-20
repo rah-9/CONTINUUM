@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.0.0rc3 — unreleased
+
+Lossless memory with a real grasp of technical content, the chat's real shape, and unknown
+outcomes resolved by proof (D-046, D-047; schema v7). Research and measurements in
+`reports/Memory and product research (2026-10).md`.
+
+### Added
+- **Images and documents** from chats and tool results are stored (`coding_media`) and shown to the next model with `coding_view_image` (MCP, read-only) or saved with `continuum coding media`. The brief labels them `[image #…: image/png 1280x800]`.
+- **Technical content understood by structure:** stack traces become error signatures (Python, JavaScript, Java, Go, Rust), and diffs, JSON, tables, logs, shell sessions and code are summarised by type. A new "Pasted by the user" line lists the newest pastes, errors first.
+- **Rewinds and edits:** messages on a branch the user abandoned (Claude Code edit or rewind, Codex rollback) are withdrawn from the requirements and counted. They stay searchable.
+- **Index of the whole chat:** every stretch of a long chat is named by its most distinctive words.
+- **Grounding:** requirements that the agent's work actually touched rank first. Near-duplicate statements no longer use up the budget.
+- **Recall** finds identifiers by their parts (`user by id` → `getUserById`) and fuses its rankings.
+- **Lost `git push` proven automatically:** a read-only `git ls-remote` that shows the pushed commit records the call as applied and lifts the block. Absence is never inferred.
+
+### Changed
+- Messages longer than 16,000 characters keep their head and tail inline and their whole text in a blob. They were cut before.
+- MCP: 22 tools (`coding_view_image`).
+- The compact brief, recall matches and `coding_show` events have a fixed field order.
+
+### Fixed
+- A screenshot returned by a tool was stored as base64 text in the output.
+- Edited-and-resent messages were captured as current requirements (seen in a real transcript).
+- `continuum coding import` imported a transcript's messages but not its tool calls (found by importing this project's own 33 MB session live: 726 messages and 1,839 tool calls now arrive in 13 s).
+- The chat index named stretches by spoken filler ("things", "don", "currently") on a real voice-typed chat; it now skips English stopwords, filler and contractions.
+
 ## 1.0.0rc2 — unreleased
 
 Everything the agent did, with results and impact (D-042 to D-044, schema v6). Based on

@@ -376,7 +376,7 @@ class Store:
     def close(self) -> None:
         self.pool.close()
 
-    SCHEMA_VERSION = "6"
+    SCHEMA_VERSION = "7"
 
     def ensure_schema(self) -> bool:
         """Migrate only if the schema is missing or older than this code. True if it ran.

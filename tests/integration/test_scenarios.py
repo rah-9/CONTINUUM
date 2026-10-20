@@ -256,7 +256,11 @@ def test_s5_long_sessions_stay_bounded_and_nothing_is_forgotten(coding, repo):
     assert len(json.dumps(small)) / 4 < 4000
     assert "request 0:" in md and "request 59:" in md          # first and newest kept
     assert "~/cache-zeta" in md                  # a requirement from message 8 of 60 is kept
-    assert "orbit-x9" not in md and "QX-551" not in md         # questions, old notes: out
+    # questions and old notes are not requirements; the chat index may name the stretch
+    # where the question was asked (D-046), so it is reachable, never as a requirement
+    body = "\n".join(ln for ln in md.splitlines()
+                     if not ln.startswith("- **Index of the whole chat**"))
+    assert "orbit-x9" not in body and "QX-551" not in md
     hit = coding.recall("orbit-x9 runner", repo_path=str(repo))["matches"][0]
     assert "orbit-x9" in hit["text"] and hit["kind"] == "user"          # ... but recalled
     assert "QX-551" in coding.recall("QX-551", session_id=sid)["matches"][0]["text"]

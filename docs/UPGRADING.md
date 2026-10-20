@@ -13,6 +13,17 @@ an older installation stops with `schema_too_new`.
 4. **Check** with `continuum doctor`. It must report `"ok": true`.
 5. **Upgrade every machine** that uses the same database. An older Continuum refuses to start on the newer schema instead of writing to it.
 
+## 1.0.0rc2 → 1.0.0rc3
+
+Schema v6 → v7. Automatic; nothing is rewritten.
+
+| Change | What you do |
+|---|---|
+| **Images and documents** stored in a new table, `coding_media` (D-046). | Several people: `continuum admin grant <role>` again for each person (adds `coding_media`). Shared databases: include images in your retention policy; redaction cannot see inside them. |
+| **Rewinds and edits**: abandoned messages are withdrawn by a new event, `ChatWithdrawn`. | Nothing. Older sessions are corrected the next time their transcript is imported. |
+| **MCP `coding_view_image`** and **`continuum coding media`**. | Restart MCP clients to see the new tool. |
+| **Lost pushes proven by `git ls-remote`** (D-047). | Nothing. Probes use your normal git credentials and never prompt. |
+
 ## 1.0.0rc1 → 1.0.0rc2
 
 Schema v5 → v6. Automatic; nothing is rewritten. Adding the full-text column builds an index

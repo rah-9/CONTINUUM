@@ -83,6 +83,43 @@ def _bounded(text: str) -> tuple[str, bool]:
             + text[-half:]), True
 
 
+def store_blob(conn: Any, session_id: str, text: str, media_type: str, now: Any) -> str:
+    """A content-addressed text blob of the session (idempotent); returns its digest."""
+    stored, truncated = _bounded(text)
+    digest = "sha256:" + hashlib.sha256(stored.encode("utf-8", "replace")).hexdigest()
+    conn.execute(
+        b"INSERT INTO coding_blobs (session_id, digest, media_type, chars, content, "
+        b"truncated, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s) "
+        b"ON CONFLICT DO NOTHING",
+        (session_id, digest, media_type, len(text), stored, truncated, now))
+    return digest
+
+
+def store_media(conn: Any, session_id: str, parts: Any, now: Any) -> list[dict[str, Any]]:
+    """Images and documents (``media.find`` parts) as ``coding_media`` rows; returns their
+    descriptions for the event. Too large or undecodable: described, not stored."""
+    from continuum.coding import media
+
+    out: list[dict[str, Any]] = []
+    for part in parts if isinstance(parts, list) else []:
+        if not isinstance(part, dict) or not isinstance(part.get("data"), str):
+            continue
+        meta = media.describe(part)
+        raw = media.decode(part) if meta["stored"] else None
+        if raw is not None and len(raw) <= media.MAX_MEDIA_BYTES:
+            meta["blob"] = "sha256:" + meta["sha256"]
+            conn.execute(
+                b"INSERT INTO coding_media (session_id, digest, media_type, bytes, width, "
+                b"height, content, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+                b"ON CONFLICT DO NOTHING",
+                (session_id, meta["blob"], meta["media_type"], len(raw), meta.get("width"),
+                 meta.get("height"), raw, now))
+        else:
+            meta["stored"] = False
+        out.append(meta)
+    return out
+
+
 class Recorder:
     """Writes activity for one session inside an open transaction (``conn``)."""
 
@@ -129,15 +166,10 @@ class Recorder:
         self._note(type(payload).__name__, payload.model_dump(mode="json"))
 
     def blob(self, text: str, media_type: str = "text/plain") -> str:
-        stored, truncated = _bounded(text)
-        digest = "sha256:" + hashlib.sha256(stored.encode("utf-8", "replace")).hexdigest()
-        self.conn.execute(
-            b"INSERT INTO coding_blobs (session_id, digest, media_type, chars, content, "
-            b"truncated, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s) "
-            b"ON CONFLICT DO NOTHING",
-            (self.sid, digest, media_type, len(text), stored, truncated,
-             self.svc.clock.now()))
-        return digest
+        return store_blob(self.conn, self.sid, text, media_type, self.svc.clock.now())
+
+    def media(self, parts: Any) -> list[dict[str, Any]]:
+        return store_media(self.conn, self.sid, parts, self.svc.clock.now())
 
     def _text(self, value: Any) -> str:
         if value is None:
@@ -263,7 +295,8 @@ class Recorder:
             output_excerpt=excerpt(output), output_blob=blob, output_chars=len(output),
             error=error, untrusted=True, signals=signals(output), tree_after=tree_after,
             source=self._text(env.get("app") or "app")[:60],
-            chat_id=self._opt(env.get("chat"), 120), sent_at=_timestamp(env.get("at"))))
+            chat_id=self._opt(env.get("chat"), 120), sent_at=_timestamp(env.get("at")),
+            attachments=self.media(env.get("media"))))
         started = self.started[key]
         if started.get("effect") == "external" and key not in self.unresolved and ambiguous(
                 str(status), error or output, env.get("failure_type")):

@@ -193,7 +193,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-INSERT INTO schema_meta (key, value) VALUES ('schema_version', '6')
+INSERT INTO schema_meta (key, value) VALUES ('schema_version', '7')
   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- TRUNCATE would bypass the row-level immutability trigger.
@@ -410,7 +410,7 @@ SELECT continuum_add_constraint('coding_events', 'coding_events_type_valid', $c$
   'SessionStarted', 'AgentJoined', 'TaskAdded', 'TaskStatusChanged', 'NoteRecorded',
   'CheckpointCaptured', 'CheckRan', 'ChatCaptured', 'SessionClosed', 'ToolCallStarted',
   'ToolCallFinished', 'ToolCallUnresolved', 'ToolCallResolved', 'FileImpactObserved',
-  'CompactionObserved', 'SubagentReported'))$c$);
+  'CompactionObserved', 'SubagentReported', 'ChatWithdrawn'))$c$);
 CREATE INDEX IF NOT EXISTS idx_coding_events_call_key ON coding_events
   (session_id, (payload_json->>'call_key'), type) WHERE payload_json ? 'call_key';
 
@@ -447,6 +447,35 @@ ALTER TABLE coding_blobs ADD COLUMN IF NOT EXISTS search tsvector
   GENERATED ALWAYS AS (to_tsvector('english'::regconfig, CASE WHEN length(content) <= 131072
     THEN content ELSE left(content, 65536) || ' ' || right(content, 65536) END)) STORED;
 CREATE INDEX IF NOT EXISTS idx_coding_blobs_search ON coding_blobs USING gin (search);
+
+-- Schema v7: lossless capture (D-046). Images and documents from chats and tool results
+-- are stored as bytes, owned by the session (same row-level security, immutability and
+-- human-only erasure as events). Messages on an abandoned branch (rewound, or edited
+-- and resent) are withdrawn by an appended event (ChatWithdrawn, in the type check
+-- above), never edited.
+CREATE TABLE IF NOT EXISTS coding_media (
+  session_id    TEXT NOT NULL REFERENCES coding_sessions(session_id),
+  digest        TEXT NOT NULL,                -- sha256 of the bytes
+  media_type    TEXT NOT NULL,                -- image/png | image/jpeg | application/pdf ...
+  bytes         BIGINT NOT NULL,
+  width         INTEGER,
+  height        INTEGER,
+  content       BYTEA NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (session_id, digest)
+);
+DROP TRIGGER IF EXISTS coding_media_immutable ON coding_media;
+CREATE TRIGGER coding_media_immutable BEFORE UPDATE OR DELETE ON coding_media
+  FOR EACH ROW EXECUTE FUNCTION continuum_coding_events_guard();
+DROP TRIGGER IF EXISTS coding_media_no_truncate ON coding_media;
+CREATE TRIGGER coding_media_no_truncate BEFORE TRUNCATE ON coding_media
+  FOR EACH STATEMENT EXECUTE FUNCTION continuum_events_immutable();
+ALTER TABLE coding_media ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS coding_media_own ON coding_media;
+CREATE POLICY coding_media_own ON coding_media
+  USING (EXISTS (SELECT 1 FROM coding_sessions s WHERE s.session_id = coding_media.session_id))
+  WITH CHECK (EXISTS (SELECT 1 FROM coding_sessions s
+                      WHERE s.session_id = coding_media.session_id));
 ```
 
 **Time budget:** `max_active_seconds` counts execution time while the runtime is actively processing a run, not manual approval/reconciliation pauses or process downtime. Record bounded active-time increments via `RunActiveTimeRecorded` events and `usage_totals.active_elapsed_ms`; cap each increment using a monotonic clock while the process is alive. Active time includes recovery on resume (reconciliation, re-verification, authorized retries). Increments are recorded after every model call and every batch of tool dispatches, and when the operation ends, so the cap (which guards against suspend gaps) never truncates real work. Wall-clock time is reported as a separate evaluation metric.

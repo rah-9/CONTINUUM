@@ -27,6 +27,7 @@ class CodingEventType(StrEnum):
     FILE_IMPACT_OBSERVED = "FileImpactObserved"
     COMPACTION_OBSERVED = "CompactionObserved"
     SUBAGENT_REPORTED = "SubagentReported"
+    CHAT_WITHDRAWN = "ChatWithdrawn"
 
 
 NoteKind = Literal["decision", "context", "next_step", "blocker"]
@@ -125,6 +126,13 @@ class ChatCaptured(_P):
     alias: bool = False
     sent_at: str | None = None   # the transcript's timestamp for the message, if any
     failed: bool = False         # actions: the app recorded an error result
+    # Lossless capture (D-046): a message longer than the inline cap keeps its head and
+    # tail inline and its whole text in this blob; images and documents in the message
+    # are ``coding_media`` rows, described here (digest, type, size, dimensions).
+    text_blob: str | None = None
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
+    # captured from a branch the person had already abandoned (rewound or edited)
+    withdrawn: bool = False
 
 
 class SessionClosed(_P):
@@ -183,6 +191,7 @@ class ToolCallFinished(_P):
     source: str
     chat_id: str | None = None
     sent_at: str | None = None
+    attachments: list[dict[str, Any]] = Field(default_factory=list)   # screenshots etc.
 
 
 class ToolCallUnresolved(_P):
@@ -198,11 +207,15 @@ class ToolCallUnresolved(_P):
 
 
 class ToolCallResolved(_P):
-    """A person's decision about an unresolved call (CLI only, never MCP)."""
+    """What happened to an unresolved call: a person's decision (CLI only, never MCP), or
+    a read-only probe's proof that it took effect (``probe``, ``evidence``; D-047). A
+    probe only ever records ``applied``: absence is never inferred from a query."""
 
     call_key: str
     outcome: Literal["applied", "not_applied", "accepted_unknown"]
     reason: str
+    probe: str | None = None
+    evidence: str | None = None
 
 
 class FileImpactObserved(_P):
@@ -245,6 +258,17 @@ class CompactionObserved(_P):
     sent_at: str | None = None
 
 
+class ChatWithdrawn(_P):
+    """Messages on a branch the person abandoned: they rewound the chat, or edited a
+    message and sent it again. The messages stay in the journal and in recall; they are
+    no longer the user's current requirements (D-046). Appended, never an edit."""
+
+    keys: list[str]
+    reason: str
+    source: str
+    chat_id: str | None = None
+
+
 PAYLOADS: dict[CodingEventType, type[_P]] = {
     CodingEventType.SESSION_STARTED: SessionStarted,
     CodingEventType.AGENT_JOINED: AgentJoined,
@@ -262,5 +286,6 @@ PAYLOADS: dict[CodingEventType, type[_P]] = {
     CodingEventType.FILE_IMPACT_OBSERVED: FileImpactObserved,
     CodingEventType.COMPACTION_OBSERVED: CompactionObserved,
     CodingEventType.SUBAGENT_REPORTED: SubagentReported,
+    CodingEventType.CHAT_WITHDRAWN: ChatWithdrawn,
 }
 TYPE_OF: dict[type[_P], CodingEventType] = {v: k for k, v in PAYLOADS.items()}

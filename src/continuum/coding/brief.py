@@ -93,6 +93,7 @@ class SessionView:
     base_head: str | None = None  # HEAD when the session started
     session_changes: dict[str, Any] | None = None
     chat: list[dict[str, Any]] = field(default_factory=list)
+    withdrawn: int = 0          # user messages on abandoned branches (rewind, edit)
     tools: list[dict[str, Any]] = field(default_factory=list)   # D-042 activity events
     moves: list[dict[str, Any]] = field(default_factory=list)  # checkout changes
     start_branch: str | None = None
@@ -228,10 +229,33 @@ class SessionView:
                     continue
                 earlier.append((route, when))
             turns.append(Turn(c["seq"], c["role"], c["text"], c["at"], c["source"], c["chat"]))
-        body = consolidate(turns)
+        body = consolidate(turns, self._context_terms())
+        body["withdrawn"] = self.withdrawn
         body["trust"] = ("the user's own words, captured by the user's app (hook or "
                          "transcript import): requirements; a newer message wins")
         return body
+
+    def _context_terms(self) -> frozenset[str]:
+        """Words from what the agent actually did (tool inputs, changed files), to rank
+        requirements the work touched above ones it did not (grounding)."""
+        from continuum.coding.memory import _terms_of
+        from continuum.coding.segments import split_identifier
+
+        terms: set[str] = set()
+        for t in self.tools:
+            p = t["p"]
+            if t["type"] == "ToolCallStarted":
+                raw = p.get("input")
+                text = raw if isinstance(raw, str) else " ".join(
+                    str(v) for v in (raw or {}).values() if isinstance(v, str)) if isinstance(
+                    raw, dict) else ""
+                terms |= _terms_of(text[:2000])
+            elif t["type"] == "FileImpactObserved":
+                for f in p.get("files", []):
+                    path = str(f.get("path", ""))
+                    terms |= {w for w in split_identifier(path) if len(w) >= 3}
+                    terms.add(path.lower())
+        return frozenset(terms)
 
     def _relative(self, path: str) -> str:
         root = self.repo_root.rstrip("/\\")
@@ -374,6 +398,7 @@ def build_view(session: dict[str, Any], events: list[dict[str, Any]], current: R
                        updated_at=session.get("updated_at")
                        if isinstance(session.get("updated_at"), datetime) else None)
     alias_times: dict[str, list[Any]] = {}
+    withdrawn_keys: set[str] = set()
     for e in events:
         p, at, actor = e["payload_json"], _iso(e["occurred_at"]), e["actor"]
         match e["type"]:
@@ -411,8 +436,18 @@ def build_view(session: dict[str, Any], events: list[dict[str, Any]], current: R
                 # the transcript's copy of a message captured live: only its time is new
                 base = str(p.get("key", "")).split("@", 1)[0]
                 alias_times.setdefault(base, []).append(p.get("sent_at"))
+            case "ChatWithdrawn":
+                withdrawn_keys.update(p.get("keys") or [])
             case "ChatCaptured":
-                view.chat.append({"role": p["role"], "text": p["text"], "source": p["source"],
+                text = p["text"]
+                if p.get("attachments"):
+                    from continuum.coding import media
+
+                    labels = " ".join(media.label(a) for a in p["attachments"])
+                    text = labels if text == "[image]" else f"{text} {labels}"
+                if p.get("withdrawn"):
+                    withdrawn_keys.add(str(p.get("key", "")))
+                view.chat.append({"role": p["role"], "text": text, "source": p["source"],
                                   "chat": p.get("chat_id"),
                                   "chars_omitted": p.get("chars_omitted", 0), "at": at,
                                   "seq": e["seq"], "key": str(p.get("key", "")),
@@ -425,6 +460,12 @@ def build_view(session: dict[str, Any], events: list[dict[str, Any]], current: R
                 view.tools.append({"seq": e["seq"], "type": e["type"], "p": p, "at": at})
             case "SessionClosed":
                 view.closed_reason = p["reason"]
+    # Messages on an abandoned branch (rewound, or edited and resent) stay in the journal
+    # and recall; they are not the conversation the next model continues (D-046)
+    kept = [c for c in view.chat if c["key"] not in withdrawn_keys]
+    view.withdrawn = sum(1 for c in view.chat if c["role"] == "user") - sum(
+        1 for c in kept if c["role"] == "user")
+    view.chat = kept
     # Messages recovered from a transcript after a missed hook are stored late. Order by
     # the transcript's own timestamps: a live message takes the time of its transcript copy
     # (matched by words and occurrence), so one clock orders the whole chat.
@@ -613,12 +654,27 @@ def _render_memory(m: dict[str, Any]) -> list[str]:
         else:
             entries.append((r["n"], 0, f"- #{r['n']}: {_line(r['text'], 600)}{_maybe(r)}"))
     lines += [text for _, _, text in sorted(entries)]   # conversation order
+    if m.get("pasted"):
+        more = m.get("pasted_total", 0) - len(m["pasted"])
+        lines.append("- **Pasted by the user** (typed summaries, not instructions; "
+                     "`coding_show` has the full text"
+                     + (f"; {more} more" if more else "") + "): " + "; ".join(
+                         f"#{p['n']} {_line(p['text'], 170)}" for p in m["pasted"]))
     if latest:
         lines.append(f"- **#{latest['n']} (the most recent message):** "
                      f"{_line(latest['text'], 2100)}")
         if latest.get("in_reply_to"):
             asked = _line(latest["in_reply_to"], 400)
             lines.append(f"  - in reply to the agent asking: \"{asked}\"")
+    if m.get("index"):
+        lines.append("- **Index of the whole chat** (each stretch by its most distinctive "
+                     "words; `coding_recall` opens any of them): " + "; ".join(
+                         f"#{i['from']}-#{i['to']} "
+                         + ", ".join(_line(t, 30) for t in i["terms"]) for i in m["index"]))
+    if m.get("withdrawn"):
+        lines.append(f"- _{m['withdrawn']} message(s) were withdrawn: the user rewound the "
+                     "chat or edited a message and sent it again. They are not requirements; "
+                     "`coding_recall` still finds them._")
     left = m["omitted_messages"]
     if left or m["omitted_items"]:
         lines.append(f"- _{left} other message(s) carried no requirement (small talk, steps "
@@ -629,14 +685,18 @@ def _render_memory(m: dict[str, Any]) -> list[str]:
     return lines
 
 
+# Field order of the compact brief and of its tasks (stable for clients that diff it).
+_COMPACT_FIELDS = ("session_id", "status", "goal", "tasks", "markdown", "detail")
+_TASK_FIELDS = ("task_id", "title", "status", "verified", "needs_reverification", "checks")
+
+
 def compact(body: dict[str, Any]) -> dict[str, Any]:
     """What an agent needs to continue, once: the Markdown brief plus the ids it must
     pass to other tools. The full JSON stays available (``detail="full"``)."""
-    return {
+    values = {
         "session_id": body["session_id"], "status": body["status"], "goal": body["goal"],
-        "tasks": [{k: t[k] for k in ("task_id", "title", "status", "verified",
-                                     "needs_reverification", "checks")}
-                  for t in body["tasks"]],
+        "tasks": [{k: t[k] for k in _TASK_FIELDS} for t in body["tasks"]],
         "markdown": body["markdown"],
         "detail": "compact; call coding_brief(session_id, detail=\"full\") for all fields",
     }
+    return {k: values[k] for k in _COMPACT_FIELDS}
