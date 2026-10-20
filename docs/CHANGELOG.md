@@ -23,6 +23,8 @@ outcomes resolved by proof (D-046, D-047; schema v7). Research and measurements 
 ### Fixed
 - A screenshot returned by a tool was stored as base64 text in the output.
 - Edited-and-resent messages were captured as current requirements (seen in a real transcript).
+- `continuum coding import` imported a transcript's messages but not its tool calls (found by importing this project's own 33 MB session live: 726 messages and 1,839 tool calls now arrive in 13 s).
+- The chat index named stretches by spoken filler ("things", "don", "currently") on a real voice-typed chat; it now skips English stopwords, filler and contractions.
 
 ## 1.0.0rc2 — unreleased
 

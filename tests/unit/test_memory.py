@@ -262,3 +262,15 @@ def test_requirements_the_work_touched_rank_above_ones_it_did_not():
     assert any(c["grounded"] for c in grounded["ledger"])
     top = sorted(grounded["ledger"], key=lambda c: (c["grounded"], c["n"]), reverse=True)[0]
     assert "billing" in top["text"] and plain["ledger"]
+
+
+def test_index_words_ignore_the_filler_of_spoken_chat():
+    """Live run on a real voice-typed chat: the index named stretches "things, don,
+    currently"; filler words and contractions are not topics."""
+    from continuum.coding.memory import _terms_of
+
+    spoken = ("Okay so like, you know, I don't think so it's actually working, basically "
+              "can you currently go and check the things? Improve the harnessing of the "
+              "`coding_resume` flow and the getUserById path.")
+    assert _terms_of(spoken) == {"improve", "harnessing", "coding_resume", "flow",
+                                 "getuserbyid", "path"}
