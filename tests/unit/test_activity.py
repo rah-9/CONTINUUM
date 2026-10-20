@@ -340,3 +340,29 @@ def test_setup_installs_hooks_for_codex_gemini_and_cursor(tmp_path):
     again = install.setup(str(tmp_path))                        # idempotent
     assert set(again["files"].values()) <= {"unchanged",
                                            "unchanged (already imports AGENTS.md)"}
+
+
+def test_erasing_a_shadow_store_removes_read_only_git_objects(tmp_path, monkeypatch):
+    """Windows CI: git writes objects read-only and Windows refuses to delete them, so
+    `forget` left the snapshot store (file contents) behind."""
+    import os
+    import stat
+
+    monkeypatch.setenv("CONTINUUM_HOME", str(tmp_path / "home"))
+    work = tmp_path / "notes"
+    work.mkdir()
+    (work / "a.txt").write_text("private\n")
+    assert snapshot.take(work) is not None
+    store = snapshot.shadow_dir(work.resolve())
+    assert any(p.is_file() and not p.stat().st_mode & stat.S_IWRITE
+               for p in (store / "objects").rglob("*"))           # read-only objects
+    real_unlink = os.unlink
+
+    def windows_unlink(path, *, dir_fd=None):                      # Windows semantics
+        mode = os.stat(path, dir_fd=dir_fd, follow_symlinks=False).st_mode
+        if not mode & stat.S_IWRITE:
+            raise PermissionError(13, "Access is denied", str(path))
+        real_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", windows_unlink)
+    assert snapshot.remove_shadow(work.resolve()) and not store.exists()

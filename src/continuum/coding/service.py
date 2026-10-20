@@ -20,7 +20,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shutil
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -928,9 +927,7 @@ class CodingContinuity:
         # the local shadow store of a directory outside git holds file contents too
         from continuum.coding import snapshot
 
-        store = snapshot.shadow_dir(Path(row["repo_root"]))
-        if store.is_dir():
-            shutil.rmtree(store, ignore_errors=True)
+        snapshot.remove_shadow(Path(row["repo_root"]))
         return {"erasure_id": erasure_id, "session_id": session_id, "events_erased": erased,
                 "outputs_erased": blobs}
 
