@@ -71,6 +71,11 @@ class Message:
     # When the message was written, if the transcript says (ISO-8601): restores the true
     # order of messages recovered after a missed hook.
     at: str | None = None
+    # Images and documents in the message (``media.find`` parts: media type + base64).
+    media: tuple[dict[str, str], ...] = ()
+    # On a branch the person abandoned (rewound, or edited and resent): kept in the
+    # journal and recall, never shown as a current requirement (D-046).
+    abandoned: bool = False
 
 
 def clean_user_text(text: str) -> str:
@@ -98,6 +103,13 @@ def _text_of(content: Any) -> str | None:
     return "\n".join(texts) if texts else None
 
 
+def _tool_result(content: Any) -> bool:
+    """A "user" record that only carries tool results (their images belong to the call)."""
+    return isinstance(content, list) and any(
+        isinstance(p, dict) and p.get("type") in ("tool_result", "function_call_output")
+        for p in content)
+
+
 def _role(value: Any) -> Literal["user", "agent"] | None:
     if not isinstance(value, str):
         return None
@@ -123,8 +135,11 @@ def _walk(node: Any, depth: int = 0) -> Iterator[Message]:
     if role is not None and ("content" in node or "parts" in node):
         body = node.get("content", node.get("parts"))
         text = _text_of(body)
-        if text is not None:
-            yield Message(role, text)
+        from continuum.coding import media
+
+        found = tuple(media.find(body)) if role == "user" and not _tool_result(body) else ()
+        if text is not None or found:
+            yield Message(role, text or "", media=found)
         return
     event = node.get("type")
     if isinstance(event, str) and event in EVENT_TYPES and isinstance(node.get("message"), str):
@@ -142,23 +157,127 @@ def extract(records: Iterable[Any]) -> list[Message]:
     out: list[Message] = []
     records = list(records)
     ids = [_record_id(r) for r in records]
+    off_branch = _abandoned(records)
     # When a transcript identifies its messages, records without an id are copies (Claude
     # Code writes request/cache blobs of messages it already logged), not new messages.
     identified = any(i is not None for i in ids) and len(records) > 1
-    for record, rid in zip(records, ids, strict=True):
+    for index, (record, rid) in enumerate(zip(records, ids, strict=True)):
         if identified and rid is None:
+            continue
+        if _rolled_back(record):
+            _roll_back(out, record)
             continue
         stamp = record.get("timestamp") if isinstance(record, dict) else None
         stamp = stamp if isinstance(stamp, str) else None
         for k, msg in enumerate(_walk(record)):
             text = clean_user_text(msg.text) if msg.role == "user" else msg.text.strip()
-            if not text:
+            if not text and not msg.media:
                 continue
+            if not text and msg.media and msg.text.strip():
+                continue         # only harness text around it (an injected screenshot)
             # the same message logged twice (Codex: item and event)
             if out and out[-1].role == msg.role and out[-1].text == text:
                 continue
-            out.append(Message(msg.role, text, None if rid is None else f"{rid}/{k}", stamp))
+            out.append(Message(msg.role, text, None if rid is None else f"{rid}/{k}", stamp,
+                               msg.media, abandoned=index in off_branch))
     return out
+
+
+def _parent(record: dict[str, Any]) -> str | None:
+    parent = record.get("parentUuid") or record.get("logicalParentUuid")
+    return parent if isinstance(parent, str) else None
+
+
+def _user_prose(record: dict[str, Any]) -> bool:
+    message = record.get("message")
+    if not isinstance(message, dict) or _role(message.get("role")) != "user":
+        return False
+    if record.get("isMeta") is True or record.get("isSidechain") is True or \
+            record.get("isCompactSummary") is True:
+        return False
+    content = message.get("content")
+    if _tool_result(content):
+        return False
+    text = _text_of(content)
+    return bool((text and clean_user_text(text)) or (from_media(content)))
+
+
+def from_media(content: Any) -> bool:
+    from continuum.coding import media
+
+    return bool(media.find(content))
+
+
+def _abandoned(records: list[Any]) -> set[int]:
+    """Indices of records on a branch the person abandoned (D-046).
+
+    Claude Code links records into a tree (``uuid`` / ``parentUuid``; across compaction,
+    ``logicalParentUuid``). Editing a message and sending it again, or rewinding the
+    chat and typing something else, adds a new user message under the same parent as
+    the old one. The active conversation is the path from the newest record back to the
+    root; a user message *beside* that path (same parent) is abandoned, with everything
+    under it. Parallel tool calls also fork the tree, but never with a second user
+    message, so they are not branches. Without parent ids nothing is abandoned."""
+    nodes: dict[str, int] = {}
+    children: dict[str, list[int]] = {}
+    for i, r in enumerate(records):
+        if isinstance(r, dict) and isinstance(r.get("uuid"), str):
+            nodes[r["uuid"]] = i
+            parent = _parent(r)
+            if parent:
+                children.setdefault(parent, []).append(i)
+    if not children:
+        return set()
+    leaf = next((i for i in range(len(records) - 1, -1, -1)
+                 if isinstance(records[i], dict) and isinstance(records[i].get("uuid"), str)
+                 and records[i].get("isSidechain") is not True), None)
+    if leaf is None:
+        return set()
+    chain: set[int] = set()
+    step: int | None = leaf
+    while step is not None and step not in chain:
+        chain.add(step)
+        parent = _parent(records[step])
+        step = nodes.get(parent) if parent else None
+    roots = [sib for c in chain if _user_prose(records[c])
+             for sib in children.get(_parent(records[c]) or "", [])
+             if sib not in chain and _user_prose(records[sib])]
+    out: set[int] = set()
+    todo = list(roots)
+    while todo:
+        n = todo.pop()
+        if n in out:
+            continue
+        out.add(n)
+        uuid = records[n].get("uuid")
+        todo += children.get(uuid, []) if isinstance(uuid, str) else []
+    return out
+
+
+def _rolled_back(record: Any) -> bool:
+    """Codex appends ``thread_rolled_back {num_turns}`` when the person backtracks."""
+    if not isinstance(record, dict):
+        return False
+    payload = _payload(record)
+    return payload.get("type") == "thread_rolled_back" and isinstance(
+        payload.get("num_turns"), int)
+
+
+def _payload(record: dict[str, Any]) -> dict[str, Any]:
+    inner = record.get("payload")
+    return inner if isinstance(inner, dict) else record
+
+
+def _roll_back(out: list[Message], record: dict[str, Any]) -> None:
+    """Mark the last ``num_turns`` user turns (and what followed them) abandoned."""
+    turns = int(_payload(record)["num_turns"])
+    users = [i for i, m in enumerate(out) if m.role == "user" and not m.abandoned]
+    if turns <= 0 or not users:
+        return
+    start = users[-min(turns, len(users))]
+    for i in range(start, len(out)):
+        m = out[i]
+        out[i] = Message(m.role, m.text, m.ident, m.at, m.media, abandoned=True)
 
 
 def _record_id(record: Any) -> str | None:
@@ -266,7 +385,7 @@ def _start(app: str, chat: str | None, tool: str, tool_input: Any, call_id: str 
 
 
 def _finish(start: dict[str, Any], *, output: str, is_error: bool, exit_code: int | None,
-            interrupt: bool, stamp: str | None) -> dict[str, Any]:
+            interrupt: bool, stamp: str | None, raw: Any = None) -> dict[str, Any]:
     from continuum.coding import activity as act
 
     status = act.status_of(is_error=is_error, text=output, interrupt=interrupt,
@@ -276,7 +395,14 @@ def _finish(start: dict[str, Any], *, output: str, is_error: bool, exit_code: in
                                       "input")},
             "phase": "finish", "status": status, "exit_code": exit_code,
             "duration_ms": None, "output": output,
-            "error": output[:2000] if status in ("error", "denied") else None, "at": stamp}
+            "error": output[:2000] if status in ("error", "denied") else None, "at": stamp,
+            "media": _media(raw)}
+
+
+def _media(raw: Any) -> list[dict[str, str]]:
+    from continuum.coding import media
+
+    return media.find(raw) if raw is not None else []
 
 
 def activity(records: list[Any], *, app: str, chat: str | None) -> list[dict[str, Any]]:
@@ -360,7 +486,7 @@ def activity(records: list[Any], *, app: str, chat: str | None) -> list[dict[str
                         error = isinstance(response, dict) and bool(response.get("error"))
                         other.append(_finish(match, output=text, is_error=error,
                                              exit_code=act.exit_code_of(response),
-                                             interrupt=False, stamp=stamp))
+                                             interrupt=False, stamp=stamp, raw=response))
     found: list[dict[str, Any]] = []
     for env in starts:
         found.append(env)
@@ -373,7 +499,8 @@ def activity(records: list[Any], *, app: str, chat: str | None) -> list[dict[str
                 text += "\n[stderr]\n" + extra["stderr"]
             found.append(_finish(env, output=text, is_error=r["is_error"],
                                exit_code=act.exit_code_of(extra) or act.exit_code_of(text),
-                               interrupt=extra.get("interrupted") is True, stamp=r["at"]))
+                               interrupt=extra.get("interrupted") is True, stamp=r["at"],
+                               raw=r["content"]))
         elif cid and cid in codex_out:
             r = codex_out[cid]
             exec_end = r.get("exec") or {}

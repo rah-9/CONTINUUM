@@ -515,6 +515,49 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 - Treating every error of an external call as unknown: a rejected push with an exit code is a known outcome, and a person would be asked about every failed request.
 - Asking a model whether a call took effect.
 
+## D-046 — Lossless memory: every word and image, the chat's real shape, technical content by structure
+
+**Context.** The owner asked whether memory had "full grip" or only picked sentences by keywords. A research round looked at memory benchmarks (MemoryAgentBench, LongMemEval, LoCoMo, BEAM), memory systems (Mem0, Zep, Letta, LightMem; all use an LLM to write memories) and context-engineering practice (Anthropic, Manus, "The Complexity Trap"). It found that plain lexical retrieval over a verbatim store matches or beats LLM memory systems, and that keeping everything with restorable pointers beats summarising. It also found gaps in Continuum:
+- Messages over 16,000 characters were cut at capture.
+- Images were dropped; a screenshot returned by a tool was dumped into the output text as base64.
+- Pasted traces, diffs and logs were replaced by "[N pasted lines omitted]".
+- A real Claude Code transcript showed edited-and-resent messages on abandoned branches being captured as current requirements.
+- Long chats had no way to see what the middle was about.
+
+**Decision.**
+- **Nothing is cut away.** A long message keeps its head and tail inline and its whole text in a session blob. Images and documents (Claude Code, MCP, Codex, Gemini and OpenAI-style parts) are stored as bytes in `coding_media` (schema v7), deduplicated by SHA-256, with type, size and pixel dimensions read from the file header. They have the same row-level security, immutability and erasure as events. The brief shows `[image #abc…: image/png 1280x800]`, and `coding_view_image` (MCP, read-only) returns the image to a multimodal model. Continuum never interprets an image.
+- **Technical content by structure** (`segments.py`). A message is split into prose and typed segments: traceback (Python, JavaScript, Java, Go, Rust), diff, JSON, table, log, shell, code. Each is summarised deterministically: the error signature with the innermost frame in the project's own code, files and +/- lines, top-level keys, rows x columns and header, counts per level and the first error, commands, defined names. Summaries replace pasted blocks in place. The newest pastes (errors first) appear in their own "Pasted by the user" line, which is never a requirement. Identifiers are split into their parts for recall (`getUserById` → get, user, by, id).
+- **The chat's real shape.** Transcript records form a tree (`parentUuid`, across compaction `logicalParentUuid`). The active conversation is the path from the newest record. A user message beside that path (same parent: an edit, or a rewind followed by a new message) is abandoned, with everything under it. Codex's `thread_rolled_back {num_turns}` abandons the last turns. Abandoned messages are stored with `withdrawn`. Messages captured live before the rewind are withdrawn by an appended `ChatWithdrawn` event, never edited. They stay in the journal and recall and are counted in the brief, but are not requirements. Parallel tool calls also fork the tree, but never with a second user message.
+- **Beyond keyword cues.** The cue rules remain one signal:
+  - Within a strength tier, requirements whose words appear in what the agent actually did (tool inputs, changed files) rank first (grounding).
+  - A plain statement that nearly duplicates one already kept is skipped (word-set Jaccard above 0.8).
+  - Chats of 12 or more messages get an **index**: every stretch (a new app or chat, an hour's pause, or 10 messages; at most 12 lines) is named by its most distinctive words, scored by tf-idf against the rest of the chat. The words come from the person's prose, not pasted output. Nothing is out of reach, even when it is not in the ledger.
+- **Recall** also matches query words against identifier parts. Its two rankings (full-text rank, and query words found exactly) are combined by reciprocal rank fusion (k=60), with ties going to the result that matches more words.
+
+**Measured.**
+- On the memory benchmark, every kind (explicit, implicit, held-out phrasings, revisions, answers, agent decisions, update correctness, faithfulness) stays at 100% at 10–160 messages, with 0 noise leaks.
+- Pasted errors now reach the brief, labelled by type: 100% at up to 80 messages. At 160 messages it is 53%, because only the 5 newest pastes are listed; the rest are counted and recallable.
+- The brief is about 1.4k tokens at 40 messages and 3.4k at 160.
+- On the real transcript, exactly the 2 abandoned prompts are withdrawn and nothing else.
+
+**Rejected.**
+- An LLM to summarise or extract (the user prefers none, and the research shows no gain over verbatim plus retrieval).
+- OCR and embeddings for now: optional local models (RapidOCR ONNX, model2vec) are possible later behind a flag.
+- Storing images only as metadata (the owner chose full storage).
+
+## D-047 — Unknown outcomes resolved by read-only proof
+
+**Context.** A lost or interrupted external call blocks new external calls until a person checks (D-042, D-045). Research on what buyers value found that a safety gate is only tolerable if it is not needlessly annoying. A gate that can prove what happened by itself is also the part of Continuum that is hardest to copy: no vendor in the scan does it.
+
+**Decision.**
+- After a turn's results are recorded, each unresolved external `git push` is probed read-only with `git ls-remote`. The probe runs without prompting for credentials, with a 15 s timeout, in the background drainer, never on a hook's hot path.
+- When every pushed branch on the remote points at exactly the local commit, the call is recorded as **applied** (`ToolCallResolved` with `probe` and `evidence`, actor `reconciler:git`), and the deny list lifts.
+- A probe never records that something did not happen. A remote that does not show the commit (lagging, a different commit since, offline) leaves the outcome unknown for a person (AGENTS.md invariant 5).
+- Arguments come from the recorded command, are validated (no option injection), and git runs without a shell.
+- Tags, deletions and mirrors are not probed.
+
+**Rejected.** Probing by repeating the action (`git push --dry-run` contacts the remote with write intent), and inferring "not applied".
+
 ---
 
 _Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

@@ -21,6 +21,7 @@ RECENT_FOR_FAILURE = 12      # a failure among the agent's last N calls of its k
 MCP_SHOWN = 8
 SUBAGENTS_SHOWN = 4
 READS_SHOWN = 8
+IMAGES_SHOWN = 4
 ERROR_TAIL = 400
 
 
@@ -193,6 +194,11 @@ def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
             if t:
                 reads.pop(t, None)
                 reads[t] = None
+    from continuum.coding import media
+
+    pictures = [{"tool": c["tool"], "seq": c["result"]["seq"],
+                 "labels": [media.label(a) for a in c["result"].get("attachments") or []]}
+                for c in ordered if c["result"] and c["result"].get("attachments")]
     open_items = []
     for key, u in unresolved.items():
         started = calls.get(key)
@@ -211,6 +217,7 @@ def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
         "skills": sorted({c["skill"] for c in ordered if c.get("skill")}),
         "subagents": subagents[-SUBAGENTS_SHOWN:], "subagents_total": len(subagents),
         "reads": list(reversed(reads))[:READS_SHOWN], "reads_total": len(reads),
+        "images": pictures[-IMAGES_SHOWN:], "images_total": len(pictures),
         "compactions": len(compactions),
         "last_compaction_seq": compactions[-1]["seq"] if compactions else None,
         "unresolved": open_items,
@@ -332,6 +339,11 @@ def render(w: dict[str, Any], session_id: str, flat: Any) -> list[str]:
             report = f": \"{line(s['report'], 300)}\"" if s.get("report") else ""
             out.append(f"  - `{line(s['target'] or s['tool'], 120)}` — {s['status']}{report} "
                        f"[#{s['seq']}]")
+    if w.get("images"):
+        more = w.get("images_total", 0) - len(w["images"])
+        out.append("- **Images from tools** (`coding_view_image` shows one): " + "; ".join(
+            f"`{line(i['tool'], 60)}` {' '.join(i['labels'])} [#{i['seq']}]"
+            for i in w["images"]) + (f"; … {more} more" if more else ""))
     if w["reads"]:
         more = w["reads_total"] - len(w["reads"])
         out.append("- **Read** (newest first): " + ", ".join(

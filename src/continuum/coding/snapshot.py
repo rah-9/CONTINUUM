@@ -55,6 +55,9 @@ DIFF_MAX_BYTES = 1 << 20          # a stored diff is at most this large (then tr
 DIFF_MAX_FILES = 500
 
 GIT = shutil.which("git")
+# Namespace of shadow store names, so they never collide with another tool's hash of the
+# same path. Changing it orphans existing stores (they are rebuilt on the next snapshot).
+_STORE_NAMESPACE = bytes.fromhex("636f6e74696e75756d2d736861646f77")
 SHADOW_MAX_FILES = 20_000         # a bigger directory outside git is not snapshotted
 SHADOW_MAX_FILE_BYTES = 10 << 20  # nor are files larger than this (data, media)
 
@@ -208,7 +211,7 @@ def take(path: str | Path, budget: float | None = None) -> dict[str, Any] | None
 def shadow_dir(root: Path) -> Path:
     """The private store that snapshots ``root`` (a directory outside git)."""
     home = Path(os.environ.get("CONTINUUM_HOME") or Path.home() / ".continuum")
-    key = hashlib.sha256(os.fsencode(str(root))).hexdigest()[:24]
+    key = hashlib.sha256(_STORE_NAMESPACE + os.fsencode(str(root))).hexdigest()[:24]
     return home / "snapshots" / f"{key}.git"
 
 

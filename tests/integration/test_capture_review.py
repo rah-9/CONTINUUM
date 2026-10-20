@@ -156,3 +156,40 @@ def test_show_accepts_only_a_digest_and_never_guesses_between_two(coding, repo):
             coding.show(sid, blob=prefix)
     out = coding.forget(sid, actor="me", reason="test")
     assert out["events_erased"] >= 1 and "outputs_erased" in out
+
+
+def _git(*args, cwd):
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+@pytest.mark.parametrize("pushed", [True, False])
+def test_a_lost_push_is_checked_against_the_remote_never_assumed(coding, tmp_path,
+                                                                 monkeypatch, pushed):
+    """D-047: a push whose result was lost is proven applied by a read-only
+    `git ls-remote` when the remote shows the commit; if it does not, the outcome stays
+    unknown (absence is never inferred) and external calls stay blocked."""
+    monkeypatch.setenv("CONTINUUM_HOME", str(tmp_path / "home"))
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+    repo = tmp_path / "work"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    for args in (("config", "user.email", "d@e.x"), ("config", "user.name", "d"),
+                 ("remote", "add", "origin", str(remote))):
+        _git(*args, cwd=repo)
+    (repo / "a.txt").write_text("1\n")
+    _git("add", ".", cwd=repo)
+    _git("commit", "-qm", "one", cwd=repo)
+    sid = _start(coding, repo)
+    push = {"tool_name": "Bash", "tool_input": {"command": "git push origin main"},
+            "tool_use_id": "p1"}
+    _hook(coding, repo, {"hook_event_name": "PreToolUse", **push})
+    if pushed:
+        _git("push", "-q", "origin", "main", cwd=repo)      # it happened; the result was lost
+    _hook(coding, repo, {"hook_event_name": "Stop"})
+    open_calls = coding.unresolved(sid)
+    if pushed:
+        assert open_calls == [] and spool.blocks_for(str(repo)) == []
+        resolved = [e for e in coding.recall("ls-remote", repo_path=str(repo))["matches"]]
+        assert resolved and "refs/heads/main" in resolved[0]["text"]
+    else:
+        assert len(open_calls) == 1 and spool.blocks_for(str(repo))

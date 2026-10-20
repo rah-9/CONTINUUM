@@ -366,3 +366,30 @@ def test_erasing_a_shadow_store_removes_read_only_git_objects(tmp_path, monkeypa
 
     monkeypatch.setattr(os, "unlink", windows_unlink)
     assert snapshot.remove_shadow(work.resolve()) and not store.exists()
+
+
+@pytest.mark.parametrize(("command", "expected"), [
+    ("git push", (None, [])),
+    ("git push origin main", ("origin", [("main", "main")])),
+    ("git push -u origin feature/x", ("origin", [("feature/x", "feature/x")])),
+    ("git push origin HEAD:refs/heads/release", ("origin", [("HEAD", "release")])),
+    ("git -C /srv/app push --force-with-lease origin main", ("origin", [("main", "main")])),
+    ("pytest -q && git push origin main", ("origin", [("main", "main")])),
+    ("git push --tags", None),              # tags cannot be proven by a branch
+    ("git push origin :old-branch", None),  # a deletion
+    ("git status", None),
+])
+def test_push_commands_are_parsed_for_a_read_only_probe(command, expected):
+    from continuum.coding.reconcile import push_targets
+
+    assert push_targets(command) == expected
+
+
+def test_a_probe_never_runs_with_injected_options(tmp_path):
+    from continuum.coding.reconcile import probe_push
+
+    repo = tmp_path / "r"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    assert probe_push(repo, "git push --upload-pack=touch_pwned origin main") is None
+    assert probe_push(repo, "git push 'origin;rm' main") is None
+    assert not (tmp_path / "pwned").exists()

@@ -217,10 +217,39 @@ drainer (one at a time, an OS file lock; deletes a spooled file only after its t
     a new chat starts -> other chats' open write/external calls -> ToolCallUnresolved
   unknown outcomes are read in journal order: a later result clears a mark, a person's
     resolution always does
+  after the batch (outside the transaction): each unresolved external `git push` is probed
+    read-only (git ls-remote); remote branch == pushed commit -> ToolCallResolved applied
+    with evidence (reconciler:git, D-047); anything else stays unknown
 transcript (turn end, catch-up): transcript.activity reads tool_use/tool_result (Claude Code,
   sidechains with their agent id), function_call/exec_command_end/patch_apply_end (Codex),
   functionCall/functionResponse (Gemini) -> the same records, so the live hooks and the
   transcript add each call once
+```
+
+### 3.3c Lossless capture and the chat's real shape (`segments`, `media`, `transcript`; D-046)
+
+```
+every message      -> stored whole: inline up to 16,000 chars (head + 4,000-char tail),
+                      the whole text as a session blob beyond that
+images, documents  -> Claude/MCP/Codex/Gemini/OpenAI parts -> coding_media (bytes, sha256,
+  (chat and tools)    type, pixel size from the header; <= 10 MB) -> "[image #abc: png WxH]"
+                      in the brief; coding_view_image shows it; never interpreted
+pasted content     -> segments.segment(): prose | traceback | diff | json | table | log |
+                      shell | code (fence tag or structure; a block runs to the next blank
+                      line, JSON and tables end where they parse/stop)
+                   -> summary by type: error signature (type: message, innermost frame in
+                      the project's own code), files and +/-, keys, rows x columns, levels and
+                      first error, commands, defined names
+                   -> in place of the paste in the brief; the newest 5 (errors first) in
+                      "Pasted by the user" (never a requirement); identifiers split into
+                      parts for recall
+conversation tree  -> Claude Code: uuid/parentUuid (logicalParentUuid across compaction);
+                      active path = newest record back to the root; a user message beside
+                      it (same parent) is abandoned with everything under it
+                      Codex: thread_rolled_back {num_turns} abandons the last turns
+                   -> new messages stored with withdrawn; already captured ones withdrawn by
+                      an appended ChatWithdrawn (a live message through its transcript copy)
+                   -> not requirements; counted in the brief; still in recall
 ```
 
 ### 3.4 Assembling the brief (`brief.SessionView.to_dict`, `render_markdown`)
@@ -261,8 +290,13 @@ consolidate(turns):                                     # every captured message
       without the context is only "#n may replace this; check" (D-044). The first
       request and recent whole messages are checked too. Only the user's own words
       replace: an answer item, which quotes the agent's question, never does.
-  fill the ledger by (strength, newer) within 4,400 chars + 50 per message beyond 40
-      (cap 10,000); show it in conversation order with message numbers
+  fill the ledger by (strength, grounded, newer) within 4,400 chars + 50 per message
+      beyond 40 (cap 10,000); grounded = names something the agent's tool inputs or
+      changed files touched; a plain statement nearly duplicating one already kept (word
+      overlap > 0.8) is skipped; show it in conversation order with message numbers
+  chats of 12+ messages: an index of every stretch (new app/chat, an hour's pause, or 10
+      messages; at most 12 lines), each named by its 4 most distinctive words (tf-idf of
+      the person's prose against the rest of the chat): nothing is out of reach
   agent decisions = choice/caveat sentences from the agent's reports, newest 8 (+1 per
       40 reports, cap 14), as claims
 ```

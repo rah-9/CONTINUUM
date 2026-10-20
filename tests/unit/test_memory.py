@@ -34,11 +34,18 @@ def test_pasted_output_is_never_a_requirement():
             "  File \"x.py\", line 1\nValueError: config must define KEY\n"
             "note: this message must not be ignored\n\nThe fix must keep the API stable.")
     assert prose(text) == ["I got this, can you look?", "The fix must keep the API stable."]
-    assert "[4 pasted line(s) omitted]" in readable(text)
+    # the paste is summarised by type, not dropped: the next model sees the error
+    assert "[pasted Python error: ValueError: config must define KEY" in readable(text)
     turns = _chat(("user", "Start."), ("user", text), ("user", "next"))
-    assert _ledger(turns) == ["The fix must keep the API stable."]
-    assert _ledger(_chat(("user", "Start."), ("user", "```\nmust never\n```\nok"),
-                         ("user", "x"))) == []
+    memory = consolidate(turns)
+    # "must" inside the trace is never a requirement; the trace itself is kept, typed,
+    # outside the requirements
+    assert [i["text"] for i in memory["ledger"]] == ["The fix must keep the API stable."]
+    assert [i["text"] for i in memory["pasted"]] == [
+        "pasted Python error: ValueError: config must define KEY (at x.py:1) (4 lines)"]
+    code = consolidate(_chat(("user", "Start."), ("user", "```\nmust never\n```\nok"),
+                             ("user", "x")))
+    assert code["ledger"] == [] and [i["kind"] for i in code["pasted"]] == ["pasted"]
 
 
 def test_classification():
@@ -224,3 +231,46 @@ def test_a_subagent_report_is_given_only_to_its_own_subagent():
     ]
     subs = {s["target"]: s["report"] for s in worklog.build(events, lambda p: p)["subagents"]}
     assert subs == {"audit auth": None, "check billing": "billing is fine"}
+
+
+def test_a_long_chat_has_an_index_of_every_stretch_by_its_own_words():
+    """No message is out of reach: every stretch of the chat is named by its most
+    distinctive words (tf-idf against the rest of the chat), not by a keyword list."""
+    topics = ["invoice rounding", "parser CSV", "oauth login", "docker image"]
+    turns = []
+    for i in range(40):
+        topic = topics[i // 10]
+        turns.append(("user", f"Look at the {topic} code again, step {i}."))
+        turns.append(("agent", "Done."))
+    memory = consolidate(_chat(*turns))
+    index = memory["index"]
+    assert [(i["from"], i["to"]) for i in index] == [(1, 10), (11, 20), (21, 30), (31, 40)]
+    for line, topic in zip(index, topics, strict=True):
+        assert set(topic.lower().split()) <= set(line["terms"]), (line, topic)
+    assert consolidate(_chat(("user", "short chat"), ("user", "ok")))["index"] == []
+
+
+def test_requirements_the_work_touched_rank_above_ones_it_did_not():
+    from continuum.coding.memory import _terms_of
+
+    turns = [("user", "Start.")]
+    turns += [("user", f"The {w} module should log every retry.") for w in
+              ("billing", "search", "upload", "export", "import", "mailer", "auth")]
+    turns.append(("user", "next"))
+    plain = consolidate(_chat(*turns))
+    grounded = consolidate(_chat(*turns), frozenset(_terms_of("src/billing/retry.py billing")))
+    assert any(c["grounded"] for c in grounded["ledger"])
+    top = sorted(grounded["ledger"], key=lambda c: (c["grounded"], c["n"]), reverse=True)[0]
+    assert "billing" in top["text"] and plain["ledger"]
+
+
+def test_index_words_ignore_the_filler_of_spoken_chat():
+    """Live run on a real voice-typed chat: the index named stretches "things, don,
+    currently"; filler words and contractions are not topics."""
+    from continuum.coding.memory import _terms_of
+
+    spoken = ("Okay so like, you know, I don't think so it's actually working, basically "
+              "can you currently go and check the things? Improve the harnessing of the "
+              "`coding_resume` flow and the getUserById path.")
+    assert _terms_of(spoken) == {"improve", "harnessing", "coding_resume", "flow",
+                                 "getuserbyid", "path"}

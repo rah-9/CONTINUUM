@@ -284,14 +284,18 @@ def test_nf6_long_chat_memory_quality(store, tmp_path):
     from continuum_lab.memory_bench import run_one, summarize
 
     coding = CodingContinuity(store, clock=SystemClock(), ids=RandomIds())
-    for n, verbose, seeds, max_tokens in ((40, False, 5, 1600), (160, True, 2, 3300)):
+    # 160 messages: ~3.4k tokens since the chat index (D-046) puts every stretch of the
+    # chat within reach; still a fixed budget however long the chat grows
+    for n, verbose, seeds, max_tokens in ((40, False, 5, 1600), (160, True, 2, 3600)):
         results = [run_one(coding, seed, n, tmp_path, verbose=verbose) for seed in range(seeds)]
         new, old = summarize(results, "new"), summarize(results, "legacy")
         print(f"\nNF6 n={n}{' verbose' if verbose else ''}: "
               + " ".join(f"{k}={v:.2f}" for k, v in new.items() if isinstance(v, float)))
         for kind in ("explicit", "revision", "answer", "agent_decision", "fresh2"):
             assert new[kind] >= 0.95, (kind, new[kind])
-        assert new["noise_leaks"] == 0
+        assert new["noise_leaks"] == 0          # a pasted log is never a requirement ...
+        if n <= 40:                             # ... but its error reaches the brief, typed
+            assert new["pasted_seen"] == 1.0
         assert new["tokens_max"] <= max_tokens
         assert new["explicit"] > old["explicit"]
     # the same memory when the chat moves between two apps and each turn's tool calls
@@ -303,4 +307,4 @@ def test_nf6_long_chat_memory_quality(store, tmp_path):
                  "faithful"):
         assert both[kind] >= 0.95, (kind, both[kind])
     assert both["false_alarms"] == 0 and both["noise_leaks"] == 0
-    assert both["tokens_max"] <= 1800
+    assert both["tokens_max"] <= 2000          # + the chat index (D-046), ~100 tokens

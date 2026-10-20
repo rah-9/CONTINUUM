@@ -22,7 +22,7 @@ EXPECTED_TOOLS = {"list_tasks", "run_task", "resume_run", "cancel_run", "get_sta
                   "coding_resume", "coding_start", "coding_brief", "coding_add_task",
                   "coding_set_task_status", "coding_complete_task", "coding_note",
                   "coding_checkpoint", "coding_run_check", "coding_sessions", "coding_close",
-                  "coding_recall", "coding_show"}
+                  "coding_recall", "coding_show", "coding_view_image"}
 
 
 @pytest.fixture
@@ -197,3 +197,49 @@ def test_coding_work_survives_model_switch_between_chats_over_mcp(server_env, tm
     assert brief["agent_notes"]["next_steps"][-1]["text"] == "add div() with zero handling"
     assert [a["agent"] for a in brief["agents"]] == [a1, "claude-opus-5-5 (Claude Code)"]
     assert "Rules" in brief["markdown"]
+
+
+def test_a_screenshot_from_the_chat_is_shown_to_the_next_model_over_mcp(server_env, schema,
+                                                                       tmp_path):
+    """D-046: an image pasted into a chat is stored and a multimodal model sees it as an
+    image (MCP image content), never as base64 text."""
+    import base64
+
+    from continuum.coding.service import CodingContinuity
+    from continuum.coding.transcript import Message
+    from continuum.core.clock import SystemClock
+    from continuum.core.ids import RandomIds
+    from continuum.core.store import Store
+
+    png = base64.b64encode(
+        bytes.fromhex("89504e470d0a1a0a0000000d49484452000000020000000108020000007b40e8dd"
+                      "0000000c4944415478da63f8cfc0f01f000502027f5a0a2a5b0000000049454e44ae"
+                      "426082")).decode()
+    repo = _git_repo(tmp_path / "ui")
+    store = Store(DSN, schema=schema, clock=SystemClock(), ids=RandomIds())
+    store.ensure_schema()
+    try:
+        coding = CodingContinuity(store, clock=SystemClock(), ids=RandomIds())
+        coding.capture(str(repo), [Message("user", "The header overlaps, see",
+                                           media=({"media_type": "image/png", "data": png},))],
+                       source="claude-code")
+        sid = coding.latest_active(str(repo))
+        md = coding.brief(sid)["markdown"]
+    finally:
+        store.close()
+    image = md.split("[image #", 1)[1].split(":", 1)[0]
+
+    async def view() -> object:
+        params = StdioServerParameters(command=_continuum(), args=["mcp"], env=server_env)
+        async with stdio_client(params) as (read, write), \
+                ClientSession(read, write) as session:
+            await session.initialize()
+            return await session.call_tool("coding_view_image",
+                                           {"session_id": sid, "image": image})
+
+    result = asyncio.run(view())
+    kinds = [getattr(c, "type", None) for c in result.content]
+    assert "image" in kinds, kinds
+    picture = next(c for c in result.content if getattr(c, "type", None) == "image")
+    assert getattr(picture, "mime_type", None) == "image/png"
+    assert base64.b64decode(picture.data) == base64.b64decode(png)

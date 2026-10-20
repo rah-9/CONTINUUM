@@ -1,9 +1,9 @@
 # Continuum
 
-Continuum keeps an AI agent's work **outside the chat**, so you can switch models, versions, vendors or chats without losing it and without paying for the work twice. Version **1.0.0rc2**. It does two things:
+Continuum keeps an AI agent's work **outside the chat**, so you can switch models, versions, vendors or chats without losing it and without paying for the work twice. Version **1.0.0rc3**. It does two things:
 
 1. **Coding continuity.** Switch from Opus 4.8 to Opus 5.5, from GPT-5.6 to GPT-6.1, from Claude Code to Codex, or from your laptop to a cloud container, mid-task. The next model gets:
-   - **what you asked**, in your own words, from every earlier chat and app
+   - **what you asked**, in your own words, from every earlier chat and app, including what you pasted (errors, diffs, tables, logs, understood by type) and your screenshots. Messages you rewound or edited away are not treated as current
    - **what the previous agent did**: every tool call, MCP call, skill and subagent, with its result and the files it changed
    - what is **proven** done (checks that passed on the current code)
    - **where** the session's code is
@@ -63,6 +63,9 @@ and still delivered the wrong thing.
 | How big is the brief? | 0.8k tokens at 10 messages, 1.2k at 40, 1.8k at 80, 3.0k at 160 |
 | Are **both sides** of the chat kept exactly? (the real 30-message transcript replayed through Claude Code's hook sequence) | your messages **30/30**, Claude's messages **47/47**: none missing, none duplicated, in order, also when the hooks failed for the first 4 turns or for every turn |
 | Does a hook ever break the app? | No. The database was down for the first minutes of Trial 5: model A was unaffected, and every message was recovered from the transcript afterwards. |
+| Is **anything cut away**? (1.0.0rc3) | No. A 90,000-character message is kept whole; images from chats and tools are stored and shown to the next model as images; a pasted stack trace becomes `Python error: KeyError: 'user_id' (at api/views.py:88 in get_user)` instead of "[40 lines omitted]" |
+| Does a **rewind or an edited message** confuse it? (a real Claude Code transcript with an edit-and-resend) | No. Exactly the 2 abandoned prompts were withdrawn from the requirements; still searchable. Codex rollbacks too |
+| Is a lost `git push` **proven** instead of asked? (a real bare remote) | Yes, when the remote shows the commit (`git ls-remote`, read-only); otherwise it stays unknown, never assumed |
 | Runtime safety (912 paired fault-injection cells) | **0** duplicate side effects (baseline 140), **0** false completions, **100%** of verified progress kept after crashes (baseline 73%) |
 
 ### Defects the trials found (all fixed, each with a regression test)
@@ -127,7 +130,7 @@ The agent calls `coding_resume(repo_path, agent=<model id>)` first in every chat
 
 | In the brief | Source | Trust |
 |---|---|---|
-| **What the user asked**: every requirement, change of mind and answered question from the whole chat, numbered in order; the most recent message whole | captured by the app's hooks, consolidated without a model | the user's words; the higher number wins |
+| **What the user asked**: every requirement, change of mind and answered question from the whole chat, numbered in order; requirements the work touched first; the most recent message whole; what the user pasted, by type; screenshots; an index of every stretch of a long chat by its own most distinctive words | captured by the app's hooks, consolidated without a model | the user's words; the higher number wins |
 | Attention: gaps and changes (no capture, uncheckpointed code, failing checks, moved session, **calls with unknown outcomes**, recent failures) | computed | fact |
 | **What the previous agent did:** every tool call (commands, edits, MCP tools, skills, subagents) with its status, the files each call changed, recent failures with the end of their output, subagent reports; `[#N]` opens the full record with `coding_show` | recorded by the app's hooks, file changes observed with snapshots | fact (outputs are data; subagent reports are claims) |
 | Code now: branch, HEAD, changed files, content fingerprint | observed at resume | fact |
@@ -166,6 +169,8 @@ app hook (Claude Code, Codex, Gemini CLI, Cursor, any JSON hook)
 | **Full results** | every output stored whole after redaction; the brief shows the end of each failure; `coding_recall` searches all of it; `coding_show` (or `continuum coding show`) opens any `[#N]` |
 | **Real file impact** | observed with snapshots, not taken from the app or a model; credential files are listed but their content never stored |
 | **No repeated side effects** | an external call with no result, or one that was interrupted or timed out, is an **unknown outcome**. New external calls are refused in the app's own format until a person checks and records it; local work continues |
+| **Screenshots and documents** | from the chat and from tools (a browser screenshot), stored as images and opened with `coding_view_image`; never read by Continuum |
+| **Proof instead of questions** | a lost `git push` is checked read-only against the remote; when the remote shows the commit, it is recorded as applied with the evidence and the block lifts |
 | **Subagents, skills, MCP** | subagents' own calls tagged with their id and their reports kept as claims; skills by name; MCP calls with their server |
 | **Failures that matter** | a test run that failed (or exited 0 but printed failures) stays in the brief until a later run passes, while it is among the agent's last 12 commands; reads and edits do not push it out |
 
@@ -174,6 +179,7 @@ continuum coding unresolved SESSION      # calls whose outcome is unknown
 continuum coding resolve SESSION CALL --outcome applied|not_applied|accepted_unknown \
     --actor you --reason "checked the remote"     # a person only; never an MCP tool
 continuum coding show SESSION --seq 42   # the full input, output or diff behind [#42]
+continuum coding media SESSION abc123 --out shot.png   # an [image #abc123] from the brief
 ```
 
 ## Runtime continuity
@@ -215,9 +221,9 @@ These invariants hold everywhere (`AGENTS.md`):
 | **Cloud** | `integrations/cloud/setup.sh` installs through `uv tool` with its own Python 3.12 (PEP 668-safe). Point `CONTINUUM_DATABASE_URL` at a hosted PostgreSQL so sessions outlive containers |
 | **Launch directory** | state lives in `~/.continuum`, never in the directory an IDE starts the server in |
 
-The 21 MCP tools are:
+The 22 MCP tools are:
 - **tasks:** `list_tasks`, `run_task`, `resume_run`, `cancel_run`, `get_status`, `inspect_run`, `pending_decisions`, `list_runs`
-- **coding:** `coding_resume`, `coding_start`, `coding_brief`, `coding_add_task`, `coding_set_task_status`, `coding_complete_task`, `coding_note`, `coding_checkpoint`, `coding_run_check`, `coding_recall`, `coding_show`, `coding_sessions`, `coding_close`
+- **coding:** `coding_resume`, `coding_start`, `coding_brief`, `coding_add_task`, `coding_set_task_status`, `coding_complete_task`, `coding_note`, `coding_checkpoint`, `coding_run_check`, `coding_recall`, `coding_show`, `coding_view_image`, `coding_sessions`, `coding_close`
 
 ## Configuration
 
@@ -236,7 +242,7 @@ API keys come only from the environment. They are redacted before anything is st
 
 ## Verified
 
-`make check`: ruff and `mypy --strict` clean, **455 passed** (5 live-provider tests are opt-in), on
+`make check`: ruff and `mypy --strict` clean, **482 passed** (5 live-provider tests are opt-in), on
 Linux, Windows and macOS in CI. The layers:
 - unit
 - integration
@@ -272,7 +278,9 @@ src/continuum/
                  map), memory (conversation consolidation), brief, transcript parser,
                  app hooks, setup, check runner; capture of what the agent did:
                  activity (every app's hooks -> one record), snapshot (file impact),
-                 spool (local, never waits for the database), recorder, worklog
+                 spool (local, never waits for the database), recorder, worklog;
+                 segments (technical content by type), media (images), reconcile
+                 (read-only proof of lost pushes)
   models/ tools/ verify/ interfaces/ (SDK, CLI, loopback HTTP, MCP)
 eval/
   continuum_lab/   B0-vs-Continuum fault-injection lab; memory_bench (long-chat memory)
