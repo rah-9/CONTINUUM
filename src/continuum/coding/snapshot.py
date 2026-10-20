@@ -212,6 +212,22 @@ def shadow_dir(root: Path) -> Path:
     return home / "snapshots" / f"{key}.git"
 
 
+def remove_shadow(root: Path) -> bool:
+    """Delete the shadow store of ``root`` (erasure). Git writes its objects read-only,
+    which Windows refuses to delete: make each one writable and retry. True when gone."""
+    store = shadow_dir(root)
+    if not store.exists():
+        return True
+
+    def writable_then_retry(func: Any, path: str, _exc: BaseException) -> None:
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        func(path)
+
+    with contextlib.suppress(OSError):
+        shutil.rmtree(store, onexc=writable_then_retry)
+    return not store.exists()
+
+
 def _walk(root: Path, deadline: float | None = None) -> list[bytes] | None:
     """Relative paths (bytes, ``/``-separated) of the files a shadow snapshot holds; None
     when the directory is too big to snapshot on every tool call."""

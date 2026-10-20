@@ -56,6 +56,7 @@ the research in `reports/Agent memory capture architecture.md`; measured in
   - The agent's question inside an answer could strike a user requirement. A shared number alone ("4000") struck an unrelated requirement.
   - A failing test run disappeared from the brief after 12 other tool calls. A subagent's report was shown under another subagent. MCP write tools could be cut from the brief without a "more" marker.
   - Tool text could close the code span or quote it is shown in.
+  - On Windows, `forget` could not delete a snapshot store's read-only git objects (found by Windows CI).
 - **Windows: the brief was lost.** The hook printed it in the console's code page (cp1252) and failed on `⚠`. Hooks now always write UTF-8.
 
 ## 1.0.0rc1 — 2026-10-19
