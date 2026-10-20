@@ -39,6 +39,7 @@ eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-sw
 
 | Found by | Defect | Regression test |
 |---|---|---|
+| Windows CI (1.0.0rc2) | Hooks printed the brief in the console code page (cp1252) and failed on `⚠`, so the next chat got no brief | `test_s4b_hook_cli_round_trip_over_a_real_database` (runs with `PYTHONIOENCODING=cp1252`) |
 | Gateway test | Mock "commit then drop" never persisted (state saved only on success) | `test_ambiguous_write_becomes_unknown_and_blocks_new_writes` |
 | Reconciliation test | Lab manifests claimed 24 h dedupe retention regardless of the connector | `test_expired_dedupe_key_falls_back_to_query_then_human` |
 | Lab analysis | Deduped retry while the original was still in flight was not modeled | `test_deduped_retry_while_original_still_processing_does_not_duplicate` |
@@ -81,7 +82,7 @@ eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-sw
 
 ## Latest results (2026-10-19, v1.0.0rc1)
 
-- `make check`: ruff clean, `mypy --strict` clean. **408 passed**, 5 live tests skipped (opt-in). CI runs the same gates against PostgreSQL 16 on Linux, and the unit, integration and contract suites on Windows and macOS.
+- `make check`: ruff clean, `mypy --strict` clean. **409 passed**, 5 live tests skipped (opt-in). CI runs the same gates against PostgreSQL 16 on Linux, and the unit, integration and contract suites on Windows and macOS.
 - **Hardened schema:** the whole suite, including chaos, runs against the new CHECK constraints with zero violations. The runtime never writes a state the database considers invalid.
 - **Property search:** 150 random interleavings × 12 steps per connector mode (450 scenarios). All invariants held at every step.
 - **Non-functional baselines** (this container, PostgreSQL 16, fake models):

@@ -225,9 +225,12 @@ def test_s4b_hook_cli_round_trip_over_a_real_database(schema, repo, tmp_path):
     out = subprocess.run([exe, "hook", "codex", notify], env=env, capture_output=True,
                          text=True, stdin=subprocess.DEVNULL, timeout=60)
     assert out.returncode == 0 and out.stdout == "", out.stderr
-    start = subprocess.run([exe, "hook", "claude-code"], env=env, capture_output=True,
-                           text=True, timeout=60, input=json.dumps(
-                               {"hook_event_name": "SessionStart", "cwd": str(repo)}))
+    # an app reading through a pipe in a legacy code page (Windows' default) still gets
+    # the whole brief, symbols included: Windows CI found it was silently lost
+    start = subprocess.run([exe, "hook", "claude-code"], env={
+        **env, "PYTHONIOENCODING": "cp1252"}, capture_output=True, timeout=60,
+        input=json.dumps({"hook_event_name": "SessionStart", "cwd": str(repo)}).encode())
+    start.stdout = start.stdout.decode("utf-8")
     log = tmp_path / "home" / "hooks.log"
     assert REQ_1 in start.stdout and "Continuum coding brief" in start.stdout, (
         log.read_text() if log.exists() else "no hooks.log",

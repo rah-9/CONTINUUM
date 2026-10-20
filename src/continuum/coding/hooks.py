@@ -317,6 +317,10 @@ def _database_down(exc: BaseException) -> bool:
 
 
 def _with_sdk(work: Any) -> Any:
+    import logging
+
+    # a database outage is logged to hooks.log, never printed into the user's app
+    logging.getLogger("psycopg.pool").setLevel(logging.CRITICAL)
     os.environ.setdefault("CONTINUUM_DB_TIMEOUT_SECONDS", HOOK_DB_TIMEOUT)
     from continuum.interfaces.sdk import Continuum
 
@@ -339,6 +343,10 @@ def main(argv: list[str]) -> int:
             _log(f"drain: {_masked(exc)}")
         return 0
     app = (argv[0] if argv else "generic")[:40]
+    for stream in (sys.stdout, sys.stderr):    # also when called without the entry point
+        if (getattr(stream, "encoding", "") or "").lower().replace("-", "") != "utf8" \
+                and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     try:
         payload = parse_payload(argv[1] if len(argv) > 1 else None, sys.stdin)
         out, entry = fast(app, payload)

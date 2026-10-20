@@ -37,6 +37,7 @@ the research in `reports/Agent memory capture architecture.md`; measured in
 - **The end of a long error was dropped.** Errors now keep their head and tail.
 - **A cross-app false alarm.** A failure re-run successfully in another app ("Bash" vs "shell") was still flagged.
 - **A change of mind in the most recent message** did not mark the requirement it replaced.
+- **Windows: the brief was lost.** The hook printed it in the console's code page (cp1252) and failed on `⚠`. Hooks now always write UTF-8.
 
 ## 1.0.0rc1 — 2026-10-19
 
