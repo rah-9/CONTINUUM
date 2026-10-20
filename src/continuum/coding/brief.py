@@ -572,6 +572,11 @@ def _absolute(path: str) -> bool:
     return path.startswith(("/", "~")) or (len(path) > 2 and path[1] == ":")
 
 
+def _maybe(item: dict[str, Any]) -> str:
+    n = item.get("maybe_replaced_by")
+    return f" _(#{n} may replace this; check)_" if n else ""
+
+
 def _render_memory(m: dict[str, Any]) -> list[str]:
     """The user's side of the conversation: numbered, in order, newest wins."""
     if not m["messages"]:
@@ -582,8 +587,14 @@ def _render_memory(m: dict[str, Any]) -> list[str]:
              "conflict, the higher number wins._", ""]
     first, latest = m["first"], m["latest"]
     if first:
-        lines.append(f"- **#{first['n']} (first request):** {_line(first['text'], 800)}"
-                     + (" _(clipped; coding_recall has it all)_" if first["clipped"] else ""))
+        if first.get("replaced_by"):
+            lines.append(f"- ~~**#{first['n']} (first request)**~~ (partly replaced by "
+                         f"#{first['replaced_by']}): {_line(first['text'], 800)}")
+        else:
+            lines.append(f"- **#{first['n']} (first request):** {_line(first['text'], 800)}"
+                         + _maybe(first)
+                         + (" _(clipped; coding_recall has it all)_" if first["clipped"]
+                            else ""))
     entries: list[tuple[int, int, str]] = []
     for item in m["ledger"]:
         if item.get("replaced_by"):
@@ -594,8 +605,13 @@ def _render_memory(m: dict[str, Any]) -> list[str]:
         tag = {"revision": " (changes an earlier decision)", "answer": " (answer)"}.get(
             item["kind"], "")
         entries.append((item["n"], item["pos"], f"- #{item['n']}{tag}: "
-                                                 f"{_line(item['text'], 400)}"))
-    entries += [(r["n"], 0, f"- #{r['n']}: {_line(r['text'], 600)}") for r in m["recent"]]
+                                                 f"{_line(item['text'], 400)}{_maybe(item)}"))
+    for r in m["recent"]:
+        if r.get("replaced_by"):
+            entries.append((r["n"], 0, f"- #{r['n']} (partly replaced by "
+                                       f"#{r['replaced_by']}): {_line(r['text'], 600)}"))
+        else:
+            entries.append((r["n"], 0, f"- #{r['n']}: {_line(r['text'], 600)}{_maybe(r)}"))
     lines += [text for _, _, text in sorted(entries)]   # conversation order
     if latest:
         lines.append(f"- **#{latest['n']} (the most recent message):** "

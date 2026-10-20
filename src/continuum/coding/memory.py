@@ -250,7 +250,13 @@ def consolidate(turns: list[Turn]) -> dict[str, Any]:
     latest_items = [{"n": number[latest.seq], "pos": i, "kind": found[0], "text": s}
                     for i, s in enumerate(sentences(latest.text))
                     if (found := classify(s)) is not None]
-    supersede(candidates + latest_items)
+    first_item = ([{"n": 1, "pos": -1, "kind": "first", "text": users[0].text}]
+                  if len(users) > 1 else [])
+    supersede(first_item + candidates + latest_items)
+    if first_item and out["first"]:
+        for key in ("replaced_by", "maybe_replaced_by"):
+            if first_item[0].get(key):
+                out["first"][key] = first_item[0][key]
     # fill the budget: revisions/answers and strong cues first, newer before older;
     # requirements a later message replaced go last (they are shown only as history)
     ranked = sorted(candidates, key=lambda c: (c.get("replaced_by") is None, c["strength"],
@@ -275,6 +281,13 @@ def consolidate(turns: list[Turn]) -> dict[str, Any]:
                 not any(classify(s) for s in sentences(u.text)):
             continue   # questions, chatter and pasted output are not requirements
         out["recent"].insert(0, _shown(u, number, RECENT_CHARS))
+    later_items = candidates + latest_items
+    for r in out["recent"]:                  # a whole message can be replaced later too
+        probe = {"n": r["n"], "pos": -1, "kind": "recent", "text": r["text"]}
+        supersede([probe] + [c for c in later_items if c["n"] > r["n"]])
+        for key in ("replaced_by", "maybe_replaced_by"):
+            if probe.get(key):
+                r[key] = probe[key]
     represented = in_ledger | {r["n"] for r in out["recent"]} | {1, len(users)}
     out["omitted_messages"] = len(users) - len(represented)
     return out
@@ -296,42 +309,75 @@ _COMMON = frozenset({"that", "this", "with", "from", "into", "what", "which", "t
                      "their", "they", "them", "then", "than", "have", "will", "would",
                      "should", "could", "using", "make", "made", "just", "also", "please",
                      "instead", "rather", "anymore", "longer", "need", "want", "thing",
-                     "things", "some", "more", "less"})
+                     "things", "some", "more", "less", "use", "used", "keep", "change",
+                     "switch", "move", "replace", "swap", "update", "build", "run", "set",
+                     "let's", "lets", "it's", "now", "only", "every", "each", "all", "must",
+                     "always", "never", "don't", "does", "done", "the", "and", "for"})
+
+
+def _terms(phrase: str) -> list[str]:
+    terms = [w.strip("`").lower().rstrip(".:") for w in _WORD.findall(phrase)]
+    return [w for w in terms if w and w not in _COMMON]
 
 
 def _key_terms(phrase: str) -> list[str]:
     """The distinctive terms of what is being replaced: a value or identifier when there
     is one ("port 4000" -> "4000"), else its content words."""
-    terms = [w.strip("`").lower() for w in _WORD.findall(phrase)]
-    terms = [w for w in terms if w and w not in _COMMON]
+    terms = _terms(phrase)
     values = [w for w in terms if any(ch.isdigit() for ch in w) or ("`" in phrase
               and f"`{w}`" in phrase.lower())]
     return values or terms[:4]
 
 
-def supersede(candidates: list[dict[str, Any]]) -> None:
-    """Mark earlier requirements that a later change of mind replaces (``replaced_by``).
+def _has(text: str, term: str) -> bool:
+    return re.search(r"(?<![\w.])" + re.escape(term) + r"(?![\w])", text) is not None
 
-    Deterministic: the later message must name what it replaces ("instead of A") and an
-    earlier ledger item must contain all of A's distinctive terms. Only the user's own
-    messages are candidates, so nothing a model or a tool wrote can replace a
-    requirement. An item is never deleted: it stays in the journal and in recall."""
+
+def supersede(candidates: list[dict[str, Any]]) -> None:
+    """Mark earlier requirements that a later change of mind replaces.
+
+    Deterministic: the later message must name what it replaces ("instead of A"), and an
+    earlier item must contain all of A's distinctive terms. That alone is only a
+    *possible* replacement (``maybe_replaced_by``: shown, never struck out): "port 5000
+    instead of 4000" must not strike "the timeout must be 4000 ms". It is a replacement
+    (``replaced_by``) when the earlier item also shares the context: a content word of the
+    later sentence outside A ("port"), or A itself has content words besides a value.
+
+    Only the user's own words count: an answer item quotes the agent's question, so it
+    can be replaced but never replaces anything. An item is never deleted: it stays in
+    the journal and in recall."""
     for later in candidates:
+        if later["kind"] == "answer":
+            continue
         if later["kind"] != "revision" and not any(r.search(later["text"])
                                                    for r in _REPLACED):
             continue
         for pattern in _REPLACED:
             for match in pattern.finditer(later["text"]):
-                terms = _key_terms(match.group(1))
+                phrase = match.group(1)
+                terms = _key_terms(phrase)
                 if not terms:
                     continue
+                values_only = all(any(ch.isdigit() for ch in t) for t in terms)
+                own_words = [w for w in _terms(phrase) if w not in terms]
+                rest = later["text"][:match.start()] + " " + later["text"][match.end():]
+                context = [w for w in _terms(rest) if not any(ch.isdigit() for ch in w)]
                 for earlier in candidates:
                     if earlier["n"] >= later["n"] or earlier.get("replaced_by"):
                         continue
                     low = earlier["text"].lower()
-                    if all(re.search(r"(?<![\w.])" + re.escape(term) + r"(?![\w])", low)
-                           for term in terms):
+                    if not all(_has(low, term) for term in terms):
+                        continue
+                    shared = [w for w in (own_words or context) if _has(low, w)]
+                    # a quoted identifier (`old_export`) or several words are
+                    # specific enough; a bare number or one common word is not
+                    sure = bool(shared) or (not values_only and (
+                        len(terms) >= 2 or "`" in phrase))
+                    if sure:
                         earlier["replaced_by"] = later["n"]
+                        earlier.pop("maybe_replaced_by", None)
+                    elif not earlier.get("maybe_replaced_by"):
+                        earlier["maybe_replaced_by"] = later["n"]
 
 
 def readable(text: str) -> str:

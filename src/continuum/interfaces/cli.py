@@ -408,7 +408,7 @@ def _coding(sdk: Continuum, args: argparse.Namespace) -> int:
             out = coding.resolve_unknown(args.session, args.call, args.outcome,
                                          actor=args.actor, reason=args.reason)
             spool.set_blocks(coding.sessions_root(args.session),
-                             coding.unresolved(args.session))
+                             coding.unresolved(args.session), args.session)
             _print(out)
         case "close":
             _print(coding.close(args.session, args.reason, agent=args.actor, human=True))

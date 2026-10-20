@@ -159,7 +159,7 @@ These invariants hold everywhere (`AGENTS.md`):
 | | |
 |---|---|
 | **MCP clients** | Claude Code (plugin + skill + hooks), Cursor, VS Code, Codex CLI, Windsurf, Gemini CLI, Cline, Claude Desktop, JetBrains, Zed: one stdio command, `continuum mcp` |
-| **Chat capture** | Claude Code hooks, Codex `notify`, any app with JSON hooks (`continuum hook <app>`); others: `continuum coding import <transcript>` |
+| **Capture** (chat and every tool call) | Claude Code, Codex, Gemini CLI and Cursor hooks, installed by `continuum coding setup` in each app's own format; any app with JSON hooks (`continuum hook <app>`); others: `continuum coding import <transcript>`. Inside and outside git |
 | **Another checkout** | a subdirectory, a re-clone, a cloud container: found by git top level, then by remote + branch |
 | **Agents without MCP** | the same protocol via the CLI (`continuum coding …`) |
 | **OS** | Linux, macOS, Windows. Output is UTF-8 whatever the console encoding. Check commands are resolved like a shell would (`npm` → `npm.cmd`) |

@@ -482,6 +482,39 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 
 **Rejected.** A model deciding contradictions: it is the measured weak point, and it would turn the user's words into a model's claim.
 
+**Amended (review, 1.0.0rc2).** Matching all of A's terms is now only a *possible* replacement (`maybe_replaced_by`, shown as "_#12 may replace this; check_", never struck out). It becomes a replacement when the earlier item also shares context: a content word of the later sentence outside A ("**port** 5000 instead of 4000"), several words of A, or a quoted identifier. Without this, "port 5000 instead of 4000" struck "the timeout must be 4000 ms". An answer item quotes the agent's question, so it can be replaced but never replaces anything. The first request and recent whole messages can be marked too.
+
+## D-045 — Unknown outcomes include ambiguous results; every app gets its own hook protocol
+
+**Context.** A review of the capture pipeline, plus a check of every app's current hook documentation, found:
+- An interrupted or timed-out `git push` counted as finished, so it was neither unknown nor blocked.
+- Apps without call ids (Gemini CLI, Cursor) collapsed identical calls into one.
+- The refusal JSON was Claude Code's for every app, so Gemini CLI and Cursor ignored it. Cursor also blocks a permission hook that prints no JSON.
+- Codex hooks were never installed.
+- Changes outside git were not observed.
+
+**Decision.**
+- **Ambiguous results are unknown outcomes.** An external call that ends interrupted, timed out or disconnected (502/504, connection reset) is marked unresolved after its result, as is a call with no result at all (AGENTS.md invariants 5 and 8). A plain failure with an exit code is a known outcome. Marks are read in journal order: a later result clears a mark (the app was only late), and a person's resolution always does.
+- **Occurrences.** Calls without an app id are keyed by chat, tool and input. A repeat after the earlier call finished is a new call (`key#2`); a finish pairs with the oldest open start.
+- **Each app's protocol.**
+  - Refusal: Claude Code and Codex get `hookSpecificOutput.permissionDecision`, Gemini CLI gets `{"decision": "deny"}`, and Cursor gets `{"permission": "deny"}`. An unknown app gets exit code 2 with the reason on stderr.
+  - Cursor's permission hooks print an explicit allow.
+  - The brief is printed as plain text for Claude Code, as JSON `additionalContext` for Codex and Gemini CLI, and as `additional_context` for Cursor.
+- **Setup installs all four apps:** `.claude/settings.json`, `.codex/hooks.json` (trusted once with `/hooks`; context limit raised for the brief), `.gemini/settings.json` (timeouts in milliseconds) and `.cursor/hooks.json`. Each is merged with existing hooks.
+- **The deny list follows results.** It is refreshed as soon as a late result arrives, and found from any subfolder of the project. The refusal names the exact `continuum coding resolve` command.
+- **Outside git**, snapshots use a private store per directory in `$CONTINUUM_HOME/snapshots/`. The directory itself is never written. Snapshots are bounded (20,000 files, files of 10 MB at most, never the home directory or a filesystem root), and the store is deleted by `forget`.
+- **Hook hot path.** The refusal is decided before the snapshot, and a snapshot gives up after 5 s. The drainer lock is an OS file lock, released by the kernel when its process dies, so it never goes stale or is taken over mid-drain.
+- **Diffs are redacted** like outputs. The content of credential files (`.env*`, keys, `credentials*`) is never stored; the file is listed as changed.
+- **Classification.**
+  - MCP tools count as reads only when their whole name says so: `merge_pull_request` and `get_or_create` are external.
+  - Shell wrappers are seen through: `git -C dir push`, `bash -c "..."`, `sudo -E`, `npx`, `python -m`.
+  - Harness bookkeeping tools (`TaskCreate`, `SendMessage`) are reads.
+  - Claude Code's `SubagentHandback` is a subagent report.
+
+**Rejected.**
+- Treating every error of an external call as unknown: a rejected push with an exit code is a known outcome, and a person would be asked about every failed request.
+- Asking a model whether a call took effect.
+
 ---
 
 _Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

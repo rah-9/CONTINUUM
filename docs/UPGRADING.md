@@ -20,7 +20,8 @@ over existing events once.
 
 | Change | What you do |
 |---|---|
-| **Tool calls with results, file impact, unknown outcomes** (D-042). New event types and the `coding_blobs` table. | Re-run `continuum coding setup` in each repository (or update the Claude Code plugin) to install the tool-call hooks. Codex/Gemini/Cursor: add their tool hooks (`integrations/README.md`). |
+| **Tool calls with results, file impact, unknown outcomes** (D-042, D-045). New event types and the `coding_blobs` table. | Re-run `continuum coding setup` in each repository (or update the Claude Code plugin). It now also writes `.codex/hooks.json`, `.gemini/settings.json` and `.cursor/hooks.json`; commit them. In Codex, trust the new hooks once with `/hooks`. The `notify` line in `~/.codex/config.toml` is no longer needed with hooks; remove it to avoid capturing each turn twice. |
+| **Snapshots outside git** go to `$CONTINUUM_HOME/snapshots/`. | Nothing. Include it in your erasure policy if machines are shared. |
 | **Several people:** blobs follow the same isolation. | `continuum admin grant <role>` again for each person (adds access to `coding_blobs`). |
 | **External calls can be blocked** while an earlier one's outcome is unknown. | Tell your team: `continuum coding resolve` unblocks after a person checks. |
 | **The `continuum` command** dispatches hooks first. | Reinstall the package so the entry point updates. |

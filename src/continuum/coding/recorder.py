@@ -46,6 +46,22 @@ _SIGNALS = {
 }
 
 
+# A call that may have taken effect although it reports an error: interrupted, timed out,
+# or its connection broke after the request may have been sent. For a call that can act
+# outside the repository this is an unknown outcome, never a failure (AGENTS.md inv. 5).
+_AMBIGUOUS = re.compile(
+    r"timed? ?out|timeout|deadline exceeded|connection (?:reset|closed|aborted|lost)|"
+    r"ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|broken pipe|unexpected EOF|"
+    r"\b(?:502|504)\b|bad gateway|gateway time|interrupted|killed|SIGTERM|SIGKILL", re.I)
+
+
+def ambiguous(status: str, text: str, failure_type: Any = None) -> bool:
+    """Whether a finished call's outcome is still unknown (see ``_AMBIGUOUS``)."""
+    if status == "interrupted" or failure_type == "timeout":
+        return True
+    return status == "error" and bool(_AMBIGUOUS.search(text[:4000] + text[-4000:]))
+
+
 def signals(output: str) -> list[str]:
     tail = output[-20_000:]
     return [name for name, pattern in _SIGNALS.items() if pattern.search(tail)]
@@ -164,10 +180,41 @@ class Recorder:
         elif phase == "subagent_stop":
             self.subagent(env)
 
+    def _occurrences(self, base: str) -> list[str]:
+        """Keys of the calls recorded under an anonymous base key, in order (``k``,
+        ``k#2``, ``k#3`` ...): apps without call ids repeat the same key for identical
+        calls, and each call must still be its own record."""
+        keys = [base] if base in self.started else []
+        n = 2
+        while f"{base}#{n}" in self.started:
+            keys.append(f"{base}#{n}")
+            n += 1
+        return keys
+
+    def _start_key(self, base: str) -> str | None:
+        """The key a new start gets; None when it repeats a start still open."""
+        if not base.startswith("anon:"):
+            return None if base in self.started else base
+        seen = self._occurrences(base)
+        if seen and seen[-1] not in self.finished:
+            return None          # the same call delivered twice (it has not finished yet)
+        return base if not seen else f"{base}#{len(seen) + 1}"
+
+    def _finish_key(self, base: str) -> str | None:
+        """The start a finish belongs to: the oldest one still open (None: a repeat)."""
+        if not base.startswith("anon:"):
+            return None if base in self.finished else base
+        seen = self._occurrences(base)
+        open_ = [k for k in seen if k not in self.finished]
+        if open_:
+            return open_[0]
+        return None if seen else base
+
     def start(self, env: dict[str, Any]) -> None:
-        key = str(env["call_key"])
-        if key in self.started:
+        found = self._start_key(str(env["call_key"]))
+        if found is None:
             return
+        key = found
         raw_input = env.get("input")
         redacted = self._redact_json(raw_input)
         serial = json.dumps(redacted, ensure_ascii=False, default=str)
@@ -190,11 +237,12 @@ class Recorder:
             sent_at=_timestamp(env.get("at"))))
 
     def finish(self, env: dict[str, Any]) -> None:
-        key = str(env["call_key"])
-        if key in self.finished:
+        found = self._finish_key(str(env["call_key"]))
+        if found is None:
             return
+        key = found
         if key not in self.started:          # the start hook was missed: record it now
-            self.start({**env, "phase": "start", "snapshot": None})
+            self.start({**env, "call_key": key, "phase": "start", "snapshot": None})
         output = self._text(env.get("output"))
         raw_error = self._text(env.get("error"))
         # errors are usually at the end of a long output: keep the head and the tail
@@ -216,21 +264,31 @@ class Recorder:
             error=error, untrusted=True, signals=signals(output), tree_after=tree_after,
             source=self._text(env.get("app") or "app")[:60],
             chat_id=self._opt(env.get("chat"), 120), sent_at=_timestamp(env.get("at"))))
-        before = self.started[key].get("tree_before")
+        started = self.started[key]
+        if started.get("effect") == "external" and key not in self.unresolved and ambiguous(
+                str(status), error or output, env.get("failure_type")):
+            self._put(ToolCallUnresolved(
+                call_key=key, tool=started["tool"], effect="external",
+                reason=f"the call ended {status} in a way that does not show whether it "
+                       "took effect (interrupted, timed out or disconnected)"))
+        before = started.get("tree_before")
         if before and tree_after and key not in self.impacts:
             self.impact(key, before, tree_after, str(env.get("app") or "app"),
-                        snap.get("root"))
+                        snap.get("root"), snap.get("git_dir"))
 
     def impact(self, key: str | None, before: str, after: str, source: str,
-               root: Any = None) -> None:
+               root: Any = None, store: Any = None) -> None:
         """What changed between two snapshots, observed with git (not reported)."""
         where = root if isinstance(root, str) else self.root
         if before == after or where is None:
             return
-        found = snapshot.diff(where, before, after)
+        found = snapshot.diff(where, before, after,
+                              store if isinstance(store, str) else None)
         if found is None or not found["files"]:
             return
-        diff_blob = self.blob(found["patch"], "text/x-diff") if found["patch"] else None
+        # a diff is file content: redacted like every output before it is stored
+        patch = self._text(found["patch"]) if found["patch"] else ""
+        diff_blob = self.blob(patch, "text/x-diff") if patch else None
         self._put(FileImpactObserved(
             call_key=key, tree_before=before, tree_after=after, files=found["files"],
             files_total=found["files_total"], diff_blob=diff_blob,
@@ -288,7 +346,7 @@ class Recorder:
             (self.sid,)).fetchone()
         if row is not None and row["tree"] and row["tree"] != after:
             self.impact(None, row["tree"], after, str(env.get("app") or "app"),
-                        snap.get("root"))
+                        snap.get("root"), snap.get("git_dir"))
 
     # ---- reconciliation (never a model) --------------------------------------------------
 

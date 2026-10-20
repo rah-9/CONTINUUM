@@ -1,7 +1,6 @@
 # Append to ~/.codex/config.toml (Windows: %USERPROFILE%\.codex\config.toml).
-# `notify` must be a top-level key: put it above any [table] in your config.
-# It journals each turn (your words and the agent's report) so another app can continue.
-notify = ["continuum", "hook", "codex"]
+# Capture hooks live in the repository's .codex/hooks.json, written by
+# `continuum coding setup` (trust them once with /hooks in Codex).
 
 [mcp_servers.continuum]
 command = "continuum"
@@ -9,3 +8,7 @@ args = ["mcp"]
 
 [mcp_servers.continuum.env]
 CONTINUUM_DATABASE_URL = "postgresql://continuum:continuum@localhost:5432/continuum"
+
+# Only for a Codex without hooks: `notify` journals each turn (your words and the agent's
+# report, no tool calls). It must be a top-level key, above any [table]:
+# notify = ["continuum", "hook", "codex"]
