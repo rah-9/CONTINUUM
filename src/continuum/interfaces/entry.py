@@ -9,8 +9,19 @@ from __future__ import annotations
 import sys
 
 
+def _utf8_output() -> None:
+    """Apps read our output through pipes. On Windows a pipe defaults to the ANSI code
+    page (e.g. cp1252), which cannot encode the brief's symbols: the brief would never
+    reach the new chat (found by Windows CI on the hook path)."""
+    for stream in (sys.stdout, sys.stderr):
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+        if encoding != "utf8" and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    _utf8_output()
     if args[:1] == ["hook"]:
         from continuum.coding.hooks import main as hook_main
 
