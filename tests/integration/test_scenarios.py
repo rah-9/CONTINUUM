@@ -608,6 +608,42 @@ def test_s15b_a_crashed_chat_leaves_unknown_outcomes_for_the_next_chat(coding, r
     assert "deny" in out
 
 
+def test_s15d_file_impact_outside_git_in_a_second_app(coding, tmp_path, monkeypatch):
+    """A project that is not a git repository, worked on from Codex: every change a tool
+    call makes is still observed (shadow snapshots), and a forgotten session takes its
+    local snapshot store with it."""
+    from continuum.coding import snapshot
+
+    monkeypatch.setenv("CONTINUUM_HOME", str(tmp_path / "home"))
+    work = tmp_path / "scripts"
+    work.mkdir()
+    (work / "sync.sh").write_text("echo old\n")
+    root = str(work)
+
+    def hook(payload):
+        _, entry = hooks.fast("codex", {"cwd": root, "session_id": "cx-1", **payload})
+        hooks.handle("codex", entry["payload"], coding, entry["snapshot"])
+
+    coding.start(root, "maintain the sync scripts", agent="me")   # outside git: explicit
+    hook({"hook_event_name": "UserPromptSubmit", "prompt": "Make sync.sh print new."})
+    hook({"hook_event_name": "PreToolUse", "tool_name": "shell", "tool_use_id": "c1",
+          "tool_input": {"command": "sed -i s/old/new/ sync.sh && touch done.flag"}})
+    (work / "sync.sh").write_text("echo new\n")
+    (work / "done.flag").write_text("")
+    hook({"hook_event_name": "PostToolUse", "tool_name": "shell", "tool_use_id": "c1",
+          "tool_input": {"command": "sed -i s/old/new/ sync.sh && touch done.flag"},
+          "tool_response": {"output": "", "exit_code": 0}})
+    hook({"hook_event_name": "Stop"})
+    sid = coding.latest_active(root)
+    work_log = coding.brief(sid)["work_log"]
+    assert {f["path"] for f in work_log["files_changed"]} == {"sync.sh", "done.flag"}
+    assert not (work / ".git").exists()
+    store = snapshot.shadow_dir(work.resolve())
+    assert store.is_dir()
+    coding.forget(sid, actor="me", reason="test")
+    assert not store.exists()
+
+
 def test_s16_the_same_short_answer_in_two_apps_is_two_answers(coding, repo):
     """'yes' in Claude Code, and later 'yes' in Codex to a new question: two answers, each
     paired with its own question, whatever order the apps' transcripts were imported in."""

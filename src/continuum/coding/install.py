@@ -11,6 +11,9 @@ Writes only project files, idempotently (re-running changes nothing):
 * ``.claude/settings.json``: Claude Code hooks (capture the conversation; show the brief
   at session start), merged with existing hooks.
 * ``.mcp.json``: the ``continuum`` MCP server for Claude Code, if absent.
+* ``.codex/hooks.json``, ``.gemini/settings.json``, ``.cursor/hooks.json``: the same
+  capture hooks for Codex, Gemini CLI and Cursor, merged with existing hooks (each app's
+  own events, timeout units and matcher syntax).
 
 User-level files (``~/.codex/config.toml``) are never edited: the snippet is returned
 for the user to add. No database access is needed.
@@ -34,13 +37,39 @@ HOOK_TIMEOUT = 15
 
 CODEX_SNIPPET = """\
 # ~/.codex/config.toml  (Windows: %USERPROFILE%\\.codex\\config.toml)
-# `notify` must be a top-level key: put it above any [table].
-notify = ["continuum", "hook", "codex"]
-
 [mcp_servers.continuum]
 command = "continuum"
 args = ["mcp"]
+
+# Capture hooks are in the repository's .codex/hooks.json (trust them once with /hooks).
+# Only for a Codex without hooks: a top-level `notify` captures the chat (no tool calls).
+# notify = ["continuum", "hook", "codex"]
 """
+
+# Each app's events (its own names), which of them take a tool matcher, the matcher that
+# means "every tool", and the timeout in the app's unit.
+APP_HOOKS: dict[str, dict[str, Any]] = {
+    "codex": {
+        "file": ".codex/hooks.json", "command": "continuum hook codex",
+        "events": ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+                   "SubagentStop", "PreCompact", "PostCompact", "Stop", "SessionEnd"),
+        "tool_events": {"PreToolUse", "PostToolUse"}, "matcher": "*", "timeout": 15,
+        # the brief is a few thousand tokens: above Codex's default context limit
+        "extra": {"SessionStart": {"additionalContextLimit": 6000}},
+    },
+    "gemini": {
+        "file": ".gemini/settings.json", "command": "continuum hook gemini-cli",
+        "events": ("SessionStart", "BeforeTool", "AfterTool", "AfterAgent", "PreCompress",
+                   "SessionEnd"),
+        "tool_events": {"BeforeTool", "AfterTool"}, "matcher": ".*",
+        "timeout": 15_000,                      # Gemini CLI: milliseconds
+        "extra": {},
+    },
+}
+CURSOR_EVENTS = ("sessionStart", "beforeSubmitPrompt", "preToolUse", "postToolUse",
+                 "postToolUseFailure", "subagentStop", "preCompact", "afterAgentResponse",
+                 "stop", "sessionEnd")
+CURSOR_COMMAND = "continuum hook cursor"
 
 
 def agent_rules() -> str:
@@ -86,6 +115,35 @@ def _claude_settings(existing: dict[str, Any]) -> dict[str, Any]:
     return existing
 
 
+def _app_settings(existing: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
+    """Claude-style hook groups (Codex and Gemini CLI share the shape), merged."""
+    hooks = existing.setdefault("hooks", {})
+    for event in spec["events"]:
+        groups = hooks.setdefault(event, [])
+        if any(spec["command"] in str(h.get("command", ""))
+               for g in groups if isinstance(g, dict)
+               for h in g.get("hooks", []) if isinstance(h, dict)):
+            continue
+        handler = {"type": "command", "command": spec["command"],
+                   "timeout": spec["timeout"], **spec["extra"].get(event, {})}
+        group: dict[str, Any] = {"hooks": [handler]}
+        if event in spec["tool_events"]:
+            group = {"matcher": spec["matcher"], **group}
+        groups.append(group)
+    return existing
+
+
+def _cursor_settings(existing: dict[str, Any]) -> dict[str, Any]:
+    existing.setdefault("version", 1)
+    hooks = existing.setdefault("hooks", {})
+    for event in CURSOR_EVENTS:
+        entries = hooks.setdefault(event, [])
+        if not any(CURSOR_COMMAND in str(h.get("command", "")) for h in entries
+                   if isinstance(h, dict)):
+            entries.append({"command": CURSOR_COMMAND, "timeout": HOOK_TIMEOUT})
+    return existing
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -118,6 +176,16 @@ def setup(repo: str, *, dry_run: bool = False) -> dict[str, Any]:
     files[".claude/settings.json"] = _write(
         settings_path, json.dumps(settings, indent=2) + "\n", dry_run)
 
+    for spec in APP_HOOKS.values():
+        path = root / spec["file"]
+        files[spec["file"]] = _write(
+            path, json.dumps(_app_settings(_load_json(path), spec), indent=2) + "\n",
+            dry_run)
+    cursor_path = root / ".cursor" / "hooks.json"
+    files[".cursor/hooks.json"] = _write(
+        cursor_path, json.dumps(_cursor_settings(_load_json(cursor_path)), indent=2) + "\n",
+        dry_run)
+
     mcp_path = root / ".mcp.json"
     mcp = _load_json(mcp_path)
     mcp.setdefault("mcpServers", {}).setdefault(
@@ -127,10 +195,12 @@ def setup(repo: str, *, dry_run: bool = False) -> dict[str, Any]:
     return {
         "repo": str(root), "dry_run": dry_run, "files": files,
         "codex": {"add_to_user_config": CODEX_SNIPPET,
-                  "why": "Codex reads AGENTS.md (written above); the MCP server and the "
-                         "notify hook live in the user's own config, which setup never edits"},
+                  "why": "Codex reads AGENTS.md and .codex/hooks.json (written above; "
+                         "trust the hooks once with /hooks); the MCP server lives in the "
+                         "user's own config, which setup never edits"},
         "next": ["a human registers checks: continuum coding checks add . tests --actor "
                  "<you> -- <test command>",
-                 "commit AGENTS.md, CLAUDE.md, .claude/settings.json and .mcp.json so every "
-                 "checkout (and cloud container) gets the same behaviour"],
+                 "commit AGENTS.md, CLAUDE.md, .claude/settings.json, .codex/hooks.json, "
+                 ".gemini/settings.json, .cursor/hooks.json and .mcp.json so every checkout "
+                 "(and cloud container) gets the same behaviour"],
     }

@@ -53,7 +53,8 @@ READ_TOOLS = frozenset({
     "read", "grep", "glob", "ls", "notebookread", "webfetch", "websearch", "todowrite",
     "todoread", "toolsearch", "exitplanmode", "enterplanmode", "askuserquestion",
     "skill", "listmcpresourcestool", "readmcpresourcetool", "bashoutput", "killshell",
-    "taskoutput", "monitor",
+    "taskoutput", "monitor", "subagenthandback", "taskcreate", "taskupdate", "tasklist",
+    "taskget", "taskstop", "sendmessage", "listagents", "readnotifications",
     # Codex
     "read_file", "list_dir", "grep_files", "view_image", "update_plan", "web_search",
     # Gemini CLI
@@ -65,18 +66,32 @@ READ_TOOLS = frozenset({
 WRITE_TOOLS = frozenset({
     "edit", "multiedit", "write", "notebookedit", "apply_patch", "write_file", "replace",
     "edit_file", "str_replace_editor", "str_replace_based_edit_tool", "create_file",
-    "delete_file", "search_replace", "afterfileedit",
+    "delete_file", "search_replace", "afterfileedit", "delete",
 })
 SHELL_TOOLS = frozenset({"bash", "shell", "local_shell", "exec_command", "run_shell_command",
                          "container.exec", "unified_exec", "run_terminal_cmd", "terminal",
-                         "powershell"})
+                         "powershell", "write_stdin"})
 DELEGATE_TOOLS = frozenset({"task", "agent", "subagent", "spawn_agent"})
 
 # MCP tools: a name that only reads (get_issue, list_files, search_code, ...) is a read;
 # anything else may write somewhere outside the repository.
 _MCP_READ = re.compile(
-    r"^(?:get|list|read|search|fetch|query|describe|show|find|view|lookup|inspect|status|"
-    r"check|count|browse|download|retrieve|whoami|me)(?:_|$|[A-Z])", re.I)
+    r"^(?i:get|list|read|search|fetch|query|describe|show|find|view|lookup|inspect|status|"
+    r"check|count|browse|download|retrieve|whoami)(?:[_\-.]|$|(?=[A-Z0-9]))|^(?i:me)$")
+# ... unless the rest of the name says it changes something (get_or_create, listAndDelete)
+_MCP_WRITE_WORD = re.compile(
+    r"(?i:create|update|delete|remove|set|add|insert|upsert|write|send|post|put|patch|"
+    r"merge|close|open|assign|move|rename|publish|deploy|run|exec|trigger|start|stop|"
+    r"cancel|approve|reject|comment|reply|upload|archive|restore|invite|transfer|pay|"
+    r"charge|refund|book|submit|commit|push|reset|revoke|grant|enable|disable)")
+
+
+def _mcp_effect(short: str) -> str:
+    """``read`` for a tool whose name says it only reads, else ``external``."""
+    if not _MCP_READ.match(short):
+        return "external"
+    rest = _MCP_READ.sub("", short, count=1)
+    return "external" if _MCP_WRITE_WORD.search(rest) else "read"
 
 # Shell commands that act outside the repository. Matched on each simple command of a
 # command line (after `&&`, `;`, `|`, ...). Conservative: when in doubt, external.
@@ -112,6 +127,16 @@ _EXTERNAL_COMMANDS = [
     )
 ]
 _SPLIT = re.compile(r"\|\||&&|;|\||\n")
+# prefixes that run the rest of the line as a command (with their own options)
+_WRAPPERS = re.compile(
+    r"^(?:sudo(?:\s+(?:-[ugChpDRrTU]\s+\S+|--\S+|-[A-Za-z]+))*|env(?:\s+-\S+)*|time|exec|nohup|command|"
+    r"builtin|nice(?:\s+-n\s*\S+)?|timeout(?:\s+-\S+)*\s+\S+|xargs(?:\s+-\S+)*|"
+    r"npx(?:\s+(?:-y|--yes))?|bunx|pnpm\s+(?:dlx|exec)|yarn\s+dlx|uvx|pipx\s+run|"
+    r"(?:python[0-9.]*|py)\s+-m|uv\s+run|poetry\s+run|bundle\s+exec)\s+")
+# git's global options before the subcommand (``git -C dir push``)
+_GIT_GLOBAL = re.compile(r"^git(?:\s+(?:-C\s+\S+|-c\s+\S+|--git-dir=\S+|--work-tree=\S+|"
+                         r"--no-pager|-P|--bare|--no-replace-objects))+\s+")
+_SHELL_C = re.compile(r"^(?:ba|z|da|k|fi)?sh\s+(?:-\w*c\w*)\s+(.+)$", re.S)
 
 
 def _norm(name: str) -> str:
@@ -136,15 +161,45 @@ def command_of(tool_input: Any) -> str | None:
     return str(value) if isinstance(value, str) and value.strip() else None
 
 
-def command_effect(command: str) -> str:
-    """``external`` when any simple command in the line acts outside the repository."""
+def _simple(part: str) -> str:
+    """A simple command without what only wraps it: subshells, ``VAR=x``, ``sudo -E``,
+    ``npx``, ``python -m``, git's global options."""
+    for _ in range(8):
+        before = part
+        part = part.strip().lstrip("({ ").strip()
+        part = re.sub(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+", "", part)    # VAR=x cmd
+        part = _WRAPPERS.sub("", part, count=1)
+        part = _GIT_GLOBAL.sub("git ", part, count=1)
+        if part == before:
+            break
+    return part
+
+
+def command_effect(command: str, depth: int = 0) -> str:
+    """``external`` when any simple command in the line acts outside the repository,
+    including inside ``bash -c "..."``."""
     for part in _SPLIT.split(command):
-        part = part.strip()
-        while part.startswith(("sudo ", "env ", "time ", "exec ", "nohup ", "(")):
-            part = part.split(" ", 1)[1].lstrip("( ") if " " in part else ""
-        part = re.sub(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+", "", part)   # VAR=x cmd
+        part = _simple(part)
+        inner = _SHELL_C.match(part)
+        if inner and depth < 3:
+            try:
+                words = shlex.split(inner.group(1))
+            except ValueError:
+                words = [inner.group(1).strip("'\"")]
+            if words and command_effect(words[0], depth + 1) == "external":
+                return "external"
         if any(p.search(part) for p in _EXTERNAL_COMMANDS):
             return "external"
+    # a quoted script split across separators (bash -c "a && git push") is checked whole
+    if depth == 0 and _SHELL_C.search(command.strip()):
+        inner = _SHELL_C.match(_simple(command.strip()))
+        if inner:
+            try:
+                words = shlex.split(inner.group(1))
+            except ValueError:
+                words = []
+            if words and command_effect(words[0], 1) == "external":
+                return "external"
     return "write"
 
 
@@ -158,15 +213,17 @@ def classify(tool: str, tool_input: Any = None) -> dict[str, Any]:
         short = parts[2] if len(parts) > 2 else ""
         if server and server.startswith("plugin_"):
             server = server[len("plugin_"):]
-        effect = "read" if _MCP_READ.match(short) else "external"
+        effect = _mcp_effect(short)
         if server == "continuum":            # Continuum's own journal: bookkeeping
             effect = "read"
         return {"kind": "mcp", "server": server, "effect": effect}
     if name.startswith("mcp_"):                          # Gemini CLI: mcp_<server>_<tool>
         rest = tool[4:]
         server, _, short = rest.partition("_")
-        effect = "read" if _MCP_READ.match(short) else "external"
-        return {"kind": "mcp", "server": server or None, "effect": effect}
+        return {"kind": "mcp", "server": server or None, "effect": _mcp_effect(short)}
+    if name.startswith("mcp:"):                          # Cursor: MCP:<tool>
+        short = tool.split(":", 1)[1]
+        return {"kind": "mcp", "server": None, "effect": _mcp_effect(short)}
     if name in DELEGATE_TOOLS:
         return {"kind": "subagent", "server": None, "effect": "delegate"}
     if name == "skill":
@@ -266,6 +323,15 @@ def _str(payload: dict[str, Any], *keys: str) -> str | None:
     return None
 
 
+def _cursor_agent(payload: dict[str, Any]) -> str | None:
+    """Cursor names no subagent id: one is derived from its task and transcript."""
+    task = _str(payload, "task", "description")
+    where = _str(payload, "agent_transcript_path")
+    if not (task or where):
+        return None
+    return "cursor:" + hashlib.sha256(f"{task}\0{where}".encode()).hexdigest()[:16]
+
+
 def call_key(app_call_id: str | None, chat: str | None, tool: str, tool_input: Any) -> str:
     """The identity of one tool call for pairing start and finish. The app's call id when
     it has one (correlation only; never operation identity, AGENTS.md inv. 4); otherwise
@@ -297,7 +363,8 @@ def from_hook(app: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         tool = "Shell"
         tool_input = {"command": payload.get("command")}
     elif low in ("beforemcpexecution", "aftermcpexecution"):
-        server = _str(payload, "server", "server_name", "mcp_server") or "mcp"
+        server = _str(payload, "mcp_server_name", "server", "server_name", "mcp_server") \
+            or "mcp"
         tool = f"mcp__{server}__{_str(payload, 'tool_name') or 'tool'}"
         tool_input = payload.get("tool_input")
         if isinstance(tool_input, str):
@@ -313,12 +380,28 @@ def from_hook(app: str, payload: dict[str, Any]) -> dict[str, Any] | None:
                 "when": "after" if low == "postcompact" else "before",
                 "summary": summary if isinstance(summary, str) else None}
     elif low == "subagentstop":
-        return {**base, "phase": "subagent_stop",
-                "report": _str(payload, "last_assistant_message"),
+        # Claude Code / Codex: agent_id + last_assistant_message; Cursor: summary + task
+        agent = base["agent_id"] or _cursor_agent(payload)
+        return {**base, "agent_id": agent, "agent_type": base["agent_type"] or _str(
+                    payload, "subagent_type"), "phase": "subagent_stop",
+                "report": _str(payload, "last_assistant_message", "summary"),
                 "transcript": _str(payload, "agent_transcript_path")}
     else:
         return None
+    if _norm(tool) == "subagenthandback":
+        # Claude Code: a subagent hands its final report back as a tool call
+        if low not in ("pretooluse", "beforetool") or not isinstance(tool_input, dict):
+            return None
+        message = tool_input.get("message", tool_input.get("report"))
+        return {**base, "phase": "subagent_stop",
+                "report": message if isinstance(message, str) else None,
+                "transcript": _str(payload, "agent_transcript_path")}
     info = classify(tool, tool_input)
+    mcp_server = payload.get("mcp_server")             # Claude Code: {"name", "source"}
+    if isinstance(mcp_server, dict) and isinstance(mcp_server.get("name"), str):
+        info["server"] = mcp_server["name"][:200]
+    elif info["kind"] == "mcp" and info["server"] is None:
+        info["server"] = _str(payload, "mcp_server_name")
     app_call_id = _str(payload, "tool_use_id", "toolUseId", "call_id", "tool_call_id")
     if low == "afterfileedit":
         app_call_id = None
@@ -331,7 +414,11 @@ def from_hook(app: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     if low in ("pretooluse", "beforetool", "beforeshellexecution", "beforemcpexecution"):
         return {**common, "phase": "start"}
     # a finish (Cursor's afterFileEdit is a finished edit with no separate start)
-    response = payload.get("tool_response", payload.get("toolResponse"))
+    response = payload.get("tool_response", payload.get("toolResponse",
+                                                         payload.get("tool_output")))
+    if isinstance(response, str) and response[:1] in "{[":   # Cursor: JSON as a string
+        with contextlib.suppress(ValueError):
+            response = json.loads(response)
     if low == "aftershellexecution":
         response = {"output": payload.get("output"), "exit_code": payload.get("exit_code")}
     elif low == "aftermcpexecution":
@@ -341,7 +428,7 @@ def from_hook(app: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         response = {k: v for k, v in response.items()
                     if k not in ("originalFile", "content", "file_content", "oldString",
                                  "newString", "old_string", "new_string")}
-    error = payload.get("error")
+    error = payload.get("error", payload.get("error_message"))
     if isinstance(response, dict) and isinstance(response.get("error"), str | dict):
         error = error or response.get("error")
     error_text = error if isinstance(error, str) else (
@@ -349,14 +436,19 @@ def from_hook(app: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     output = text_of_output(response)
     exit_code = exit_code_of(response)
     failed = low == "posttoolusefailure" or bool(error_text)
+    if low == "aftershellexecution" and exit_code is None and not error_text:
+        failed = False                     # Cursor reports no exit code for a shell run
     status = status_of(is_error=failed, text=error_text or output,
                        interrupt=payload.get("is_interrupt") is True, exit_code=exit_code)
     if isinstance(response, dict) and response.get("interrupted") is True:
         status = "interrupted"
-    duration = payload.get("duration_ms")
+    if payload.get("failure_type") == "permission_denied":
+        status = "denied"
+    duration = payload.get("duration_ms", payload.get("duration"))
     finish = {**common, "phase": "finish", "status": status, "exit_code": exit_code,
               "duration_ms": duration if isinstance(duration, int) else None,
-              "output": output, "error": error_text or None}
+              "output": output, "error": error_text or None,
+              "failure_type": _str(payload, "failure_type")}
     if low == "afterfileedit":
         return {**finish, "phase": "start_finish"}
     return finish

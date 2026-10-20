@@ -27,7 +27,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-LOCK_STALE_SECONDS = 120
+TMP_STALE_SECONDS = 3600
 
 
 def home() -> Path:
@@ -69,7 +69,13 @@ def write(entry: dict[str, Any]) -> Path:
 
 
 def pending() -> list[Path]:
-    return sorted(p for p in spool_dir().glob("*.json"))
+    folder = spool_dir()
+    # a writer killed between write and rename leaves a .tmp; nobody will finish it
+    for tmp in folder.glob("*.json.tmp"):
+        with contextlib.suppress(OSError):
+            if time.time() - tmp.stat().st_mtime > TMP_STALE_SECONDS:
+                tmp.unlink()
+    return sorted(p for p in folder.glob("*.json"))
 
 
 def entries() -> Iterator[tuple[Path, dict[str, Any] | None]]:
@@ -88,40 +94,59 @@ def quarantine(path: Path) -> None:
 
 
 class Lock:
-    """One drainer at a time (an exclusive create, portable; stale after 2 minutes)."""
+    """One drainer at a time: an OS file lock (``flock`` / ``msvcrt.locking``), released by
+    the kernel when its process exits, so it never goes stale and is never taken over
+    while its holder is still working."""
 
     def __init__(self) -> None:
         self.path = spool_dir() / "drain.lock"
-        self.held = False
+        self.fd: int | None = None
+
+    @property
+    def held(self) -> bool:
+        return self.fd is not None
 
     def acquire(self) -> bool:
-        for _ in range(2):
-            try:
-                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-                os.write(fd, str(os.getpid()).encode())
-                os.close(fd)
-                self.held = True
-                return True
-            except FileExistsError:
-                try:
-                    if time.time() - self.path.stat().st_mtime > LOCK_STALE_SECONDS:
-                        self.path.unlink()
-                        continue
-                except OSError:
-                    continue
-                return False
-        return False
+        if self.fd is not None:
+            return True
+        try:
+            fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+        except OSError:
+            return False
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            return False
+        self.fd = fd
+        return True
 
     def touch(self) -> None:
-        if self.held:
-            with contextlib.suppress(OSError):
-                os.utime(self.path)
+        """Kept for callers; an OS lock needs no heartbeat."""
 
     def release(self) -> None:
-        if self.held:
-            with contextlib.suppress(OSError):
-                self.path.unlink()
-            self.held = False
+        if self.fd is None:
+            return
+        fd, self.fd = self.fd, None
+        with contextlib.suppress(OSError):
+            if sys.platform == "win32":
+                import msvcrt
+
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        with contextlib.suppress(OSError):
+            os.close(fd)
 
 
 def start_drainer() -> None:
@@ -149,19 +174,35 @@ def _block_file(root: str) -> Path:
     return folder / f"{digest[:32]}.json"
 
 
-def set_blocks(root: str, unresolved: list[dict[str, Any]]) -> None:
+def set_blocks(root: str, unresolved: list[dict[str, Any]],
+               session_id: str | None = None) -> None:
     """Record the external calls of this repository whose outcome is unknown; the
     ``PreToolUse`` hook reads it (no database on the hot path)."""
     path = _block_file(root)
-    external = [{"call_key": u["call_key"], "tool": u["tool"]} for u in unresolved
-                if u.get("effect") == "external"]
+    external = [{"call_key": u["call_key"], "tool": u["tool"], "session_id": session_id}
+                for u in unresolved if u.get("effect") == "external"]
     if external:
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"root": root, "unresolved": external}), encoding="utf-8")
+        tmp.write_text(json.dumps({"root": root, "session_id": session_id,
+                                   "unresolved": external}), encoding="utf-8")
         os.replace(tmp, path)
     elif path.exists():
         with contextlib.suppress(OSError):
             path.unlink()
+
+
+def blocks_for(path: str) -> list[dict[str, Any]]:
+    """Blocks of the project containing ``path``: its own, or a parent directory's (an
+    app started in ``repo/src`` is still in ``repo``)."""
+    try:
+        here = Path(path).resolve()
+    except OSError:
+        return []
+    for folder in [here, *here.parents][:32]:
+        found = blocks(str(folder))
+        if found:
+            return found
+    return []
 
 
 def blocks(root: str) -> list[dict[str, Any]]:

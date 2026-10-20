@@ -16,8 +16,9 @@ from typing import Any
 
 FILES_SHOWN = 15
 COMMANDS_SHOWN = 8
-FAILURES_SHOWN = 3
-RECENT_FOR_FAILURE = 3       # a failure among the agent's last N calls of a tool is shown
+FAILURES_SHOWN = 5
+RECENT_FOR_FAILURE = 12      # a failure among the agent's last N calls of its kind is shown
+MCP_SHOWN = 8
 SUBAGENTS_SHOWN = 4
 READS_SHOWN = 8
 ERROR_TAIL = 400
@@ -78,8 +79,9 @@ def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
     impacts: list[dict[str, Any]] = []
     compactions: list[dict[str, Any]] = []
     reports: dict[str, dict[str, Any]] = {}
+    # in journal order, as ``CodingContinuity.unresolved``: a later result or a person's
+    # resolution clears a mark; an ambiguous result is followed by its own mark
     unresolved: dict[str, dict[str, Any]] = {}
-    closed: set[str] = set()
     for e in tools:
         p, kind = e["p"], e["type"]
         key = p.get("call_key")
@@ -87,13 +89,14 @@ def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
             if key not in calls:
                 calls[key] = {**p, "seq": e["seq"], "at": e["at"], "result": None}
                 order.append(key)
-        elif kind == "ToolCallFinished" and key in calls:
-            calls[key]["result"] = {**p, "seq": e["seq"]}
-            closed.add(key)
+        elif kind == "ToolCallFinished":
+            if key in calls:
+                calls[key]["result"] = {**p, "seq": e["seq"]}
+            unresolved.pop(key, None)
         elif kind == "ToolCallUnresolved":
             unresolved[key] = {**p, "seq": e["seq"], "at": e["at"]}
         elif kind == "ToolCallResolved":
-            closed.add(key)
+            unresolved.pop(key, None)
         elif kind == "FileImpactObserved":
             impacts.append({**p, "seq": e["seq"], "at": e["at"]})
         elif kind == "CompactionObserved":
@@ -135,8 +138,9 @@ def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
 
     def summary(c: dict[str, Any]) -> dict[str, Any]:
         r = c["result"]
-        status = r["status"] if r else ("unknown" if c["call_key"] in unresolved
-                                        else "no result yet")
+        status = r["status"] if r else "no result yet"
+        if c["call_key"] in unresolved:      # no result, or one that may have taken effect
+            status = "unknown"
         if status == "ok" and r and "tests_failed" in r.get("signals", []):
             status = "reports_failures"      # exit 0, but its own output says tests failed
         return {"tool": c["tool"], "kind": c["kind"], "target": target(c, relative),
@@ -148,23 +152,7 @@ def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
                 "skill": c.get("skill"), "source": c["source"]}
 
     commands = [summary(c) for c in ordered if c["kind"] == "shell"]
-    # failures: a call whose newest run (same tool and target) failed, among the agent's
-    # last few calls of that tool; older failures were usually experiments it moved past
-    newest: dict[tuple[str, str], dict[str, Any]] = {}
-    for c in ordered:
-        # a command is the same command in every app ("Bash" in Claude Code, "shell" in
-        # Codex): a re-run elsewhere that passed means the failure is fixed
-        kind = "shell" if c["kind"] == "shell" else c["tool"]
-        newest[(kind, target(c, relative))] = c
-    recent_keys = {c["call_key"] for c in ordered[-max(RECENT_FOR_FAILURE * 4, 12):]}
-    failures = []
-    for c in newest.values():
-        r = c["result"]
-        failed = r and (r["status"] == "error" or "tests_failed" in r.get("signals", []))
-        if failed and c["call_key"] in recent_keys:
-            text = (r.get("error") or r.get("output_excerpt") or "").strip()
-            failures.append({**summary(c), "error_tail": text[-ERROR_TAIL:]})
-    failures = sorted(failures, key=lambda f: f["seq"])[-FAILURES_SHOWN:]
+    failures = _open_failures(ordered, relative, summary)
     mcp: dict[str, dict[str, Any]] = {}
     for c in ordered:
         if c["kind"] == "mcp":
@@ -173,25 +161,27 @@ def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
             m["calls"] += 1
             m["last"] = summary(c)
     subagents = []
-    unclaimed = list(reports.values())
-    for c in ordered:
-        if c["kind"] == "subagent":
-            s = summary(c)
-            r = c["result"]
-            text = (r.get("output_excerpt") or "") if r else ""
-            # a background subagent's tool result is a handle ({"agentId": ...}); its
-            # report arrives with SubagentStop
-            agent = _agent_id(text)
-            report = reports.get(agent) if agent else None
-            if report is None and agent is None and unclaimed and not text.strip():
-                report = unclaimed[0]
-            if report is not None:
-                if report in unclaimed:
-                    unclaimed.remove(report)
-                text = report["report_excerpt"]
-                s["report_seq"] = report["seq"]
-            s["report"] = text[-600:] or None
-            subagents.append(s)
+    spawned = [c for c in ordered if c["kind"] == "subagent"]
+    texts = {c["call_key"]: ((c["result"] or {}).get("output_excerpt") or "") for c in spawned}
+    # a background subagent's tool result is a handle ({"agentId": ...}); its report
+    # arrives with SubagentStop. Reports matched by handle are claimed first; a report
+    # with no handle is given to a call only when exactly one such pair is left
+    claimed = {a for a in (_agent_id(t) for t in texts.values()) if a in reports}
+    unclaimed = [r for a, r in reports.items() if a not in claimed]
+    silent = [c for c in spawned if not texts[c["call_key"]].strip()
+              and _agent_id(texts[c["call_key"]]) is None]
+    for c in spawned:
+        s = summary(c)
+        text = texts[c["call_key"]]
+        agent = _agent_id(text)
+        report = reports.get(agent) if agent else None
+        if report is None and len(silent) == 1 and len(unclaimed) == 1 and c in silent:
+            report = unclaimed[0]
+        if report is not None:
+            text = report["report_excerpt"]
+            s["report_seq"] = report["seq"]
+        s["report"] = text[-600:] or None
+        subagents.append(s)
     reads: dict[str, None] = {}
     for c in ordered:
         raw = c.get("input")
@@ -205,8 +195,6 @@ def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
                 reads[t] = None
     open_items = []
     for key, u in unresolved.items():
-        if key in closed:
-            continue
         started = calls.get(key)
         open_items.append({"call_key": key, "short": key.split(":", 1)[-1][:12],
                            "tool": u["tool"], "effect": u["effect"], "seq": u["seq"],
@@ -218,8 +206,8 @@ def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
         "files_reported": list(reversed(reported.values()))[:FILES_SHOWN],
         "files_reported_total": len(reported),
         "commands": commands[-COMMANDS_SHOWN:], "commands_total": len(commands),
-        "failures": failures,
-        "mcp": sorted(mcp.values(), key=lambda m: -m["calls"])[:8],
+        "failures": failures[-FAILURES_SHOWN:], "failures_total": len(failures),
+        "mcp": _mcp_shown(list(mcp.values())), "mcp_total": len(mcp),
         "skills": sorted({c["skill"] for c in ordered if c.get("skill")}),
         "subagents": subagents[-SUBAGENTS_SHOWN:], "subagents_total": len(subagents),
         "reads": list(reversed(reads))[:READS_SHOWN], "reads_total": len(reads),
@@ -231,8 +219,66 @@ def build(tools: list[dict[str, Any]], relative: Any) -> dict[str, Any]:
     }
 
 
-def render(w: dict[str, Any], session_id: str, line: Any) -> list[str]:
-    """Markdown lines for the brief. ``line`` flattens untrusted text to one line."""
+def _open_failures(ordered: list[dict[str, Any]], relative: Any,
+                   summary: Any) -> list[dict[str, Any]]:
+    """Calls whose newest run failed and that nothing later fixed, oldest first.
+
+    A command is the same command in every app ("Bash" in Claude Code, "shell" in Codex).
+    A failure is fixed by a later successful run of the same target, or of a broader
+    command of the same kind (``pytest`` passing after ``pytest tests/x.py`` failed). Only
+    failures among the last ``RECENT_FOR_FAILURE`` calls *of their kind* count: older
+    ones were usually experiments the agent moved past (a probe, a typo)."""
+    def kind_of(c: dict[str, Any]) -> str:
+        return "shell" if c["kind"] == "shell" else str(c["tool"])
+
+    def failed(c: dict[str, Any]) -> bool:
+        r = c["result"]
+        return bool(r) and (r["status"] == "error" or "tests_failed" in r.get("signals", []))
+
+    def ok(c: dict[str, Any]) -> bool:
+        r = c["result"]
+        return bool(r) and r["status"] == "ok" and "tests_failed" not in r.get("signals", [])
+
+    newest: dict[tuple[str, str], dict[str, Any]] = {}
+    for c in ordered:
+        newest[(kind_of(c), target(c, relative))] = c
+    position = {c["call_key"]: i for i, c in enumerate(ordered)}
+    recent: set[str] = set()
+    per_kind: dict[str, list[str]] = {}
+    for c in ordered:
+        per_kind.setdefault(kind_of(c), []).append(c["call_key"])
+    for keys in per_kind.values():
+        recent.update(keys[-RECENT_FOR_FAILURE:])
+    out = []
+    for (kind, tgt), c in newest.items():
+        if not failed(c) or c["call_key"] not in recent:
+            continue
+        words = tgt.split()
+        later = ordered[position[c["call_key"]] + 1:]
+        if any(ok(d) and kind_of(d) == kind and d["kind"] == "shell" and
+               (t := target(d, relative).split()) and words[:len(t)] == t for d in later):
+            continue                     # a broader run of the same command passed
+        r = c["result"]
+        text = (r.get("error") or r.get("output_excerpt") or "").strip()
+        out.append({**summary(c), "error_tail": text[-ERROR_TAIL:]})
+    return sorted(out, key=lambda f: f["seq"])
+
+
+def _mcp_shown(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """MCP tools for the brief: every tool that can act outside the repository (a lost or
+    failed write matters most), then the busiest read tools."""
+    writes = [m for m in tools if m["effect"] != "read"]
+    reads = sorted((m for m in tools if m["effect"] == "read"), key=lambda m: -m["calls"])
+    return writes + reads[:max(0, MCP_SHOWN - len(writes))]
+
+
+def render(w: dict[str, Any], session_id: str, flat: Any) -> list[str]:
+    """Markdown lines for the brief. Tool output, paths and commands are untrusted: each
+    is flattened to one line, and backticks and double quotes are replaced, so it can
+    neither forge a heading nor close the code span or quote it is shown in."""
+    def line(text: Any, limit: int = 500) -> str:
+        return str(flat(text, limit)).replace("`", "\u02cb").replace('"', "\u201d")
+
     if not (w["calls"] or w["files_changed"] or w["compactions"]):  # nothing recorded
         return []
     kinds = ", ".join(f"{n} {k}" for k, n in sorted(w["by_kind"].items(), key=lambda x: -x[1]))
@@ -266,22 +312,25 @@ def render(w: dict[str, Any], session_id: str, line: Any) -> list[str]:
                      "unknown": "**outcome unknown**"}.get(c["status"], c["status"])
             out.append(f"  - `{line(c['target'], 200)}` — {state} [#{c['seq']}]")
     if w["failures"]:
-        out.append("- **Recent failures** (tool output, quoted):")
+        more = w.get("failures_total", len(w["failures"])) - len(w["failures"])
+        out.append("- **Recent failures** (tool output, quoted"
+                   + (f"; {more} older not shown" if more else "") + "):")
         for f in w["failures"]:
             ref = f" [#{f['result_seq']}]" if f["result_seq"] else ""
             out.append(f"  - `{line(f['target'] or f['tool'], 160)}`: "
                        f"\"{line(f['error_tail'], 400)}\"{ref}")
     if w["mcp"]:
+        more = w.get("mcp_total", len(w["mcp"])) - len(w["mcp"])
         out.append("- **MCP tools**: " + ", ".join(
             f"`{line(m['tool'], 80)}` x{m['calls']} (last: {m['last']['status']}) "
-            f"[#{m['last']['seq']}]" for m in w["mcp"]))
+            f"[#{m['last']['seq']}]" for m in w["mcp"]) + (f", … {more} more" if more else ""))
     if w["skills"]:
         out.append("- **Skills used**: " + ", ".join(f"`{line(s, 60)}`" for s in w["skills"]))
     if w["subagents"]:
         out.append(f"- **Subagents** ({w['subagents_total']}; reports are claims):")
         for s in w["subagents"]:
             report = f": \"{line(s['report'], 300)}\"" if s.get("report") else ""
-            out.append(f"  - {line(s['target'] or s['tool'], 120)} — {s['status']}{report} "
+            out.append(f"  - `{line(s['target'] or s['tool'], 120)}` — {s['status']}{report} "
                        f"[#{s['seq']}]")
     if w["reads"]:
         more = w["reads_total"] - len(w["reads"])

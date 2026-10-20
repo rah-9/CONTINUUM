@@ -42,16 +42,17 @@ even if the previous agent never wrote anything down (D-042):
 | App | Events to hook to `continuum hook <app>` | Tested |
 |---|---|---|
 | Claude Code | all of them, installed by the plugin's `hooks/hooks.json` or `continuum coding setup`: SessionStart (prints the brief), UserPromptSubmit, PreToolUse / PostToolUse / PostToolUseFailure (matcher `*`), SubagentStop, Pre/PostCompact, Stop, SessionEnd | live (Trial 7) |
-| Codex CLI | `notify = ["continuum", "hook", "codex"]` in `~/.codex/config.toml` ([`codex/config.toml`](codex/config.toml)) for the chat; its PreToolUse / PostToolUse hooks for tool calls. The rollout file is also read at each turn end | recorded payloads and rollouts |
-| Gemini CLI | BeforeTool / AfterTool, plus its session hooks | recorded payloads |
-| Cursor | beforeShellExecution / afterShellExecution, beforeMCPExecution / afterMCPExecution, afterFileEdit, stop | recorded payloads |
+| Codex CLI | all of them, installed by `continuum coding setup` in `.codex/hooks.json` (trust them once with `/hooks`): SessionStart (the brief, as `additionalContext`), UserPromptSubmit, PreToolUse / PostToolUse (matcher `*`), SubagentStop, Pre/PostCompact, Stop, SessionEnd. The rollout file is also read at each turn end. A Codex without hooks: `notify` ([`codex/config.toml`](codex/config.toml)) captures the chat only | documented payloads and recorded rollouts |
+| Gemini CLI | installed in `.gemini/settings.json`: SessionStart (the brief, as JSON), BeforeTool / AfterTool (matcher `.*`), AfterAgent, PreCompress, SessionEnd; timeouts in milliseconds | documented payloads |
+| Cursor | installed in `.cursor/hooks.json`: sessionStart (the brief), beforeSubmitPrompt, preToolUse / postToolUse / postToolUseFailure, subagentStop, preCompact, afterAgentResponse, stop, sessionEnd. Older Cursor events (before/afterShellExecution, before/afterMCPExecution, afterFileEdit) are also understood | documented payloads |
 | any app with JSON hooks | `continuum hook <app-name>`; it reads `prompt`, `transcript_path`, `cwd`, `last_assistant_message`, and `tool_name` / `tool_input` / `tool_response` | — |
 | apps without hooks | `continuum coding import <chat transcript>` (also imports the transcript's tool calls) or `continuum coding capture "<text>"` | — |
 
-A hook always exits 0, never waits for the database (it spools locally, about 100 ms) and
-never blocks your app, with one deliberate exception: while a call that could change
-something outside the repository has an unknown outcome, new external calls are denied
-until a person runs `continuum coding resolve`. `CONTINUUM_HOOKS=off` turns hooks off.
+A hook never waits for the database (it spools locally, about 100 ms) and never blocks
+your app, with one deliberate exception: while a call that could change something outside
+the repository has an unknown outcome (no result, or it was interrupted or timed out), new
+external calls are refused, in each app's own format, until a person runs
+`continuum coding resolve`. `CONTINUUM_HOOKS=off` turns hooks off.
 
 The Claude Code plugin also adds `/continuum:handoff` (record decisions, a checkpoint and the
 next step before you switch model, chat or app) and `/continuum:resume`.

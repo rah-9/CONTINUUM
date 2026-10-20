@@ -167,36 +167,56 @@ no active session, a user message present, inside a git repository
 So re-importing a transcript after every turn is idempotent, and concurrent hooks cannot
 duplicate a message.
 
-### 3.3b Capturing what the agent did (`activity`, `snapshot`, `spool`, `recorder`; D-042)
+### 3.3b Capturing what the agent did (`activity`, `snapshot`, `spool`, `recorder`; D-042, D-045)
 
 ```
 hook call (any app) -> activity.from_hook: one record shape for every app
     Claude Code / Codex  PreToolUse, PostToolUse, PostToolUseFailure  (tool_use_id pairs them)
     Gemini CLI           BeforeTool, AfterTool
-    Cursor               before/afterShellExecution, before/afterMCPExecution, afterFileEdit
-    all                  SubagentStop (report), Pre/PostCompact (summary)
+    Cursor               preToolUse, postToolUse, postToolUseFailure (tool_output,
+                         error_message, failure_type, duration); older Cursor: before/after
+                         Shell/MCPExecution, afterFileEdit
+    all                  SubagentStop (report; Cursor: summary), SubagentHandback (Claude
+                         Code), Pre/PostCompact (summary)
+  no call id (Gemini, older Cursor): key = chat + tool + input; a repeat after the earlier
+    call finished is a new call (key#2); a finish pairs with the oldest open start
   classify(tool, input) -> kind + effect, by a fixed table, never a model:
-    read      Read, Grep, Glob, WebFetch, MCP get_/list_/search_..., skills, Continuum's tools
+    read      Read, Grep, Glob, WebFetch, MCP get_/list_/search_... (unless the rest of the
+              name writes: get_or_create), skills, Continuum's tools, harness bookkeeping
     write     Edit, Write, apply_patch, ...; shell commands by default
     external  git push, gh pr create, npm publish, kubectl apply, terraform apply, cloud CLIs
               (except describe/list/get), curl with a body or POST/PUT/PATCH/DELETE, database
-              clients, ssh/scp; MCP tools that are not reads; any unknown tool
+              clients, ssh/scp; also inside wrappers (git -C dir, bash -c "...", sudo -E,
+              npx, python -m); MCP tools that are not reads; any unknown tool
     delegate  Task/Agent (a subagent; its own calls carry its agent id)
-  write or shell call: snapshot.take = git tree of the working copy's content, before and
-    after (a private index, objects in the repository's own store)
-  external call while an external call's outcome is unknown: print a PreToolUse "deny"
+  external call while an external call's outcome is unknown (deny list of the project or
+    any parent folder): refuse it in the app's own format (Claude Code / Codex
+    hookSpecificOutput, Gemini decision, Cursor permission; unknown app: exit 2), decided
+    before any snapshot
+  write or shell call: snapshot.take within 5 s = git tree of the working copy's content,
+    before and after (a private index, objects in the repository's own store); outside
+    git, the same in a private store $CONTINUUM_HOME/snapshots/<dir hash> (at most 20,000
+    files of at most 10 MB; never the home directory)
   redact -> spool file (atomic rename) -> start the background drainer -> exit (~100 ms)
-drainer (one at a time; deletes a spooled file only after its transaction commits):
+drainer (one at a time, an OS file lock; deletes a spooled file only after its transaction
+    commits):
   recorder.apply in one transaction under the session lock, idempotent by call key:
     start   -> ToolCallStarted (input redacted; inline up to 16,000 chars, else a blob)
     finish  -> ToolCallFinished (a missing start is recorded first); output redacted, full
                output a blob, head 1,500 + tail 1,500 chars inline, errors head + tail;
                signals: "1 failed" / FAILED / Traceback in the output's last 20,000 chars
-            -> FileImpactObserved when the snapshots differ: git diff-tree, diff a blob
+            -> ToolCallUnresolved after it, for an external call that ended interrupted,
+               timed out or disconnected (it may have taken effect); a plain failure with
+               an exit code is a known outcome
+            -> FileImpactObserved when the snapshots differ: git diff-tree, diff redacted
+               into a blob; credential files (.env*, keys) listed without content
+            -> the deny list is refreshed when a result arrives for a blocked call
     turn end-> FileImpactObserved for changes between calls (the newest known snapshot
                against the turn's); every write/external call of this chat without a result
                -> ToolCallUnresolved
     a new chat starts -> other chats' open write/external calls -> ToolCallUnresolved
+  unknown outcomes are read in journal order: a later result clears a mark, a person's
+    resolution always does
 transcript (turn end, catch-up): transcript.activity reads tool_use/tool_result (Claude Code,
   sidechains with their agent id), function_call/exec_command_end/patch_apply_end (Codex),
   functionCall/functionResponse (Gemini) -> the same records, so the live hooks and the
@@ -235,8 +255,12 @@ consolidate(turns):                                     # every captured message
   a change of mind that names what it replaces ("B instead of A", "rather than A", "from A
       to B", "replace A with B", "no longer use A"), in any user message including the most
       recent: every earlier item containing all of A's distinctive terms (a value or
-      identifier if there is one) is marked replaced; shown ~~struck~~ "(replaced by #n)" and
-      ranked last for the budget (D-044). Only user messages take part.
+      identifier if there is one) and sharing its context (a word of the later sentence
+      outside A, several words of A, or a quoted identifier) is marked replaced; shown
+      ~~struck~~ "(replaced by #n)" and ranked last for the budget. Matching A's terms
+      without the context is only "#n may replace this; check" (D-044). The first
+      request and recent whole messages are checked too. Only the user's own words
+      replace: an answer item, which quotes the agent's question, never does.
   fill the ledger by (strength, newer) within 4,400 chars + 50 per message beyond 40
       (cap 10,000); show it in conversation order with message numbers
   agent decisions = choice/caveat sentences from the agent's reports, newest 8 (+1 per
@@ -248,7 +272,7 @@ consolidate(turns):                                     # every captured message
 | Attention | rules in 3.5 | a few lines |
 | What the user asked | consolidation above: first request, ledger, most recent message (with the question it answers) | latest 2,000 chars; ledger 4,400–10,000 chars |
 | Reported choices and caveats | decision sentences from captured agent reports (claims) | 8–14 items, 260 chars each |
-| What the previous agent did | tool calls by kind; files changed (observed, with +/- and an event id); commands with status; recent failures with the end of their output (quoted data); MCP tools; skills; subagents with their reports (claims); files read; compaction | 15 files, 8 commands, 3 failures, 4 subagents, 8 reads |
+| What the previous agent did | tool calls by kind; files changed (observed, with +/- and an event id); commands with status; recent failures with the end of their output (quoted data); MCP tools (every non-read tool, then the busiest reads); skills; subagents with their reports (claims); files read; compaction. Tool text cannot close the code span or quote it is in | 15 files, 8 commands, 5 failures, 8 MCP tools, 4 subagents, 8 reads, with "N more" |
 | Verified facts | current code, commits since the last checkpoint, latest check per name | 50 files, 10 commits |
 | Code map | files changed since the session's base commit (git) or modified since it started (mtime, outside git), +/- lines, enclosing context, names defined | 40 files (15 in Markdown), 8 names each |
 | Tasks | all, with verified / needs re-verification | — |
@@ -276,9 +300,11 @@ forge the brief's own headings. MCP returns the Markdown plus task ids (compact)
   external calls are denied by the `PreToolUse` hook. Local calls with no result: compare
   the observed file changes with what they were meant to do.
 - A recent call failed (error status, or an output that reports failing tests despite exit
-  0) and was not re-run successfully, in any app: check whether it is still open. Older
-  failures are not flagged: on a real transcript they were experiments the agent had
-  moved past.
+  0) and was not re-run successfully, in any app (a broader passing run of the same
+  command counts: `pytest` after `pytest tests/x.py`): check whether it is still open.
+  "Recent" is among the last 12 calls of its kind, so reads do not push a failing test
+  run out. Older failures are not flagged: on a real transcript they were experiments the
+  agent had moved past.
 - The session moved to another checkout; the branch differs from where it started.
 
 ### 3.6 Restoring memory at the start of a chat

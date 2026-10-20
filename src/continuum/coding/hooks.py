@@ -49,7 +49,7 @@ if TYPE_CHECKING:   # the hot path does not load the transcript parser
 CHAT_KEYS = ("session_id", "sessionId", "thread-id", "thread_id", "conversation_id",
              "conversationId")
 USER_KEYS = ("input-messages", "input_messages")
-AGENT_KEYS = ("last-assistant-message", "last_assistant_message")
+AGENT_KEYS = ("last-assistant-message", "last_assistant_message", "prompt_response")
 TRANSCRIPT_KEYS = ("transcript_path", "transcriptPath")
 CWD_KEYS = ("cwd", "workspace", "workspace_root", "project_dir")
 HOOK_DB_TIMEOUT = "3"  # seconds; a hook waits at most this long for the database
@@ -60,6 +60,11 @@ TURN_TAIL_BYTES = 2 << 20
 TURN_EVENTS = frozenset({"stop", "agent-turn-complete", "afteragent", "sessionend",
                          "stop_hook"})
 SESSION_START_DRAIN_SECONDS = 8.0   # SessionStart waits at most this long for the spool
+SNAPSHOT_BUDGET_SECONDS = 5.0       # a snapshot gives up after this (apps kill slow hooks)
+# Cursor blocks a permission hook's action when its output is not valid JSON
+CURSOR_PERMISSION_EVENTS = frozenset({"pretooluse", "beforeshellexecution",
+                                      "beforemcpexecution", "beforereadfile",
+                                      "subagentstart"})
 
 CONTEXT_HEADER = (
     "Continuum: this repository has an active coding session. The brief below is the "
@@ -90,6 +95,62 @@ def parse_payload(arg: str | None, stdin: Any) -> dict[str, Any]:
         return {}
     data = json.loads(raw)
     return data if isinstance(data, dict) else {}
+
+
+def family(app: str) -> str:
+    """Which hook protocol an app speaks (output formats differ; inputs are mapped in
+    ``activity.from_hook``)."""
+    name = app.lower()
+    for prefix, fam in (("claude", "claude"), ("qwen", "claude"), ("codex", "codex"),
+                        ("gemini", "gemini"), ("cursor", "cursor")):
+        if name.startswith(prefix):
+            return fam
+    return "generic"
+
+
+def deny_output(app: str, reason: str) -> str:
+    """The app's own way of refusing a tool call (each app documents one)."""
+    fam = family(app)
+    if fam == "cursor":
+        return json.dumps({"permission": "deny", "user_message": reason,
+                           "agent_message": reason})
+    if fam == "gemini":
+        return json.dumps({"decision": "deny", "reason": reason})
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+        "permissionDecisionReason": reason}})
+
+
+def allow_output(app: str, event: str) -> str:
+    """What a hook prints when it lets a call through: nothing, except for Cursor's
+    permission hooks, which must answer with valid JSON."""
+    if family(app) == "cursor" and event in CURSOR_PERMISSION_EVENTS:
+        return json.dumps({"permission": "allow"})
+    if family(app) == "cursor" and event == "beforesubmitprompt":
+        return json.dumps({"continue": True})
+    return ""
+
+
+def context_output(app: str, text: str) -> str:
+    """The brief, in the form the app adds to a new chat's context."""
+    fam = family(app)
+    if fam == "cursor":
+        return json.dumps({"additional_context": text})
+    if fam in ("gemini", "codex"):       # Gemini: stdout must be JSON; Codex: JSON context
+        return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                                  "additionalContext": text}})
+    return text
+
+
+def _cwd(payload: dict[str, Any]) -> str:
+    """The project directory of a hook call (Cursor sends ``workspace_roots`` only)."""
+    found = _first_str(payload, CWD_KEYS)
+    if found:
+        return found
+    roots = payload.get("workspace_roots")
+    if isinstance(roots, list) and roots and isinstance(roots[0], str) and roots[0].strip():
+        return roots[0]
+    return os.getcwd()
 
 
 def _first_str(payload: dict[str, Any], keys: tuple[str, ...]) -> str | None:
@@ -140,6 +201,8 @@ def messages_from(payload: dict[str, Any], history: list[Message] | None = None
             turn += [Message("user", clean_user_text(m)) for m in items
                      if isinstance(m, str) and clean_user_text(m)]
     agent = _first_str(payload, AGENT_KEYS)
+    if not agent and _event(payload) == "afteragentresponse":     # Cursor
+        agent = _first_str(payload, ("text",))
     if agent:
         turn.append(Message("agent", agent))
     recent = history[-3:]
@@ -155,7 +218,7 @@ def handle(app: str, payload: dict[str, Any], coding: Any,
     Called by the drainer for spooled payloads (and directly in tests)."""
     from continuum.core.errors import NotFoundError
 
-    cwd = _first_str(payload, CWD_KEYS) or os.getcwd()
+    cwd = _cwd(payload)
     event = _event(payload)
     chat = _first_str(payload, CHAT_KEYS)
     if event == "sessionstart":
@@ -177,7 +240,11 @@ def handle(app: str, payload: dict[str, Any], coding: Any,
         if env["phase"] == "subagent_stop":
             envs = [*_subagent_activity(env, app), env]
         if envs:
-            coding.record_activity(cwd, envs, source=app)
+            out = coding.record_activity(cwd, envs, source=app)
+            # a late result clears an unknown outcome: refresh the deny list at once
+            if out.get("session_id") and env["phase"] != "start" \
+                    and spool_mod.blocks_for(cwd):
+                _update_blocks(coding, out["session_id"])
         return ""
     history, tools = _read(payload, app, chat)
     _, turn = messages_from(payload, history)
@@ -215,7 +282,7 @@ def _subagent_activity(env: dict[str, Any], app: str) -> list[dict[str, Any]]:
 def _update_blocks(coding: Any, session_id: str) -> None:
     try:
         root = coding.sessions_root(session_id)
-        spool_mod.set_blocks(root, coding.unresolved(session_id))
+        spool_mod.set_blocks(root, coding.unresolved(session_id), session_id)
     except Exception as exc:  # blocks are a convenience copy; the journal is the truth
         _log(f"blocks: {type(exc).__name__}")
 
@@ -233,39 +300,47 @@ def _log(line: str) -> None:
 DENY_REASON = (
     "Continuum: a previous call that could change something outside this repository has "
     "an unknown outcome ({tools}). New external actions are blocked until a person checks "
-    "and records what happened: `continuum coding resolve SESSION CALL --outcome "
-    "applied|not_applied|accepted_unknown --actor NAME --reason TEXT`. Local work "
-    "(reading, editing, tests) is not blocked.")
+    "what happened and records it: `continuum coding resolve {session} {call} --outcome "
+    "applied|not_applied|accepted_unknown --actor NAME --reason TEXT`. Do not repeat the "
+    "call; ask the user. Local work (reading, editing, tests) is not blocked.")
+
+
+def deny_reason(blocked: list[dict[str, Any]]) -> str:
+    first = blocked[0]
+    session = str(first.get("session_id") or "SESSION")
+    call = str(first.get("call_key", "CALL")).split(":", 1)[-1][:12]
+    return DENY_REASON.format(tools=", ".join(str(b.get("tool")) for b in blocked[:3]),
+                              session=session, call=call)
 
 
 def fast(app: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
     """The hook's hot path, without the database: (what to print, entry to spool)."""
     event = _event(payload)
-    cwd = _first_str(payload, CWD_KEYS) or os.getcwd()
+    cwd = _cwd(payload)
     entry: dict[str, Any] = {"app": app, "payload": payload, "snapshot": None}
     env = activity.from_hook(app, payload)
-    out = ""
+    out = allow_output(app, event)
     from continuum.coding import snapshot
 
     # what a call changed: snapshots around calls that can change files (edits, shell
     # commands), and at the end of a turn (changes made between tool calls)
+    # the deny decision first: it must never wait for (or be lost to) a slow snapshot
+    if env is not None and env["phase"] == "start" and env["effect"] == "external":
+        blocked = spool_mod.blocks_for(cwd)
+        if blocked:
+            reason = deny_reason(blocked)
+            payload["continuum_denied"] = reason
+            out = deny_output(app, reason)
+    # what a call changed: snapshots around calls that can change files (edits, shell
+    # commands), and at the end of a turn (changes made between tool calls); bounded so
+    # the app never kills the hook (the call is still journaled without one)
     can_write = env is not None and env["phase"] in ("start", "finish", "start_finish") \
         and (env["effect"] == "write" or env["kind"] == "shell")
     if can_write or event in TURN_EVENTS:
         try:
-            entry["snapshot"] = snapshot.take(cwd)
+            entry["snapshot"] = snapshot.take(cwd, budget=SNAPSHOT_BUDGET_SECONDS)
         except Exception as exc:   # evidence is optional; capturing the call is not
             _log(f"snapshot: {_masked(exc)}")
-    if env is not None and env["phase"] == "start" and env["effect"] == "external":
-        found = snapshot.git_dir(Path(cwd))
-        root = str(found[0]) if found else cwd
-        blocked = spool_mod.blocks(root)
-        if blocked:
-            reason = DENY_REASON.format(tools=", ".join(b["tool"] for b in blocked[:3]))
-            payload["continuum_denied"] = reason
-            out = json.dumps({"hookSpecificOutput": {
-                "hookEventName": "PreToolUse", "permissionDecision": "deny",
-                "permissionDecisionReason": reason}})
     return out, entry
 
 
@@ -333,7 +408,8 @@ def _with_sdk(work: Any) -> Any:
 
 
 def main(argv: list[str]) -> int:
-    """``continuum hook APP [PAYLOAD_JSON]`` (or ``--drain``). Always exits 0."""
+    """``continuum hook APP [PAYLOAD_JSON]`` (or ``--drain``). Exits 0, except when it
+    refuses a tool call for an app whose JSON refusal is unknown (exit 2)."""
     if os.environ.get("CONTINUUM_HOOKS", "").lower() in ("off", "0", "false"):
         return 0
     if argv[:1] == ["--drain"]:
@@ -354,7 +430,8 @@ def main(argv: list[str]) -> int:
             def start(coding: Any) -> str:
                 drain(coding, deadline=time.monotonic() + SESSION_START_DRAIN_SECONDS)
                 return handle(app, payload, coding)
-            out = _with_sdk(start)
+            brief = _with_sdk(start)
+            out = context_output(app, brief) if brief else ""
         elif entry is not None:
             spool_mod.write(entry)
             if os.environ.get("CONTINUUM_HOOKS_SYNC"):
@@ -363,6 +440,12 @@ def main(argv: list[str]) -> int:
                 spool_mod.start_drainer()
         if out:
             sys.stdout.write(out)
+        denied = payload.get("continuum_denied")
+        if denied and family(app) == "generic":
+            # an app whose JSON we do not know: exit code 2 with the reason on stderr is
+            # the refusal every hook-capable app understands
+            sys.stderr.write(str(denied))
+            return 2
     except Exception as exc:  # a hook never breaks the agent
         _log(f"hook {app}: {_masked(exc)}")
         if os.environ.get("CONTINUUM_HOOKS_DEBUG"):

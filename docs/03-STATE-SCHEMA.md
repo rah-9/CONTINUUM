@@ -444,7 +444,8 @@ ALTER TABLE coding_events ADD COLUMN IF NOT EXISTS search tsvector
   STORED;
 CREATE INDEX IF NOT EXISTS idx_coding_events_search ON coding_events USING gin (search);
 ALTER TABLE coding_blobs ADD COLUMN IF NOT EXISTS search tsvector
-  GENERATED ALWAYS AS (to_tsvector('english'::regconfig, left(content, 65536))) STORED;
+  GENERATED ALWAYS AS (to_tsvector('english'::regconfig, CASE WHEN length(content) <= 131072
+    THEN content ELSE left(content, 65536) || ' ' || right(content, 65536) END)) STORED;
 CREATE INDEX IF NOT EXISTS idx_coding_blobs_search ON coding_blobs USING gin (search);
 ```
 
