@@ -1,18 +1,19 @@
 # Continuum
 
-Continuum keeps an AI agent's work **outside the chat**, so you can switch models, versions, vendors or chats without losing it and without paying for the work twice. It does two things:
+Continuum keeps an AI agent's work **outside the chat**, so you can switch models, versions, vendors or chats without losing it and without paying for the work twice. Version **1.0.0rc2**. It does two things:
 
 1. **Coding continuity.** Switch from Opus 4.8 to Opus 5.5, from GPT-5.6 to GPT-6.1, from Claude Code to Codex, or from your laptop to a cloud container, mid-task. The next model gets:
    - **what you asked**, in your own words, from every earlier chat and app
+   - **what the previous agent did**: every tool call, MCP call, skill and subagent, with its result and the files it changed
    - what is **proven** done (checks that passed on the current code)
    - **where** the session's code is
    - what was **decided**, and the last agent's report
    - what is **missing or changed** since
 
-   It does not need to re-read the codebase. This works even if the previous agent never used Continuum and its chat ended without warning, because your app's hooks record the conversation.
+   It does not need to re-read the codebase. This works even if the previous agent never used Continuum and its chat ended without warning, because your app's hooks (Claude Code, Codex, Gemini CLI, Cursor) record the conversation and every tool call. If a push, deploy or other external action lost its result, new external actions are **blocked until a person checks**, so nothing is done twice.
 2. **Runtime continuity.** Long-running agent tasks keep their verified milestones and a ledger of external effects. After a crash, timeout or model switch, valid work is reused, and an uncertain side effect is reconciled **before** any new write. Nothing is sent twice.
 
-Continuum itself uses **no LLM**. Memory is your own words (captured by your app's hooks), what the working agent records (decisions, next steps) and facts Continuum observes (git, check results). Plain code assembles them, so there is no extra model cost. The algorithm and its scenario matrix: [`docs/MEMORY-ALGORITHM.md`](docs/MEMORY-ALGORITHM.md).
+Continuum itself uses **no LLM**. Memory is your own words (captured by your app's hooks), what the agent did (recorded by the app, file changes observed by Continuum), what the working agent records (decisions, next steps) and facts Continuum observes (git, check results). Plain code assembles them, so there is no extra model cost. The algorithm and its scenario matrix: [`docs/MEMORY-ALGORITHM.md`](docs/MEMORY-ALGORITHM.md).
 
 > Docs: [how well the memory works](docs/MEMORY-QUALITY.md) · [the memory algorithm](docs/MEMORY-ALGORITHM.md) · [how it runs and connects](docs/OPERATIONS.md) · [coding handoff guide](docs/CODING-HANDOFF.md) · [real handoff trials](docs/HANDOFF-TRIALS.md) · [verification](docs/VERIFICATION.md) · [specification](docs/00-README.md) (read in order) · [decisions](docs/DECISIONS.md) · [changelog](docs/CHANGELOG.md) · [project journal](docs/PROJECT-JOURNAL.md) · [agent contract](AGENTS.md)
 
@@ -38,8 +39,8 @@ written down so it can be rerun. Details: [real model trials](docs/HANDOFF-TRIAL
 | 5. **A 30-message chat**, requirements in messages 8, 15, 21 and 27 | Sonnet in Claude Code, 30 turns, hooks only | Haiku (2 runs) | **13/13, 13/13** | 9/13 |
 | | | Sonnet | **13/13** | 9/13 |
 | | | Opus | **13/13** | 9/13 |
-| 7. **What the agent did** (capture fidelity): tests, an edit, a script, a subagent, a skill, an MCP ticket | Sonnet in Claude Code, hooks only | Haiku / Sonnet / Opus: "what did it do?" | **4/4** each, ~half the cost; 10/10 tool calls and 3/3 file changes captured | 3/4 each (the MCP ticket id was unknowable) |
 | 6. **Debugging handoff**: A found the root cause; the user's extra facts and constraints were only in the chat | Sonnet in Claude Code, 3 turns, hooks only, no code changed | Haiku / Sonnet / Opus | **7/7** each | 4/7 each |
+| 7. **What the agent did** (capture fidelity): tests, an edit, a script, a subagent, a skill, an MCP ticket | Sonnet in Claude Code, hooks only | Haiku / Sonnet / Opus: "what did it do?" | **4/4** each, ~half the cost; 10/10 tool calls and 3/3 file changes captured | 3/4 each (the MCP ticket id was unknowable) |
 
 **What the baselines did.**
 - **Without Continuum:** every B kept what was already in the code. None of them learned what was still to do, and each said it could not tell what was planned.
@@ -55,7 +56,9 @@ and still delivered the wrong thing.
 | Question | Result |
 |---|---|
 | Does what the user said **anywhere in a long chat** reach the next model? (benchmark, 20 chats per length, requirements, changes of mind, answers and decisions planted at random turns, held-out phrasings) | **100%** of every kind at 10, 20, 40, 80 and 160 messages, with **0** pasted-log noise. The v0.8.0 brief kept 15% at 40 messages and 4% at 160. |
-| Is **everything the agent did** captured? (real Claude Code, compared call by call with its own transcript) | **10/10** tool calls with correct results, including a subagent's call, a skill and an MCP call with its result; **3/3** changed files, including one written by a script; hooks take a median of ~100 ms |
+| Is **everything the agent did** captured? (real Claude Code, compared call by call with its own transcript; rerun on the final code) | **10/10** tool calls with correct results, including a subagent's call, a skill and an MCP call with its result; **3/3** changed files, including one written by a script; hooks take a median of **~85 ms** (~730 ms before the hook fast path) |
+| Do **other apps** get the same capture and safety? (real `continuum hook` processes for Cursor, Gemini CLI and an unknown app, on one project) | Cursor's work appears in Gemini CLI's brief; a timed-out `npm publish` in Cursor blocks the next external call in **both** apps, each refused in its own format (unknown app: exit code 2); file changes observed in Cursor |
+| Is a push or deploy ever **repeated** after its result was lost? (scenario tests) | No. Lost, interrupted and timed-out external calls become **unknown outcomes**; new external calls are refused until a person runs `continuum coding resolve`; a late result lifts the block at once |
 | Can a tool's full output be found later? (benchmark: an error code planted mid-way in a 1,500-line output) | **100%**, from the stored output; a replaced value is never shown as current (100%); requirement lines are the user's exact words (100%) |
 | How big is the brief? | 0.8k tokens at 10 messages, 1.2k at 40, 1.8k at 80, 3.0k at 160 |
 | Are **both sides** of the chat kept exactly? (the real 30-message transcript replayed through Claude Code's hook sequence) | your messages **30/30**, Claude's messages **47/47**: none missing, none duplicated, in order, also when the hooks failed for the first 4 turns or for every turn |
@@ -75,9 +78,22 @@ and still delivered the wrong thing.
 - `continuum … | head` crashed
 - a long final message starting with "OK" was shown as the answer to the agent's open question
 - a "yes" typed in a second app lost its question, or was dropped as a copy of an earlier "yes" (found by the two-app benchmark)
+- each hook took ~730 ms (the whole CLI loaded first); a background subagent's notice was read as the user's words; a piped test run that failed looked fine (found by Trial 7)
 
-**Not yet measured:** GPT models (Codex), because the environment these trials ran in has no
-OpenAI access. The GPT → Claude runbook is in [`eval/handoff_trials/`](eval/handoff_trials/README.md).
+**Found by three code reviews and a check of each app's hook docs** (capture, memory, recall), all fixed:
+- an interrupted or timed-out `git push` counted as finished, so nothing was blocked
+- Gemini CLI and Cursor ignored the refusal (it was in Claude Code's format); Cursor's permission hooks need JSON output; Codex hooks were never installed
+- identical calls from apps without call ids collapsed into one record
+- diffs were stored unredacted; credential files' content is now never stored
+- `merge_pull_request` and wrapped commands (`git -C x push`, `bash -c "…"`, `sudo -E`, `npx`) counted as local
+- "port 5000 instead of 4000" struck an unrelated "timeout 4000 ms"; the agent's question inside an answer could strike a requirement
+- a failing test run vanished from the brief after 12 other calls; recall crashed on a stemmed-only match
+- on Windows, erasure left the snapshots of a folder outside git behind (found by Windows CI)
+
+**Not yet measured live:** GPT models in Codex, Gemini CLI and Cursor, because the environment
+these trials ran in has no OpenAI, Google or Cursor access. Their capture is tested against each
+app's documented hook payloads. The GPT → Claude runbook is in
+[`eval/handoff_trials/`](eval/handoff_trials/README.md).
 
 ## Quickstart
 
@@ -93,13 +109,14 @@ export CONTINUUM_DATABASE_URL=postgresql://continuum:continuum@localhost:5432/co
 uv tool install "continuum[mcp] @ git+https://github.com/rah-9/CONTINUUM"   # or: pipx install …
 continuum doctor
 
-# 3. Once per repository: rules (AGENTS.md + CLAUDE.md), Claude Code hooks, .mcp.json
+# 3. Once per repository: rules (AGENTS.md + CLAUDE.md), .mcp.json, and capture hooks
+#    for Claude Code, Codex, Gemini CLI and Cursor (each in its own format). Commit them.
 continuum coding setup .
 #    and the commands that prove work is done (only a human registers these)
 continuum coding checks add . tests --actor you -- pytest -q
 
-# 4. Codex: add the snippet `setup` printed to ~/.codex/config.toml (MCP + notify hook).
-#    Cursor, VS Code, Windsurf, Gemini CLI, Cline, Claude Desktop: integrations/README.md
+# 4. Codex: add the MCP snippet `setup` printed to ~/.codex/config.toml, then trust the
+#    new hooks once with /hooks. Other MCP clients: integrations/README.md
 ```
 
 Tables are created automatically on first use.
@@ -126,6 +143,37 @@ The agent calls `coding_resume(repo_path, agent=<model id>)` first in every chat
 ```bash
 continuum coding brief --repo .                 # what the next model will see
 continuum coding resume --repo . --agent gpt-6.1   # agents without MCP use the same protocol
+```
+
+## What the agent did: capture and safety
+
+Every app reports tool calls differently. Continuum turns each app's hook payloads into one
+record shape, so the journal holds the same kind of tool call whichever app produced it
+([D-042, D-045](docs/DECISIONS.md); algorithm in [`docs/MEMORY-ALGORITHM.md`](docs/MEMORY-ALGORITHM.md) §3.3b).
+
+```
+app hook (Claude Code, Codex, Gemini CLI, Cursor, any JSON hook)
+  -> one record: tool, input, which agent or subagent, what it can affect
+       read | write | external (push, deploy, MCP write, POST, database) | delegate
+  -> snapshot of the files before and after any call that can write (git trees; a
+     private store outside git) = the exact diff, including a shell command's changes
+  -> redacted, spooled locally, exit in ~85 ms; a background drainer writes the journal
+     (one transaction per batch, each call once even if hooks and transcripts both report it)
+```
+
+| What you get | How |
+|---|---|
+| **Full results** | every output stored whole after redaction; the brief shows the end of each failure; `coding_recall` searches all of it; `coding_show` (or `continuum coding show`) opens any `[#N]` |
+| **Real file impact** | observed with snapshots, not taken from the app or a model; credential files are listed but their content never stored |
+| **No repeated side effects** | an external call with no result, or one that was interrupted or timed out, is an **unknown outcome**. New external calls are refused in the app's own format until a person checks and records it; local work continues |
+| **Subagents, skills, MCP** | subagents' own calls tagged with their id and their reports kept as claims; skills by name; MCP calls with their server |
+| **Failures that matter** | a test run that failed (or exited 0 but printed failures) stays in the brief until a later run passes, while it is among the agent's last 12 commands; reads and edits do not push it out |
+
+```bash
+continuum coding unresolved SESSION      # calls whose outcome is unknown
+continuum coding resolve SESSION CALL --outcome applied|not_applied|accepted_unknown \
+    --actor you --reason "checked the remote"     # a person only; never an MCP tool
+continuum coding show SESSION --seq 42   # the full input, output or diff behind [#42]
 ```
 
 ## Runtime continuity
@@ -159,16 +207,17 @@ These invariants hold everywhere (`AGENTS.md`):
 | | |
 |---|---|
 | **MCP clients** | Claude Code (plugin + skill + hooks), Cursor, VS Code, Codex CLI, Windsurf, Gemini CLI, Cline, Claude Desktop, JetBrains, Zed: one stdio command, `continuum mcp` |
-| **Capture** (chat and every tool call) | Claude Code, Codex, Gemini CLI and Cursor hooks, installed by `continuum coding setup` in each app's own format; any app with JSON hooks (`continuum hook <app>`); others: `continuum coding import <transcript>`. Inside and outside git |
+| **Capture** (chat and every tool call) | Claude Code (`.claude/settings.json`, or the plugin), Codex (`.codex/hooks.json`), Gemini CLI (`.gemini/settings.json`) and Cursor (`.cursor/hooks.json`), all installed by `continuum coding setup`; any app with JSON hooks (`continuum hook <app>`); others: `continuum coding import <transcript>`. Inside and outside git |
+| **Open-source and local models** | Continuum never calls a model, so any model works through the app that runs it (Claude Code, Codex, Gemini CLI, Cursor, or any app with JSON hooks or MCP) |
 | **Another checkout** | a subdirectory, a re-clone, a cloud container: found by git top level, then by remote + branch |
 | **Agents without MCP** | the same protocol via the CLI (`continuum coding …`) |
 | **OS** | Linux, macOS, Windows. Output is UTF-8 whatever the console encoding. Check commands are resolved like a shell would (`npm` → `npm.cmd`) |
 | **Cloud** | `integrations/cloud/setup.sh` installs through `uv tool` with its own Python 3.12 (PEP 668-safe). Point `CONTINUUM_DATABASE_URL` at a hosted PostgreSQL so sessions outlive containers |
 | **Launch directory** | state lives in `~/.continuum`, never in the directory an IDE starts the server in |
 
-The 20 MCP tools are:
+The 21 MCP tools are:
 - **tasks:** `list_tasks`, `run_task`, `resume_run`, `cancel_run`, `get_status`, `inspect_run`, `pending_decisions`, `list_runs`
-- **coding:** `coding_resume`, `coding_start`, `coding_brief`, `coding_add_task`, `coding_set_task_status`, `coding_complete_task`, `coding_note`, `coding_checkpoint`, `coding_run_check`, `coding_recall`, `coding_sessions`, `coding_close`
+- **coding:** `coding_resume`, `coding_start`, `coding_brief`, `coding_add_task`, `coding_set_task_status`, `coding_complete_task`, `coding_note`, `coding_checkpoint`, `coding_run_check`, `coding_recall`, `coding_show`, `coding_sessions`, `coding_close`
 
 ## Configuration
 
@@ -176,18 +225,19 @@ The 20 MCP tools are:
 |---|---|---|
 | `CONTINUUM_DATABASE_URL` | `postgresql://continuum:continuum@localhost:5432/continuum` | the database (the only service) |
 | `CONTINUUM_DB_SCHEMA` | `public` | schema; lower-case identifier |
-| `CONTINUUM_HOME` | `~/.continuum` | run workspaces and mock-service state |
+| `CONTINUUM_HOME` | `~/.continuum` | run workspaces, the hook spool, deny lists, snapshots of folders outside git, `hooks.log` |
 | `CONTINUUM_CONFIG_DIR` | `./config` if it has `tasks/`, else `~/.continuum/config` | pre-registered tasks, `models.yaml` |
 | `CONTINUUM_CODING_ROOTS` | unset | restrict coding sessions to these directories (`:`-separated; `;` on Windows) |
 | `CONTINUUM_DB_TIMEOUT_SECONDS` | `10` | how long a command waits for the database |
 | `CONTINUUM_OWNER_ID` | `ctl-<host>-<pid>-<random>` | lease identity; must be unique per process if set |
-| `CONTINUUM_HOOKS` | on | `off` disables app hooks (chat capture, session-start brief) |
+| `CONTINUUM_HOOKS` | on | `off` disables app hooks (capture, session-start brief, refusals) |
 
 API keys come only from the environment. They are redacted before anything is stored, as are URL passwords that look like secrets and well-known token formats pasted into chat. Full reference: [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
 ## Verified
 
-362 tests across these layers:
+`make check`: ruff and `mypy --strict` clean, **455 passed** (5 live-provider tests are opt-in), on
+Linux, Windows and macOS in CI. The layers:
 - unit
 - integration
 - contract (OpenAI and Anthropic request rules)
@@ -200,6 +250,7 @@ API keys come only from the environment. They are redacted before anything is st
 - continuity scenarios (app switch, another checkout, abrupt end, long sessions, secrets in chat; see [`docs/MEMORY-ALGORITHM.md`](docs/MEMORY-ALGORITHM.md) §5)
 - long-chat memory quality (planted requirements in chats of 10–160 messages, pinned at ≥95% recall and zero noise)
 - exact preservation of both sides of the chat through hook outages
+- capture of everything the agent did: each app's hook formats, file impact inside and outside git, unknown outcomes and refusals, redaction of outputs and diffs (`tests/integration/test_capture_review.py`, scenarios S15–S15d)
 
 Every requirement maps to tests in [`tests/traceability.yaml`](tests/traceability.yaml), and every defect found has a regression test. Results are in [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
 
@@ -207,6 +258,7 @@ Every requirement maps to tests in [`tests/traceability.yaml`](tests/traceabilit
 make check                                  # ruff + mypy --strict + all tests (needs PostgreSQL)
 continuum-lab run --suite safety --out results/safety    # B0 vs Continuum, 912 paired cells
 eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-switch trial
+eval/handoff_trials/capture_fidelity/run.sh <dir> <claude-wrapper>   # Trial 7: capture in real Claude Code
 python -m continuum_lab.memory_bench                      # long-chat memory benchmark
 ```
 
@@ -218,12 +270,14 @@ src/continuum/
                  verification, sessions/handoff, budgets, redaction, schema.sql
   coding/        coding continuity: service, repo observer (content fingerprint, code
                  map), memory (conversation consolidation), brief, transcript parser,
-                 app hooks, setup, check runner
+                 app hooks, setup, check runner; capture of what the agent did:
+                 activity (every app's hooks -> one record), snapshot (file impact),
+                 spool (local, never waits for the database), recorder, worklog
   models/ tools/ verify/ interfaces/ (SDK, CLI, loopback HTTP, MCP)
 eval/
   continuum_lab/   B0-vs-Continuum fault-injection lab; memory_bench (long-chat memory)
   handoff_trials/  real model-switch trials: export_feature, long_chat (30 messages),
-                   hidden judges, transcript replay
+                   debug_handoff, capture_fidelity (Trial 7), hidden judges, transcript replay
 integrations/    AGENT_RULES.md, Claude Code plugin (skill, hooks, commands), configs for Cursor, VS Code, Codex,
                  Windsurf, Gemini CLI, Cline, Claude Desktop; cloud/setup.sh
 docs/            00–07 spec, MEMORY-QUALITY, MEMORY-ALGORITHM, OPERATIONS, CODING-HANDOFF,
