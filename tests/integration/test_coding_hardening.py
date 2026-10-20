@@ -126,14 +126,16 @@ def test_h5_check_that_modifies_the_tree_is_flagged(coding, repo):
 # ----- fingerprint: never fail open, never miss real content -------------------------------
 
 def test_h6_git_failure_raises_instead_of_hashing_nothing(repo, monkeypatch):
-    real = repo_mod._git
+    from continuum.coding import snapshot
+
+    real = snapshot.git
 
     def broken(root, *args, **kwargs):
         if args and args[0] in ("diff", "write-tree"):
             return None
         return real(root, *args, **kwargs)
 
-    monkeypatch.setattr(repo_mod, "_git", broken)
+    monkeypatch.setattr(snapshot, "git", broken)
     with pytest.raises(ContinuumError) as err:
         observe(repo)
     assert err.value.code == "observation_failed"

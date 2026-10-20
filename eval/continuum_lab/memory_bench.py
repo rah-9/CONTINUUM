@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -131,6 +132,8 @@ class Conversation:
     facts: list[Fact] = field(default_factory=list)
     # per turn, the agent's tool calls: (tool, argument, failed)
     actions: list[list[tuple[str, str, bool]]] = field(default_factory=list)
+    # (turn, call) -> the tool's output, when it is more than "ok" / "Exit code 1"
+    outputs: dict[tuple[int, int], str] = field(default_factory=dict)
 
 
 EDIT_KEEP = 15  # the brief lists the newest 15 edited files (brief.WORK_EDITED)
@@ -162,6 +165,13 @@ def plan_actions(conv: Conversation, seed: int) -> None:
         elif pending is None and rng.random() < 0.25 and i < len(conv.turns) - 3:
             pending = f"pytest -q tests/test_{_token(rng, used)}.py"
             calls.append(("Bash", pending, True))
+            # a long log with the real error in the middle: beyond any excerpt, so only the
+            # stored full output can answer "where did we see error X?"
+            code = f"E{rng.randint(1000, 9999)}{_token(rng, used)}"
+            log = [f"collected item {k} PASSED" for k in range(1500)]
+            log.insert(700, f"FAILED with error code {code} in the rounding step")
+            conv.outputs[(i, len(calls) - 1)] = "Exit code 1\n" + "\n".join(log)
+            conv.facts.append(Fact("output_token", code, i + 1))
         else:
             calls.append(("Bash", "ruff check .", False))
         conv.actions.append(calls)
@@ -210,7 +220,8 @@ def transcript_records(conv: Conversation, turns: list[int], app: str) -> list[d
                 out.append({"timestamp": stamp(), "type": "response_item", "payload": item})
                 out.append({"timestamp": stamp(), "type": "response_item", "payload": {
                     "type": "function_call_output", "call_id": cid,
-                    "output": f"Exit code: {1 if failed else 0}"}})
+                    "output": conv.outputs.get((i, j), f"Exit code: {1 if failed else 0}")
+                    .replace("Exit code 1", "Exit code: 1")}})
             out.append({"timestamp": stamp(), "type": "response_item", "payload": {
                 "type": "message", "role": "assistant",
                 "content": [{"type": "output_text", "text": report}]}})
@@ -226,7 +237,8 @@ def transcript_records(conv: Conversation, turns: list[int], app: str) -> list[d
             out.append({"type": "user", "uuid": f"r{i}_{j}", "timestamp": stamp(),
                         "message": {"role": "user", "content": [
                             {"type": "tool_result", "tool_use_id": tid, "is_error": failed,
-                             "content": "Exit code 1" if failed else "ok"}]}})
+                             "content": conv.outputs.get(
+                                 (i, j), "Exit code 1" if failed else "ok")}]}})
         out.append({"type": "assistant", "uuid": f"a{i}", "timestamp": stamp(),
                     "message": {"role": "assistant",
                                 "content": [{"type": "text", "text": report}]}})
@@ -320,7 +332,10 @@ def generate(seed: int, n: int, *, verbose: bool = False) -> Conversation:
         conv.turns.append((text, report))
     # revisions land late in the chat, after the value they change
     for old, new in revisions:
-        at = rng.randint(max(2, len(conv.turns) // 2), len(conv.turns))
+        # after the message that set the old value (a change of mind cannot come first)
+        origin = next(k for k, (u, _) in enumerate(conv.turns) if f"port {old} " in u)
+        at = rng.randint(max(2, len(conv.turns) // 2, origin + 2), max(
+            len(conv.turns), origin + 2))
         while at < len(conv.turns) and conv.turns[at - 1][1].endswith("?"):
             at += 1                  # never between a question and its answer
         conv.turns.insert(at, (f"Actually, change of plan: use port {new} instead of {old}.",
@@ -355,6 +370,22 @@ def score(markdown: str, conv: Conversation) -> dict[str, Any]:
         out["open_failure"] = (sum(1 for f in opened if f.probe in attention), len(opened))
         alarms = [f for f in conv.facts if f.kind == "false_alarm"]
         out["false_alarms"] = (sum(1 for f in alarms if f.probe in attention), len(alarms))
+    # update correctness: a value a later message replaced is never shown as current
+    lines = markdown.splitlines()
+    changed = [f for f in conv.facts if f.kind == "revision" and f.stale]
+    out["update_correct"] = (sum(1 for f in changed if all(
+        "replaced by" in ln or "instead of" in ln for ln in lines
+        if f.stale and f.stale in ln)), len(changed))
+    # faithfulness: every requirement line is the user's own words, verbatim
+    users = [" ".join(u.split()) for u, _ in conv.turns]
+    section = markdown.split("## What the user asked", 1)[-1].split("\n## ", 1)[0]
+    items = []
+    for ln in section.splitlines():
+        m = re.match(r"^- #(\d+)(?: \((?:changes an earlier decision)\))?: (.+)$", ln)
+        if m:
+            items.append((int(m.group(1)), m.group(2).rstrip("…").strip()))
+    out["faithful"] = (sum(1 for n, text in items if 0 < n <= len(users)
+                           and text in users[n - 1]), len(items))
     noise = [f for f in conv.facts if f.kind == "noise" and f.probe not in last_two]
     out["noise_leaks"] = (sum(1 for f in noise if f.probe in markdown), len(noise))
     out["tokens"] = len(markdown) // 4
@@ -385,7 +416,7 @@ def run_one(coding: Any, seed: int, n: int, workdir: Path, *,
     Stop hook). ``two_apps``: the same, but the chat moves between Claude Code and Codex
     every few turns, each app with its own transcript."""
     from continuum.coding.brief import compact
-    from continuum.coding.transcript import Message, extract
+    from continuum.coding.transcript import Message, activity, extract
 
     conv = generate(seed, n, verbose=verbose)
     repo = workdir / f"repo_{seed}_{n}_{int(verbose)}_{mode}"
@@ -406,8 +437,20 @@ def run_one(coding: Any, seed: int, n: int, workdir: Path, *,
                                          app)
             coding.capture(str(repo), extract(records), source=app,
                            chat_id=f"{app}-{seed}", history=True)
-    md = compact(coding.brief(coding.latest_active(str(repo))))["markdown"]
+            coding.record_activity(str(repo), activity(records, app=app,
+                                                       chat=f"{app}-{seed}"),
+                                   source=app, chat_id=f"{app}-{seed}")
+    sid = coding.latest_active(str(repo))
+    md = compact(coding.brief(sid))["markdown"]
     new = score(md, conv)
+    tokens = [f for f in conv.facts if f.kind == "output_token"]
+    if tokens:                 # found again later, from the stored full output only
+        found = 0
+        for f in tokens:
+            hits = coding.recall(f.probe, session_id=sid)["matches"]
+            found += any(h.get("blob") and f.probe in coding.show(
+                sid, blob=h["blob"], limit=100_000)["content"] for h in hits)
+        new["output_recall"] = (found, len(tokens))
     old = score(legacy_v080([u for u, _ in conv.turns]), conv)
     return {"seed": seed, "n": n, "new": new, "legacy": old}
 

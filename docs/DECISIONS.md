@@ -412,7 +412,7 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 - A schema per person: migrations, retention and support multiply, and the operator loses one place to administer.
 - FORCE RLS on the owner: retention and erasure for everyone would need a second privileged path.
 
-## D-041 — Remember what the agent did, from the app's record of its tool calls
+## D-041 — Remember what the agent did, from the app's record of its tool calls (superseded by D-042)
 
 **Context.** The brief carried what the user said and what the agent said, but not what it did. In a debugging handoff the most useful fact is often "the last test run failed", and the files touched outside git (or before a commit) were only in the code map.
 
@@ -427,6 +427,93 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 **Rejected.**
 - Storing tool output: size, secrets, and it is the code map's and the checks' job to say what is true now.
 - Treating actions as facts: the app records the call; whether it worked is only known from a check.
+
+## D-042 — Record everything the agent did, verbatim, with results and observed impact
+
+**Context.** The research behind this round (`reports/Agent memory capture architecture.md`) found that agent memory systems lose information when they extract or summarize, that recalling what the agent itself did is their weakest point, and that hiding failure signals makes the next agent slower. Every major coding app now exposes tool calls and their results through hooks. Continuum kept only one-line summaries of tool calls (D-041), with no results, no file impact, nothing from subagents and nothing about calls that never finished.
+
+**Decision.**
+- **Capture every tool call twice-safely.**
+  - Live from the app's hooks: Claude Code and Codex `PreToolUse`/`PostToolUse`/`PostToolUseFailure`, Gemini CLI `BeforeTool`/`AfterTool`, Cursor's shell, MCP and file-edit hooks.
+  - From transcripts at turn end and catch-up: Claude Code including subagent sidechains, Codex rollouts, Gemini chats.
+  - The app's call id pairs start and finish (correlation only, AGENTS.md invariant 4), so both routes add each call once.
+- **One vendor-neutral record** (`activity.py`): the tool, its kind (builtin, shell, MCP with server, skill, subagent), the agent or subagent that called it, its input, and its status, exit code, duration and output.
+- **Classified by what it can affect.** `read`, `write`, `external` or `delegate`, by a fixed table and a command scanner, never a model. An unknown tool is `external`.
+- **Full output, redacted** (the user's decision): stored as a content-addressed blob under the session's row-level security and human-only erasure. The event keeps its head and tail for the brief.
+- **Observed impact.** Before and after each call that can write (edits and shell commands), the hook snapshots the working copy's content as a git tree in the repository's own object store. `FileImpactObserved` holds the exact diff, whichever tool made the change. Changes between tool calls are caught at turn end.
+- **Unknown outcomes.**
+  - A call that started and never reported a result becomes `ToolCallUnresolved` at turn end, or when a new chat starts after a crash.
+  - It is unknown, not failed (invariant 5).
+  - While an `external` one is unresolved, `PreToolUse` denies new external calls (invariant 8, the user's decision); local work continues.
+  - A person records what happened with `continuum coding resolve` (CLI only, never MCP).
+- **Hooks never wait for the database.**
+  - They redact, write the payload to a local spool, start a background drainer and exit. The drainer applies spooled payloads in order and deletes each only after its transaction commits.
+  - The `continuum` entry point dispatches hooks before loading the CLI.
+  - Measured in real Claude Code: median 99 ms before a call and 120 ms after (including the snapshot), against about 730 ms through the full CLI.
+- **Also kept:** subagent reports (`SubagentReported`, a claim), compaction summaries (`CompactionObserved`, a claim), and output signals ("1 failed" in a test run whose pipe hid the exit code).
+
+**Rejected.**
+- An LLM summary of the trajectory: it hides failure signals and loses facts (the research report, §1).
+- Trusting the apps' own checkpoints for file impact: they miss shell commands' changes.
+- Excerpts only: the user chose full redacted output.
+- Blocking local work on an unknown outcome: the code itself shows local effects.
+
+## D-043 — Recall by full-text search over everything, with drill-down by id
+
+**Context.** Keyword substring matching over a session's events could not search tool outputs or diffs, had no time filter, and could not open a full record.
+
+**Decision.**
+- **Full-text search.** PostgreSQL full-text search (English stemming) over every string in every event (a generated `tsvector` column) and over the first 64 KiB of every stored output and diff. It is merged with exact substring matching, for identifiers and error codes that stemming would split.
+- **Ranking:** distinct query words found, then text rank, then newest. `since`/`until` narrow the search by time.
+- **`coding_show`** (MCP, read-only; CLI `coding show`) returns one event by its `[#N]`, or a stored output or diff in pages.
+- **The brief stays short and points to everything else**, following the research: a short fixed brief plus retrieval by id.
+
+**Rejected.** Embeddings and a vector index: the v1 scope excludes a vector database, and full-text plus exact recall is measured at 100% on the planted-output benchmark.
+
+## D-044 — A change of mind marks what it replaces
+
+**Context.** Every memory benchmark in the research shows contradiction handling as the weakest ability (0–28%). The brief left "the higher number wins" to the next model.
+
+**Decision.**
+- **Explicit replacement.** When the user names what a change replaces ("use B instead of A", "rather than A", "change it from A to B", "replace A with B", "no longer use A"), every earlier requirement containing all of A's distinctive terms is marked replaced. Distinctive terms are a value or identifier when there is one, otherwise the content words.
+- **Rendering.** A replaced requirement is shown struck through as `~~#4~~ (replaced by #12)`, and ranked last for the budget.
+- **Authority.** Only the user's own messages take part, so nothing a model or a tool wrote can replace a requirement. Tool output never enters the ledger.
+- **Measured:** update correctness is 100% at 10–160 messages, and ledger lines are 100% verbatim user words.
+
+**Rejected.** A model deciding contradictions: it is the measured weak point, and it would turn the user's words into a model's claim.
+
+**Amended (review, 1.0.0rc2).** Matching all of A's terms is now only a *possible* replacement (`maybe_replaced_by`, shown as "_#12 may replace this; check_", never struck out). It becomes a replacement when the earlier item also shares context: a content word of the later sentence outside A ("**port** 5000 instead of 4000"), several words of A, or a quoted identifier. Without this, "port 5000 instead of 4000" struck "the timeout must be 4000 ms". An answer item quotes the agent's question, so it can be replaced but never replaces anything. The first request and recent whole messages can be marked too.
+
+## D-045 — Unknown outcomes include ambiguous results; every app gets its own hook protocol
+
+**Context.** A review of the capture pipeline, plus a check of every app's current hook documentation, found:
+- An interrupted or timed-out `git push` counted as finished, so it was neither unknown nor blocked.
+- Apps without call ids (Gemini CLI, Cursor) collapsed identical calls into one.
+- The refusal JSON was Claude Code's for every app, so Gemini CLI and Cursor ignored it. Cursor also blocks a permission hook that prints no JSON.
+- Codex hooks were never installed.
+- Changes outside git were not observed.
+
+**Decision.**
+- **Ambiguous results are unknown outcomes.** An external call that ends interrupted, timed out or disconnected (502/504, connection reset) is marked unresolved after its result, as is a call with no result at all (AGENTS.md invariants 5 and 8). A plain failure with an exit code is a known outcome. Marks are read in journal order: a later result clears a mark (the app was only late), and a person's resolution always does.
+- **Occurrences.** Calls without an app id are keyed by chat, tool and input. A repeat after the earlier call finished is a new call (`key#2`); a finish pairs with the oldest open start.
+- **Each app's protocol.**
+  - Refusal: Claude Code and Codex get `hookSpecificOutput.permissionDecision`, Gemini CLI gets `{"decision": "deny"}`, and Cursor gets `{"permission": "deny"}`. An unknown app gets exit code 2 with the reason on stderr.
+  - Cursor's permission hooks print an explicit allow.
+  - The brief is printed as plain text for Claude Code, as JSON `additionalContext` for Codex and Gemini CLI, and as `additional_context` for Cursor.
+- **Setup installs all four apps:** `.claude/settings.json`, `.codex/hooks.json` (trusted once with `/hooks`; context limit raised for the brief), `.gemini/settings.json` (timeouts in milliseconds) and `.cursor/hooks.json`. Each is merged with existing hooks.
+- **The deny list follows results.** It is refreshed as soon as a late result arrives, and found from any subfolder of the project. The refusal names the exact `continuum coding resolve` command.
+- **Outside git**, snapshots use a private store per directory in `$CONTINUUM_HOME/snapshots/`. The directory itself is never written. Snapshots are bounded (20,000 files, files of 10 MB at most, never the home directory or a filesystem root), and the store is deleted by `forget`.
+- **Hook hot path.** The refusal is decided before the snapshot, and a snapshot gives up after 5 s. The drainer lock is an OS file lock, released by the kernel when its process dies, so it never goes stale or is taken over mid-drain.
+- **Diffs are redacted** like outputs. The content of credential files (`.env*`, keys, `credentials*`) is never stored; the file is listed as changed.
+- **Classification.**
+  - MCP tools count as reads only when their whole name says so: `merge_pull_request` and `get_or_create` are external.
+  - Shell wrappers are seen through: `git -C dir push`, `bash -c "..."`, `sudo -E`, `npx`, `python -m`.
+  - Harness bookkeeping tools (`TaskCreate`, `SendMessage`) are reads.
+  - Claude Code's `SubagentHandback` is a subagent report.
+
+**Rejected.**
+- Treating every error of an external call as unknown: a rejected push with an exit code is a known outcome, and a person would be asked about every failed request.
+- Asking a model whether a call took effect.
 
 ---
 

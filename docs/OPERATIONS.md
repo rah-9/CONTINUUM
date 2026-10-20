@@ -45,7 +45,7 @@ Because state lives only in PostgreSQL, these processes are interchangeable. A r
 3. On startup the server runs `db-init` (idempotent), loads the pre-registered tasks from `CONTINUUM_CONFIG_DIR` and advertises 20 tools (8 for tasks, 12 for coding continuity) with instructions for the agent.
 4. When the agent calls `run_task`, the server process runs the task's step loop. It acquires the run lease, calls models and trusted tools through the gateway, and verifies milestones. It returns when the run completes or pauses for a human.
 5. When the agent calls `coding_resume`, the server observes the repository (five git calls, about 165 ms on a 20k-file repo), reads the session journal and returns a compact Markdown brief of about 1–3k tokens. No LLM is called; the only model cost of a handoff is the next model reading the brief.
-6. Separately, the app's **hooks** run `continuum hook <app>` as short-lived processes: on each prompt and turn end they journal the conversation, and at session start (Claude Code) they print the brief into the new chat. A hook waits at most 3 s for the database (`CONTINUUM_DB_TIMEOUT_SECONDS` overrides it), always exits 0, and logs failures to `$CONTINUUM_HOME/hooks.log`. `CONTINUUM_HOOKS=off` disables them.
+6. Separately, the app's **hooks** run `continuum hook <app>` as short-lived processes: on each prompt and turn end they journal the conversation, and at session start (Claude Code) they print the brief into the new chat. A hook waits at most 3 s for the database (`CONTINUUM_DB_TIMEOUT_SECONDS` overrides it) and logs failures to `$CONTINUUM_HOME/hooks.log`. It exits 0; the one exception is refusing a tool call for an app whose JSON refusal format is unknown, where it exits 2 (D-045). `CONTINUUM_HOOKS=off` disables them.
 7. When the agent session ends, the child process exits. The run's and the coding session's state remain in PostgreSQL.
 
 In cloud agent containers, the same applies inside the container. Point `CONTINUUM_DATABASE_URL` at a PostgreSQL that outlives the container, set as a secret, and install Continuum in the environment's setup script (`integrations/cloud/setup.sh`). See `integrations/README.md` §4.
@@ -96,6 +96,24 @@ All durable state lives in PostgreSQL. The schema is executable in `src/continuu
 
 Upgrades: re-running `continuum db-init` adds new constraints and indexes to an existing database idempotently.
 
+## Hooks, the local spool, and unknown outcomes
+
+- **Hooks never wait for the database** (D-042). Each one redacts the payload, writes it to `$CONTINUUM_HOME/spool/` (owner-only) and starts a background drainer.
+  - The drainer writes the journal in order and deletes a file only after its transaction commits. One drainer runs at a time, under an OS file lock that the kernel releases if the drainer dies.
+  - With the database down, files wait and are applied later. A payload that cannot be applied goes to `spool/failed/` and is logged in `hooks.log`.
+  - Measured in real Claude Code, median: 99 ms before a tool call, 120 ms after (including the content snapshot).
+- **What gets snapshotted:** before and after every call that can write files (edits, shell commands), the hook stores the working copy's content as a git tree in the repository's own object store. Unreferenced objects are pruned by `git gc` as usual. A snapshot gives up after 5 s; the call is still journaled, without a diff.
+  - **Outside git**, the same is kept in a private store, `$CONTINUUM_HOME/snapshots/<hash>.git`, one per directory. The directory itself is never written. Directories with more than 20,000 files, files over 10 MB, the home directory and filesystem roots are not snapshotted. `continuum coding forget` deletes the store on the machine where it runs; on other machines, delete `$CONTINUUM_HOME/snapshots/` there.
+  - **Credential files** (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `credentials*`, `secrets.*`) are listed as changed, but their content is never stored in a diff.
+- **Unknown outcomes.** A call that could change something outside the repository blocks new external calls when it has no recorded result, or when it ended interrupted, timed out or disconnected (D-045). The app's pre-tool hook refuses them in its own format; local work continues. The refusal names the exact `resolve` command. A late result lifts the block at once. After checking what really happened:
+
+  ```bash
+  continuum coding unresolved SESSION                  # what is open
+  continuum coding resolve SESSION CALL --outcome applied|not_applied|accepted_unknown \
+      --actor alice --reason "the push never reached origin"
+  ```
+- **Drill-down:** `continuum coding show SESSION --seq N` (or `--blob ID`) prints any `[#N]` from the brief, or a stored output or diff.
+
 ## Data retention and erasure (coding sessions)
 
 Coding sessions hold what people typed, and a client may ask for it to be deleted. History
@@ -110,7 +128,7 @@ continuum coding forget --older-than-days 90 --actor ops --reason "90-day retent
 continuum coding erasures
 ```
 
-- **What is removed:** every event of the session and its row. Nothing of its content is left in Continuum's tables.
+- **What is removed:** every event of the session, its stored outputs and diffs, and its row. Nothing of its content is left in Continuum's tables.
 - **What is kept:** a tombstone in `coding_erasures` with the session id, a hash of the repository path, the event count, the person and the reason (redacted). Tombstones are immutable.
 - **How the guard works:** the `coding_events` trigger refuses every UPDATE and DELETE unless the transaction has set `continuum.erasure = on`, which only `forget` does, inside the same transaction that writes the tombstone. The setting is transaction-local. TRUNCATE is always refused.
 - **Retention** erases closed sessions only, unless `--include-active` is given. Schedule it with cron or a task scheduler.
