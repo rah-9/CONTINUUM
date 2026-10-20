@@ -29,9 +29,10 @@ _GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, INSERT, UPDATE, DELETE", ("coding_sessions", "coding_checks")),
     ("SELECT, INSERT, DELETE", ("coding_events",)),   # the trigger still forbids UPDATE
     ("SELECT, INSERT", ("coding_erasures",)),
+    ("SELECT, INSERT, DELETE", ("coding_blobs",)),                # immutable: no UPDATE
 )
 _TABLES = ("schema_meta", "coding_sessions", "coding_checks", "coding_events",
-           "coding_erasures")
+           "coding_erasures", "coding_blobs")
 
 
 class NotOperatorError(ContinuumError):

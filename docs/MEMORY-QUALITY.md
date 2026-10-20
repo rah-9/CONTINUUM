@@ -19,6 +19,11 @@ method is described so it can be rerun. The algorithm itself is in
   - **Result:** all three finished the work, **13/13** hidden tests, including four requirements stated only in messages 8, 15, 21 and 27.
   - **Without Continuum:** each model scored 9/13 and said it could not tell what was planned.
 - **Real debugging handoff (Trial 6).** Model A found the root cause without fixing it; the user added a second number format, a VAT rule and constraints in chat. Haiku, Sonnet and Opus each scored **7/7** with Continuum and 4/7 without (they fixed only the visible bug).
+- **Everything the agent did (v1.0.0rc2, Trial 7, real Claude Code).**
+  - **Tool calls:** 10 of 10 captured with the correct result, including a subagent's own call, a skill (by name) and an MCP call with its result.
+  - **Files:** 3 of 3 changed files observed, including one written by a shell script.
+  - **Speed:** hooks take a median of 99–120 ms.
+  - **Handoff:** a new chat answered 4/4 questions about the previous agent's work with Continuum (Haiku, Sonnet and Opus) at about half the cost, and 3/4 without. Without Continuum the ticket it had created through MCP was unknowable (§7).
 - **Different LLMs.**
   - **Model-independent:** capture, consolidation and verification are plain code, so every model receives the same facts.
   - **Model-dependent:** following the rules and reading the brief correctly.
@@ -110,6 +115,27 @@ app's transcript was imported later. And a "yes" typed in the second app was dro
 copy of an earlier "yes" from the first app. Before the fixes, answers scored 0.69 at 160
 messages.
 
+**Tool output, updates and faithfulness (v1.0.0rc2).**
+- **Planted error codes.** In the transcript modes, every failing test run's output is 1,500 lines with an error code planted in the middle, beyond any excerpt.
+- **What was measured:**
+  - **Output recall:** the code must be found later from the stored full output.
+  - **Update correctness:** a value a later message replaced is never shown as current.
+  - **Faithfulness:** every requirement line is the user's exact words.
+
+| messages | mode | output recall | update correctness | faithfulness | false alarms | tokens (max) |
+|---|---|---|---|---|---|---|
+| 10 | transcript / two apps | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 | 0 / 0 | 1,112 |
+| 40 | transcript / two apps | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 | 0 / 0 | 1,616 |
+| 80 | transcript / two apps | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 | 0 / 0 | 2,228 |
+| 160, verbose | transcript / two apps | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 | 0 / 0 | 3,514 |
+
+Building these measures found three things:
+- **The benchmark generator** sometimes placed a change of mind before the value it changed. This was fixed in the generator, not in Continuum.
+- **A change of mind in the most recent message** did not mark the requirement it replaced (now fixed).
+- **A failure fixed in another app** stayed flagged, because the apps name their shell tool differently (now fixed).
+
+The brief grows by about 150–450 tokens for the work summary.
+
 `tests/nonfunctional/test_nonfunctional.py::test_nf6_long_chat_memory_quality` pins this:
 any change that drops recall below 95% or lets noise through fails the build.
 
@@ -181,6 +207,7 @@ Continuum cannot change an app's own dialog. It makes either outcome safe and ch
 |---|---|---|---|---|
 | 2–3: requirements only in chat | Sonnet, uses Continuum | Opus | 4/4, 4/4 | 1/4, 1/4 |
 | 4: app switch after an abrupt end | Sonnet in Claude Code, hooks only | Opus, rules + MCP | 4/4 | 1/4 |
+| **7: capture fidelity** | Sonnet in Claude Code, hooks only: tests, an edit, a generator script, a subagent, a skill, an MCP ticket | Haiku / Sonnet / Opus: "what did the previous agent do?" | **4/4** each | 3/4 each (the MCP ticket id was unknowable) |
 | **5: 30-message chat** | Sonnet in Claude Code, hooks only, 30 turns | Haiku | **13/13, 13/13** | 9/13 |
 | | | Sonnet | **13/13** | 9/13 |
 | | | Opus | **13/13** | 9/13 |

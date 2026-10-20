@@ -1,6 +1,65 @@
 # Changelog
 
-## 1.0.0rc1 — unreleased
+## 1.0.0rc2 — unreleased
+
+Everything the agent did, with results and impact (D-042 to D-044, schema v6). Based on
+the research in `reports/Agent memory capture architecture.md`; measured in
+`docs/MEMORY-QUALITY.md` and Trial 7 (`docs/HANDOFF-TRIALS.md`).
+
+### Added
+- **Every tool call with its result.**
+  - Live from the apps' hooks: Claude Code, Codex, Gemini CLI, Cursor.
+  - From transcripts, including Claude Code subagents, Codex rollouts and Gemini chats.
+  - Covers built-in tools, shell commands, MCP tools (with server), skills (by name) and subagents (their own calls tagged, their reports kept as claims).
+  - Full output, secrets redacted, stored as content-addressed blobs under the same row-level security and erasure as events.
+- **What each call changed.** Content snapshots (git trees) before and after every call that can write give the exact diff, including a shell command's changes, which app checkpoints miss. Changes between calls are caught at turn end.
+- **Unknown outcomes.** A call with no recorded result becomes unresolved at turn end, or when a new chat starts after a crash. While an external one is open, new external calls are denied (`PreToolUse`) until a person runs `continuum coding resolve`. Local work continues.
+- **Output signals:** a test run that exits 0 but reports failures (a pipe into `tail`) is flagged.
+- **The brief's "What the previous agent did":**
+  - files changed (observed)
+  - commands with status
+  - recent failures with the end of their output (quoted, as data)
+  - MCP tools, skills, subagents with reports, compaction
+  - an event number on every line
+- **Attention flags** unknown outcomes and recent failures.
+- **Recall** uses PostgreSQL full-text search over every event and full outputs and diffs, merged with exact matching, with `since`/`until`. `coding_show` (MCP, read-only) and `continuum coding show` open any `[#N]`, or a stored output or diff.
+- **Explicit supersession.** A change of mind that names what it replaces marks the earlier requirement `~~#4~~ (replaced by #12)` (user words only).
+- **Benchmark measures:** output recall, update correctness, faithfulness, plus transcript and two-app modes. Every measure is 100% at 10–160 messages.
+- **Trial 7 (capture fidelity, real Claude Code):** 10 of 10 tool calls with correct results, a subagent's call, the skill, the MCP call and its result, and 3 of 3 changed files, including one written by a script. The handoff scored 4/4 with Continuum for Haiku, Sonnet and Opus, at about half the cost, and 3/4 without: the ticket created through MCP was unknowable.
+
+- **Hooks for Codex, Gemini CLI and Cursor.** `continuum coding setup` now also writes `.codex/hooks.json`, `.gemini/settings.json` and `.cursor/hooks.json`, each in the app's own format (D-045).
+- **File impact outside git:** a private snapshot store per directory in `$CONTINUUM_HOME/snapshots/`, erased with the session (D-045).
+- **"Possibly replaced"**: a change of mind that matches an earlier requirement only partly marks it "_#12 may replace this; check_" instead of striking it (D-044 amended).
+
+### Changed
+- **Hooks never wait for the database.** They redact, spool locally, start a background drainer and exit. `continuum hook` is dispatched before the CLI loads: median about 100 ms per hook in real Claude Code, from about 730 ms. `SessionStart` drains the spool (up to 8 s) before printing the brief.
+- **Setup and the Claude Code plugin** install `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStop` and `PostCompact` hooks for every tool.
+- **D-041's one-line chat "actions" are no longer written.** Sessions that have them still show them.
+
+### Fixed
+- **App notices are not the user's words.** Background-task notices (`<task-notification>`) and bash-mode blocks were captured as user messages.
+- **The end of a long error was dropped.** Errors now keep their head and tail.
+- **A cross-app false alarm.** A failure re-run successfully in another app ("Bash" vs "shell") was still flagged.
+- **A change of mind in the most recent message** did not mark the requirement it replaced.
+- **Review of capture, memory and recall** (D-045). Fixed:
+  - An interrupted or timed-out external call (a `git push`) counted as finished. It is now an unknown outcome and blocks external calls.
+  - Identical calls from apps without call ids (Gemini CLI, Cursor) collapsed into one record.
+  - Refusals used Claude Code's JSON in every app, so Gemini CLI and Cursor ran the call anyway. Cursor's permission hooks now print an explicit allow.
+  - Field names were misread: Cursor's `tool_output`, `error_message`, `failure_type`, `duration`, `mcp_server_name`, `workspace_roots` and subagent `summary`; Gemini's `prompt_response`; Claude Code's `mcp_server` and `SubagentHandback`.
+  - The deny list stayed after a late result arrived, and was not found from a subfolder.
+  - The drainer lock could be taken over by a second drainer while the first was still working. It is now an OS lock.
+  - A slow snapshot could delay the refusal past the app's hook timeout.
+  - Diffs were stored unredacted. Credential files' content is no longer stored at all.
+  - MCP names such as `merge_pull_request` and `checkout_branch` counted as reads. Wrapped commands (`git -C x push`, `bash -c`, `sudo -E`, `npx`, `python -m`) hid an external call.
+  - Recall crashed on a stemmed-only match in a long event. It also returned empty hits for transcript copies, matched "or" inside "for", and `until=<date>` dropped that day.
+  - `coding_show` treated `%` in a blob id as a wildcard.
+  - The agent's question inside an answer could strike a user requirement. A shared number alone ("4000") struck an unrelated requirement.
+  - A failing test run disappeared from the brief after 12 other tool calls. A subagent's report was shown under another subagent. MCP write tools could be cut from the brief without a "more" marker.
+  - Tool text could close the code span or quote it is shown in.
+  - On Windows, `forget` could not delete a snapshot store's read-only git objects (found by Windows CI).
+- **Windows: the brief was lost.** The hook printed it in the console's code page (cp1252) and failed on `⚠`. Hooks now always write UTF-8.
+
+## 1.0.0rc1 — 2026-10-19
 
 Release candidate for client delivery: privacy, licensing, portability and packaging.
 

@@ -1,10 +1,15 @@
 {
-  "description": "Continuum: journal the conversation and show the coding brief at session start, so another model, chat or app (e.g. Codex) can continue the work.",
+  "description": "Continuum: journal the conversation, every tool call with its result and what it changed, and show the coding brief at session start, so another model, chat or app (e.g. Codex) can continue the work.",
   "hooks": {
     "SessionStart": [{"hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}],
     "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}],
-    "Stop": [{"hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}],
+    "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}],
+    "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}],
+    "PostToolUseFailure": [{"matcher": "*", "hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}],
+    "SubagentStop": [{"hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}],
     "PreCompact": [{"hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}],
+    "PostCompact": [{"hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}],
     "SessionEnd": [{"hooks": [{"type": "command", "command": "continuum hook claude-code", "timeout": 15}]}]
   }
 }

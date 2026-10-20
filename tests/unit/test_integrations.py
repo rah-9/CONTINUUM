@@ -87,11 +87,19 @@ def test_agent_rules_and_skill_teach_the_coding_handoff_protocol():
 def test_apps_journal_the_chat_through_the_hook_command():
     """Switching apps (Claude Code <-> Codex) needs both to journal the conversation."""
     hooks = json.loads((INTEGRATIONS / "claude-code" / "hooks" / "hooks.json").read_text())
-    for event in ("SessionStart", "UserPromptSubmit", "Stop", "PreCompact", "SessionEnd"):
+    from continuum.coding.install import CLAUDE_HOOK_EVENTS, TOOL_EVENTS
+
+    assert set(hooks["hooks"]) == set(CLAUDE_HOOK_EVENTS)    # plugin and setup agree
+    for event in CLAUDE_HOOK_EVENTS:
         commands = [h["command"] for g in hooks["hooks"][event] for h in g["hooks"]]
         assert commands == ["continuum hook claude-code"], event
-    codex = tomllib.loads((INTEGRATIONS / "codex" / "config.toml").read_text())
-    assert codex["notify"] == ["continuum", "hook", "codex"]
+        if event in TOOL_EVENTS:                             # every tool, MCP included
+            assert [g.get("matcher") for g in hooks["hooks"][event]] == ["*"], event
+    codex_text = (INTEGRATIONS / "codex" / "config.toml").read_text()
+    codex = tomllib.loads(codex_text)
+    assert codex["mcp_servers"]["continuum"]["args"] == ["mcp"]
+    # hooks come from .codex/hooks.json (setup); notify is only the fallback, commented out
+    assert "notify" not in codex and '# notify = ["continuum", "hook", "codex"]' in codex_text
 
 
 def test_packaged_agent_rules_match_the_published_rules():

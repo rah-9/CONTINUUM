@@ -188,6 +188,22 @@ Every feature is judged by one question: *does it keep valid work and prevent un
   - SECURITY.md, UPGRADING.md
   - an upgrade test from a real 0.9 database
 
+### Phase 12: v1.0.0rc2, everything the agent did
+
+- **Research first.** Papers, production memory systems, benchmarks, and what each coding app exposes (`reports/Agent memory capture architecture.md`). Extraction and summaries lose facts; recalling the agent's own actions is the weakest ability; hooks expose every tool call with its result.
+- **The user's decisions:** store full output (redacted); on a lost result, warn and block external actions only; no LLM in this round.
+- **Built:**
+  - every tool call with its result, from Claude Code, Codex, Gemini CLI and Cursor hooks and from transcripts
+  - observed file impact from git content snapshots
+  - unknown outcomes with an external-action block that a person resolves
+  - full-text recall over full outputs, and `coding_show`
+  - explicit supersession of requirements
+  - hooks that spool locally (about 100 ms)
+- **Measured:**
+  - benchmark: 100% on every measure, including output recall, update correctness and faithfulness
+  - live Claude Code (Trial 7): 10/10 tool calls, 3/3 file changes
+  - handoff: 4/4 with Continuum, 3/4 without, for Haiku, Sonnet and Opus
+
 ## 4. Evidence so far
 
 Results are from the deterministic fake-model safety matrix: 15 tasks × 6 faults × 3 connector modes × 2 seeds, 912 paired cells. They test **modeled** safety properties only. They are not claims about live providers. The full report is in `lab-reports/`.

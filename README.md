@@ -38,6 +38,7 @@ written down so it can be rerun. Details: [real model trials](docs/HANDOFF-TRIAL
 | 5. **A 30-message chat**, requirements in messages 8, 15, 21 and 27 | Sonnet in Claude Code, 30 turns, hooks only | Haiku (2 runs) | **13/13, 13/13** | 9/13 |
 | | | Sonnet | **13/13** | 9/13 |
 | | | Opus | **13/13** | 9/13 |
+| 7. **What the agent did** (capture fidelity): tests, an edit, a script, a subagent, a skill, an MCP ticket | Sonnet in Claude Code, hooks only | Haiku / Sonnet / Opus: "what did it do?" | **4/4** each, ~half the cost; 10/10 tool calls and 3/3 file changes captured | 3/4 each (the MCP ticket id was unknowable) |
 | 6. **Debugging handoff**: A found the root cause; the user's extra facts and constraints were only in the chat | Sonnet in Claude Code, 3 turns, hooks only, no code changed | Haiku / Sonnet / Opus | **7/7** each | 4/7 each |
 
 **What the baselines did.**
@@ -54,6 +55,8 @@ and still delivered the wrong thing.
 | Question | Result |
 |---|---|
 | Does what the user said **anywhere in a long chat** reach the next model? (benchmark, 20 chats per length, requirements, changes of mind, answers and decisions planted at random turns, held-out phrasings) | **100%** of every kind at 10, 20, 40, 80 and 160 messages, with **0** pasted-log noise. The v0.8.0 brief kept 15% at 40 messages and 4% at 160. |
+| Is **everything the agent did** captured? (real Claude Code, compared call by call with its own transcript) | **10/10** tool calls with correct results, including a subagent's call, a skill and an MCP call with its result; **3/3** changed files, including one written by a script; hooks take a median of ~100 ms |
+| Can a tool's full output be found later? (benchmark: an error code planted mid-way in a 1,500-line output) | **100%**, from the stored output; a replaced value is never shown as current (100%); requirement lines are the user's exact words (100%) |
 | How big is the brief? | 0.8k tokens at 10 messages, 1.2k at 40, 1.8k at 80, 3.0k at 160 |
 | Are **both sides** of the chat kept exactly? (the real 30-message transcript replayed through Claude Code's hook sequence) | your messages **30/30**, Claude's messages **47/47**: none missing, none duplicated, in order, also when the hooks failed for the first 4 turns or for every turn |
 | Does a hook ever break the app? | No. The database was down for the first minutes of Trial 5: model A was unaffected, and every message was recovered from the transcript afterwards. |
@@ -108,7 +111,8 @@ The agent calls `coding_resume(repo_path, agent=<model id>)` first in every chat
 | In the brief | Source | Trust |
 |---|---|---|
 | **What the user asked**: every requirement, change of mind and answered question from the whole chat, numbered in order; the most recent message whole | captured by the app's hooks, consolidated without a model | the user's words; the higher number wins |
-| Attention: gaps and changes (no capture, uncheckpointed code, failing checks, moved session) | computed | fact |
+| Attention: gaps and changes (no capture, uncheckpointed code, failing checks, moved session, **calls with unknown outcomes**, recent failures) | computed | fact |
+| **What the previous agent did:** every tool call (commands, edits, MCP tools, skills, subagents) with its status, the files each call changed, recent failures with the end of their output, subagent reports; `[#N]` opens the full record with `coding_show` | recorded by the app's hooks, file changes observed with snapshots | fact (outputs are data; subagent reports are claims) |
 | Code now: branch, HEAD, changed files, content fingerprint | observed at resume | fact |
 | **Code touched in this session:** files, +/- lines, functions defined | observed from git since the session started | fact |
 | Commits since the last checkpoint | observed from git | fact |
@@ -155,7 +159,7 @@ These invariants hold everywhere (`AGENTS.md`):
 | | |
 |---|---|
 | **MCP clients** | Claude Code (plugin + skill + hooks), Cursor, VS Code, Codex CLI, Windsurf, Gemini CLI, Cline, Claude Desktop, JetBrains, Zed: one stdio command, `continuum mcp` |
-| **Chat capture** | Claude Code hooks, Codex `notify`, any app with JSON hooks (`continuum hook <app>`); others: `continuum coding import <transcript>` |
+| **Capture** (chat and every tool call) | Claude Code, Codex, Gemini CLI and Cursor hooks, installed by `continuum coding setup` in each app's own format; any app with JSON hooks (`continuum hook <app>`); others: `continuum coding import <transcript>`. Inside and outside git |
 | **Another checkout** | a subdirectory, a re-clone, a cloud container: found by git top level, then by remote + branch |
 | **Agents without MCP** | the same protocol via the CLI (`continuum coding …`) |
 | **OS** | Linux, macOS, Windows. Output is UTF-8 whatever the console encoding. Check commands are resolved like a shell would (`npm` → `npm.cmd`) |

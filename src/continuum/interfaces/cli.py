@@ -151,6 +151,24 @@ def build_parser() -> argparse.ArgumentParser:
     rcl.add_argument("--session")
     rcl.add_argument("--all", action="store_true", help="every session of this repository")
     rcl.add_argument("--limit", type=int, default=8)
+    rcl.add_argument("--since", help="ISO date or time")
+    rcl.add_argument("--until", help="ISO date or time")
+    shw = csub.add_parser("show", help="one journal event ([#N] in the brief) or a stored "
+                                       "tool output / diff")
+    shw.add_argument("session")
+    shw.add_argument("--seq", type=int)
+    shw.add_argument("--blob")
+    shw.add_argument("--offset", type=int, default=0)
+    unr = csub.add_parser("unresolved", help="calls whose outcome is unknown")
+    unr.add_argument("session")
+    rsv = csub.add_parser("resolve", help="human-only: record what happened to a call whose "
+                                          "outcome was unknown (unblocks external actions)")
+    rsv.add_argument("session")
+    rsv.add_argument("call", help="the call id the brief shows (or a unique prefix)")
+    rsv.add_argument("--outcome", required=True,
+                     choices=["applied", "not_applied", "accepted_unknown"])
+    rsv.add_argument("--actor", required=True)
+    rsv.add_argument("--reason", required=True)
     # Agent operations for shell-only agents (same protocol as the MCP coding_* tools).
     rs = csub.add_parser("resume", help="join the repo's session as AGENT and print the brief")
     rs.add_argument("--repo", default=".")
@@ -377,7 +395,21 @@ def _coding(sdk: Continuum, args: argparse.Namespace) -> int:
         case "recall":
             _print(coding.recall(args.query, session_id=args.session,
                                  repo_path=None if args.session else args.repo,
-                                 all_sessions=args.all, limit=args.limit))
+                                 all_sessions=args.all, limit=args.limit,
+                                 since=args.since, until=args.until))
+        case "show":
+            _print(coding.show(args.session, seq=args.seq, blob=args.blob,
+                               offset=args.offset))
+        case "unresolved":
+            _print(coding.unresolved(args.session))
+        case "resolve":
+            from continuum.coding import spool
+
+            out = coding.resolve_unknown(args.session, args.call, args.outcome,
+                                         actor=args.actor, reason=args.reason)
+            spool.set_blocks(coding.sessions_root(args.session),
+                             coding.unresolved(args.session), args.session)
+            _print(out)
         case "close":
             _print(coding.close(args.session, args.reason, agent=args.actor, human=True))
         case "resume":

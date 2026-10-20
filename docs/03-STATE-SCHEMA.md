@@ -193,7 +193,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-INSERT INTO schema_meta (key, value) VALUES ('schema_version', '5')
+INSERT INTO schema_meta (key, value) VALUES ('schema_version', '6')
   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- TRUNCATE would bypass the row-level immutability trigger.
@@ -400,6 +400,53 @@ CREATE POLICY coding_events_own ON coding_events
   USING (EXISTS (SELECT 1 FROM coding_sessions s WHERE s.session_id = coding_events.session_id))
   WITH CHECK (EXISTS (SELECT 1 FROM coding_sessions s
                       WHERE s.session_id = coding_events.session_id));
+
+
+-- Schema v6: everything the agent did (D-042). Tool calls as the app reported them, what
+-- each changed in the working copy, compaction; full outputs and diffs as content-addressed
+-- blobs owned by the session (same row-level security and human-only erasure as events).
+ALTER TABLE coding_events DROP CONSTRAINT IF EXISTS coding_events_type_valid;
+SELECT continuum_add_constraint('coding_events', 'coding_events_type_valid', $c$CHECK (type IN (
+  'SessionStarted', 'AgentJoined', 'TaskAdded', 'TaskStatusChanged', 'NoteRecorded',
+  'CheckpointCaptured', 'CheckRan', 'ChatCaptured', 'SessionClosed', 'ToolCallStarted',
+  'ToolCallFinished', 'ToolCallUnresolved', 'ToolCallResolved', 'FileImpactObserved',
+  'CompactionObserved', 'SubagentReported'))$c$);
+CREATE INDEX IF NOT EXISTS idx_coding_events_call_key ON coding_events
+  (session_id, (payload_json->>'call_key'), type) WHERE payload_json ? 'call_key';
+
+CREATE TABLE IF NOT EXISTS coding_blobs (
+  session_id    TEXT NOT NULL REFERENCES coding_sessions(session_id),
+  digest        TEXT NOT NULL,                -- sha256 of the stored (redacted) content
+  media_type    TEXT NOT NULL,                -- text/plain | text/x-diff | application/json
+  chars         BIGINT NOT NULL,              -- length of the redacted original
+  content       TEXT NOT NULL,                -- head and tail when longer than the cap
+  truncated     BOOLEAN NOT NULL DEFAULT false,
+  created_at    TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (session_id, digest)
+);
+DROP TRIGGER IF EXISTS coding_blobs_immutable ON coding_blobs;
+CREATE TRIGGER coding_blobs_immutable BEFORE UPDATE OR DELETE ON coding_blobs
+  FOR EACH ROW EXECUTE FUNCTION continuum_coding_events_guard();
+DROP TRIGGER IF EXISTS coding_blobs_no_truncate ON coding_blobs;
+CREATE TRIGGER coding_blobs_no_truncate BEFORE TRUNCATE ON coding_blobs
+  FOR EACH STATEMENT EXECUTE FUNCTION continuum_events_immutable();
+ALTER TABLE coding_blobs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS coding_blobs_own ON coding_blobs;
+CREATE POLICY coding_blobs_own ON coding_blobs
+  USING (EXISTS (SELECT 1 FROM coding_sessions s WHERE s.session_id = coding_blobs.session_id))
+  WITH CHECK (EXISTS (SELECT 1 FROM coding_sessions s
+                      WHERE s.session_id = coding_blobs.session_id));
+
+-- Full-text recall over everything remembered (D-043): every string in an event, and the
+-- first 64 KiB of every blob (a tsvector is bounded; recall still finds the blob's event).
+ALTER TABLE coding_events ADD COLUMN IF NOT EXISTS search tsvector
+  GENERATED ALWAYS AS (jsonb_to_tsvector('english'::regconfig, payload_json, '["string"]'))
+  STORED;
+CREATE INDEX IF NOT EXISTS idx_coding_events_search ON coding_events USING gin (search);
+ALTER TABLE coding_blobs ADD COLUMN IF NOT EXISTS search tsvector
+  GENERATED ALWAYS AS (to_tsvector('english'::regconfig, CASE WHEN length(content) <= 131072
+    THEN content ELSE left(content, 65536) || ' ' || right(content, 65536) END)) STORED;
+CREATE INDEX IF NOT EXISTS idx_coding_blobs_search ON coding_blobs USING gin (search);
 ```
 
 **Time budget:** `max_active_seconds` counts execution time while the runtime is actively processing a run, not manual approval/reconciliation pauses or process downtime. Record bounded active-time increments via `RunActiveTimeRecorded` events and `usage_totals.active_elapsed_ms`; cap each increment using a monotonic clock while the process is alive. Active time includes recovery on resume (reconciliation, re-verification, authorized retries). Increments are recorded after every model call and every batch of tool dispatches, and when the operation ends, so the cap (which guards against suspend gaps) never truncates real work. Wall-clock time is reported as a separate evaluation metric.
@@ -422,7 +469,7 @@ CREATE POLICY coding_events_own ON coding_events
 
 Verification success must supply an evidence reference pointing to read-only verifier output, not model prose. At resume, recheck source snapshots, artifact hash and dependency fingerprints. Invalidate the changed milestone **and transitive downstream dependents** with events. Already committed effects remain in the ledger; when redo is needed, their operation keys still prevent blind repeats. If desired new payload conflicts with an existing confirmed operation key, stop and require a distinct task/spec version or human-approved remediation workflow, not overwriting history. The runtime records this stop as `RunFailed(failure_code = "drift_requires_remediation")`.
 
-**Coding sessions (schema v5).** `ChatCaptured.role` may be `action`: one of the agent's tool calls from the app's transcript, one line, with `failed` (D-041). Erasure (D-039) and per-role isolation with row-level security (D-040) are described in OPERATIONS.md. **Coding sessions (schema v3, extended in v4).** v4 adds `ChatCaptured` events (the user's words and the agent's last report, captured by app hooks; deduplicated through an index on `payload_json->>'key'`), `AgentJoined.repo_root` (set when a session moves to another checkout), and `repo_key` on sessions and checks (the normalized, credential-free remote URL that identifies the same repository at another path). The v3 event-type constraint is replaced on upgrade. **Coding sessions (schema v3).** `coding_sessions`, `coding_events` and `coding_checks` are separate from runs. `coding_events` is append-only (an immutability trigger, and TRUNCATE is blocked) with a gapless per-session `seq` assigned under the session row lock. A coding task is verified only by `CheckRan` evidence whose fingerprint equals the current observed `RepoState.fingerprint` and whose `argv_sha256` equals the digest of the check's current registered definition (docs/02 §10). `continuum` migrates older schemas automatically on start (`ensure_schema`). Migrations are serialized by an advisory lock, and a schema newer than the code is a `schema_too_new` error, never a downgrade.
+**Coding sessions (schema v6).** v6 adds the activity events `ToolCallStarted`, `ToolCallFinished`, `ToolCallUnresolved`, `ToolCallResolved`, `FileImpactObserved`, `SubagentReported` and `CompactionObserved` (D-042), the `coding_blobs` table (full redacted outputs, diffs and long inputs; immutable except within an erasure; row-level security through the session), and full-text `search` columns on events and blobs (D-043). **Coding sessions (schema v5).** `ChatCaptured.role` may be `action`: one of the agent's tool calls from the app's transcript, one line, with `failed` (D-041). Erasure (D-039) and per-role isolation with row-level security (D-040) are described in OPERATIONS.md. **Coding sessions (schema v3, extended in v4).** v4 adds `ChatCaptured` events (the user's words and the agent's last report, captured by app hooks; deduplicated through an index on `payload_json->>'key'`), `AgentJoined.repo_root` (set when a session moves to another checkout), and `repo_key` on sessions and checks (the normalized, credential-free remote URL that identifies the same repository at another path). The v3 event-type constraint is replaced on upgrade. **Coding sessions (schema v3).** `coding_sessions`, `coding_events` and `coding_checks` are separate from runs. `coding_events` is append-only (an immutability trigger, and TRUNCATE is blocked) with a gapless per-session `seq` assigned under the session row lock. A coding task is verified only by `CheckRan` evidence whose fingerprint equals the current observed `RepoState.fingerprint` and whose `argv_sha256` equals the digest of the check's current registered definition (docs/02 §10). `continuum` migrates older schemas automatically on start (`ensure_schema`). Migrations are serialized by an advisory lock, and a schema newer than the code is a `schema_too_new` error, never a downgrade.
 
 ## 6. Portable packet projection (example)
 

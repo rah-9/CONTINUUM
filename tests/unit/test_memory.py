@@ -133,3 +133,94 @@ def test_a_message_that_ends_the_chat_is_flagged():
     assert m["latest"]["ends_chat"] is True
     for text in ("Don't stop the server.", "Add a stop button.", "continue"):
         assert memory.ends_chat(text) is False, text
+
+
+def _supersede(*items: tuple[str, str]) -> list[tuple[int, int | None, int | None]]:
+    c = [{"n": i, "pos": 0, "kind": k, "text": t} for i, (k, t) in enumerate(items, 1)]
+    memory.supersede(c)
+    return [(x["n"], x.get("replaced_by"), x.get("maybe_replaced_by")) for x in c]
+
+
+def test_a_changed_value_replaces_only_the_requirement_about_the_same_thing():
+    """Review: "port 5000 instead of 4000" struck "the timeout must be 4000 ms"."""
+    assert _supersede(("requirement", "Build the server on port 4000"),
+                      ("requirement", "The HTTP timeout must be 4000 ms"),
+                      ("revision", "run the API on port 5000 instead of 4000")) == [
+        (1, 3, None), (2, None, 3), (3, None, None)]
+    # one shared word is only a possible replacement: shown, never struck out
+    assert _supersede(("requirement", "cache results in Redis"),
+                      ("revision", "store sessions in Postgres instead of Redis")) == [
+        (1, None, 2), (2, None, None)]
+    assert _supersede(("requirement", "cache results in Redis"),
+                      ("revision", "cache results in Memcached instead of Redis")) == [
+        (1, 2, None), (2, None, None)]
+    assert _supersede(("requirement", "use `old_export` for the CSV"),
+                      ("revision", "use `new_export` instead of `old_export`"))[0][1] == 2
+
+
+def test_the_agents_words_in_an_answer_never_replace_a_requirement():
+    """Review: the agent asked "keep sessions in Postgres instead of Redis?", the user
+    said "no", and the Redis requirement was struck out by the agent's question."""
+    assert _supersede(
+        ("requirement", "Requirement: cache results in Redis"),
+        ("answer", 'asked "Should I keep sessions in Postgres instead of Redis?" → "no"'),
+    ) == [(1, None, None), (2, None, None)]
+
+
+def test_the_first_request_can_be_replaced_too():
+    out = consolidate(_chat(("user", "Build the server on port 4000."),
+                            ("agent", "Done."),
+                            ("user", "Use port 5000 instead of 4000 for the server."),
+                            ("agent", "Changed."), ("user", "Thanks, all good.")))
+    assert out["first"]["replaced_by"] == 2
+
+
+def _call(seq, key, tool, target, status, *, kind="shell", signals=()):
+    start = {"seq": seq, "type": "ToolCallStarted", "at": "t", "p": {
+        "call_key": key, "tool": tool, "kind": kind, "effect": "write", "source": "app",
+        "input": {"command": target} if kind == "shell" else {"file_path": target}}}
+    finish = {"seq": seq + 1, "type": "ToolCallFinished", "at": "t", "p": {
+        "call_key": key, "tool": tool, "status": status, "exit_code": 1 if status ==
+        "error" else 0, "output_excerpt": "boom" if status == "error" else "ok",
+        "error": "boom" if status == "error" else None, "signals": list(signals)}}
+    return [start, finish]
+
+
+def test_an_open_test_failure_is_not_hidden_by_later_reads():
+    """Review: a failing pytest followed by 12 reads vanished from the brief."""
+    from continuum.coding import worklog
+
+    events = _call(1, "c1", "Bash", "pytest -q", "error")
+    for i in range(12):
+        events += _call(10 + 2 * i, f"r{i}", "Read", f"f{i}.py", "ok", kind="builtin")
+    w = worklog.build(events, lambda p: p)
+    assert [f["target"] for f in w["failures"]] == ["pytest -q"]
+    # a broader run of the same command that passes fixes it
+    events += _call(100, "c2", "Bash", "pytest", "ok")
+    narrow = _call(1, "n1", "Bash", "pytest -q tests/test_x.py", "error") + \
+        _call(3, "n2", "Bash", "pytest", "ok")
+    assert worklog.build(narrow, lambda p: p)["failures"] == []
+
+
+def test_a_subagent_report_is_given_only_to_its_own_subagent():
+    """Review: subagent A (no result) was shown with subagent B's report."""
+    from continuum.coding import worklog
+
+    events = [
+        {"seq": 1, "type": "ToolCallStarted", "at": "t", "p": {
+            "call_key": "a", "tool": "Task", "kind": "subagent", "effect": "delegate",
+            "source": "app", "input": {"description": "audit auth"}}},
+        {"seq": 2, "type": "ToolCallFinished", "at": "t", "p": {
+            "call_key": "a", "tool": "Task", "status": "ok", "output_excerpt": "",
+            "signals": []}},
+        {"seq": 3, "type": "ToolCallStarted", "at": "t", "p": {
+            "call_key": "b", "tool": "Task", "kind": "subagent", "effect": "delegate",
+            "source": "app", "input": {"description": "check billing"}}},
+        {"seq": 4, "type": "ToolCallFinished", "at": "t", "p": {
+            "call_key": "b", "tool": "Task", "status": "ok",
+            "output_excerpt": '{"agentId": "B"}', "signals": []}},
+        {"seq": 5, "type": "SubagentReported", "at": "t", "p": {
+            "agent_id": "B", "report_excerpt": "billing is fine"}},
+    ]
+    subs = {s["target"]: s["report"] for s in worklog.build(events, lambda p: p)["subagents"]}
+    assert subs == {"audit auth": None, "check billing": "billing is fine"}
