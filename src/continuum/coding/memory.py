@@ -340,26 +340,48 @@ def consolidate(turns: list[Turn], context_terms: frozenset[str] = frozenset()
     return out
 
 
-_STOP = frozenset({
-    "the", "and", "for", "that", "this", "with", "from", "into", "what", "which", "there",
-    "their", "they", "them", "then", "than", "have", "will", "would", "should", "could",
-    "using", "make", "made", "just", "also", "please", "about", "after", "before", "when",
-    "where", "while", "your", "you", "our", "can", "now", "all", "any", "some", "more",
-    "less", "only", "very", "much", "many", "each", "every", "other", "like", "need",
-    "want", "does", "done", "doing", "been", "being", "were", "was", "are", "is", "it's",
-    "let's", "okay", "yes", "thanks", "thank", "sure", "here", "these", "those",
-    "still", "again", "first", "next", "last", "same", "keep", "it", "its", "not",
-    "but", "out", "how", "why", "who", "use", "used", "add", "fix", "run", "get", "set"})
-_TERM = re.compile(r"`([^`]+)`|([A-Za-z_][\w./-]{2,})")
+# Words that say nothing about a topic: standard English stopwords, plus the filler of
+# spoken and voice-typed chat ("like, you know, actually"), plus generic coding-chat verbs.
+_STOP = frozenset((  # noqa: SIM905 (a readable word list)
+    "a about above actually after again check checked against ago all almost alone "
+    "along already also "
+    "although always am among an and another any anybody anyone anything anyway anywhere are "
+    "around as ask asked asking at away back basically be became because become been before "
+    "began behind being below best better between big both but by call came can cannot could "
+    "currently did do does doing done down during each either else enough even ever every "
+    "everyone everything fine first for from full further gave get gets getting give given go "
+    "goes going gone gonna good got great had has have having he hello help her here hey him "
+    "his how however i if in indeed instead into is it its itself just keep kind know last "
+    "least let lets like likely little look looking lot lots made make makes making many may "
+    "maybe me mean means might mine more most much must my myself need needs never new next "
+    "no nobody none nor not nothing now of off often oh ok okay on once one only or other "
+    "others otherwise our ours out over own part per perhaps please point pretty probably put "
+    "quite rather really right said same say saying see seem seems shall she should show side "
+    "since so some somebody someone something sometimes somewhere soon still stuff such sure "
+    "take tell than thank thanks that the their them then there therefore these they thing "
+    "things think this those though through thus till to today together too took toward try "
+    "trying two under unless until up upon us use used using very via want wanted wants was "
+    "way we well went were what whatever when where whether which while who whole whom whose "
+    "why will wish with within without won would yeah yes yet you your yours yourself "
+    "definitely especially exactly literally obviously simply totally truly usually add added "
+    "code coding fix fixed run running work working works "
+).split())
+_TERM = re.compile(r"`([^`]+)`|([A-Za-z_][\w'./-]{2,})")
 
 
 def _terms_of(text: str) -> set[str]:
     """Content words and identifiers of a text, lower case (for grounding and the index)."""
     out: set[str] = set()
     for quoted, word in _TERM.findall(text):
-        term = (quoted or word).lower().strip("./-")
-        if len(term) >= 3 and term not in _STOP:
-            out.add(term)
+        term = (quoted or word).lower().strip("./-'")
+        if quoted:
+            if len(term) >= 2:
+                out.add(term)                       # `quoted` is always meant literally
+            continue
+        identifier = any(c in term for c in "_./") or any(c.isupper() for c in word[1:])
+        if "'" in term or term in _STOP or len(term) < (3 if identifier else 4):
+            continue
+        out.add(term)
     return out
 
 
