@@ -255,16 +255,22 @@ def text_of_output(value: Any) -> str:
         return ""
     if isinstance(value, str):
         return value
+    from continuum.coding import media
+
     if isinstance(value, list):
         texts = []
         for part in value:
-            if isinstance(part, dict) and isinstance(part.get("text"), str):
+            if media.is_media(part):        # stored as a blob; never base64 in the text
+                texts.append(media.label(media.describe(media.find(part)[0])))
+            elif isinstance(part, dict) and isinstance(part.get("text"), str):
                 texts.append(part["text"])
             elif isinstance(part, str):
                 texts.append(part)
             else:
                 texts.append(json.dumps(part, ensure_ascii=False, default=str))
         return "\n".join(texts)
+    if isinstance(value, dict) and media.is_media(value):
+        return media.label(media.describe(media.find(value)[0]))
     if isinstance(value, dict):
         for key in ("stdout", "output", "aggregated_output", "content", "llmContent",
                     "result", "text", "returnDisplay"):
@@ -321,6 +327,12 @@ def _str(payload: dict[str, Any], *keys: str) -> str | None:
         if isinstance(value, str) and value.strip():
             return value
     return None
+
+
+def _media(response: Any) -> list[dict[str, str]]:
+    from continuum.coding import media
+
+    return media.find(response)
 
 
 def _cursor_agent(payload: dict[str, Any]) -> str | None:
@@ -448,7 +460,7 @@ def from_hook(app: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     finish = {**common, "phase": "finish", "status": status, "exit_code": exit_code,
               "duration_ms": duration if isinstance(duration, int) else None,
               "output": output, "error": error_text or None,
-              "failure_type": _str(payload, "failure_type")}
+              "failure_type": _str(payload, "failure_type"), "media": _media(response)}
     if low == "afterfileedit":
         return {**finish, "phase": "start_finish"}
     return finish

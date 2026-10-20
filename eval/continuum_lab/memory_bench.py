@@ -386,8 +386,17 @@ def score(markdown: str, conv: Conversation) -> dict[str, Any]:
             items.append((int(m.group(1)), m.group(2).rstrip("…").strip()))
     out["faithful"] = (sum(1 for n, text in items if 0 < n <= len(users)
                            and text in users[n - 1]), len(items))
+    # noise must never become a requirement (D-046: a pasted error is shown, typed, in
+    # its own "Pasted by the user" line, never as the user's instruction)
+    requirement_lines = "\n".join(ln for ln in section.splitlines()
+                                  if not ln.startswith("- **Pasted by the user**"))
     noise = [f for f in conv.facts if f.kind == "noise" and f.probe not in last_two]
-    out["noise_leaks"] = (sum(1 for f in noise if f.probe in markdown), len(noise))
+    out["noise_leaks"] = (sum(1 for f in noise if f.probe in requirement_lines), len(noise))
+    # ... and what the user pasted is understood: its error type reaches the brief
+    pasted = section.split("- **Pasted by the user**", 1)[-1] if (
+        "- **Pasted by the user**" in section) else ""
+    out["pasted_seen"] = (sum(1 for f in noise if "ValueError" in pasted and f.probe in
+                              pasted), len(noise))
     out["tokens"] = len(markdown) // 4
     return out
 

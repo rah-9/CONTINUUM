@@ -49,6 +49,12 @@ DECISION_MAX_ITEMS = 14  # ... up to this many
 DECISION_CHARS = 260
 SHORT_REPLY_CHARS = 60   # longer messages are statements, even when they start with "ok"
 PER_MESSAGE_ITEMS = 6    # a long message cannot crowd out the rest of the chat
+PASTED_SHOWN = 5         # typed summaries of what the user pasted (errors first)
+NEAR_DUPLICATE = 0.8     # word overlap above which a plain statement adds nothing new
+INDEX_MIN_MESSAGES = 12  # shorter chats are shown whole enough without an index
+INDEX_SPAN = 10          # messages per stretch of the chat index ...
+INDEX_MAX_LINES = 12     # ... merged to at most this many lines
+INDEX_TERMS = 4
 
 _STRONG = re.compile(
     r"\b(must|mustn'?t|never|always|do not|don'?t|make sure|ensure|required?|requirements?|"
@@ -133,7 +139,18 @@ def low_information(text: str) -> bool:
 
 
 def prose(text: str) -> list[str]:
-    """The person's prose lines: code blocks, stack traces, logs and diffs removed."""
+    """The person's prose lines: code blocks, stack traces, logs, diffs, JSON and tables
+    removed (they are typed segments, ``segments.py``)."""
+    from continuum.coding.segments import segment
+
+    lines = []
+    for seg in segment(text):
+        if seg.kind == "prose":
+            lines += _prose_lines(seg.text)
+    return lines
+
+
+def _prose_lines(text: str) -> list[str]:
     lines = []
     in_paste = False
     for line in _FENCE.sub("\n", text).splitlines():
@@ -201,19 +218,28 @@ def _question(agent_text: str) -> str | None:
     return asked[-1] if asked else None
 
 
-def consolidate(turns: list[Turn]) -> dict[str, Any]:
-    """The user-side memory of the conversation, within fixed budgets (see module doc)."""
+def consolidate(turns: list[Turn], context_terms: frozenset[str] = frozenset()
+                ) -> dict[str, Any]:
+    """The user-side memory of the conversation, within fixed budgets (see module doc).
+
+    ``context_terms``: words from what the agent actually did (tool inputs, changed
+    files). A requirement that names something the work touched is ranked above one
+    that does not (grounding); ties go to the newer message."""
     users = [t for t in turns if t.role == "user"]
     agents = [t for t in turns if t.role == "agent"]
     out: dict[str, Any] = {"messages": len(users), "chats": _chats(turns), "first": None,
-                           "ledger": [], "recent": [], "latest": None,
+                           "ledger": [], "recent": [], "latest": None, "pasted": [],
+                           "pasted_total": 0, "index": [],
                            "omitted_messages": 0, "omitted_items": 0,
                            "agent_decisions": _decisions(agents)}
     if not users:
         return out
     number = {t.seq: i for i, t in enumerate(users, start=1)}
     latest = users[-1]
-    out["latest"] = _shown(latest, number, LATEST_CHARS, verbatim=True)
+    # the current instruction whole; a long paste in it is summarised by type so the
+    # words typed after it are not cut off
+    out["latest"] = _shown(latest, number, LATEST_CHARS,
+                           verbatim=len(latest.text) <= LATEST_CHARS)
     out["latest"]["ends_chat"] = ends_chat(latest.text)
     asked = _preceding_question(latest, turns)
     if asked and _is_reply(latest.text):
@@ -223,6 +249,7 @@ def consolidate(turns: list[Turn]) -> dict[str, Any]:
 
     # ledger candidates from every message except the latest (shown whole)
     candidates: list[dict[str, Any]] = []
+    pasted: list[dict[str, Any]] = []
     for u in users[:-1]:
         shown_first = u is users[0] and len(" ".join(u.text.split())) <= FIRST_CHARS
         items = []
@@ -235,6 +262,9 @@ def consolidate(turns: list[Turn]) -> dict[str, Any]:
                 found = classify(sentence)
                 if found:
                     items.append((found[0], found[1], _clip(sentence, ITEM_CHARS)))
+        for kind, strength, text in pasted_items(u.text):
+            pasted.append({"n": number[u.seq], "kind": kind, "strength": strength,
+                           "text": text, "at": u.at, "source": u.source})
         for pos, (kind, strength, text) in enumerate(items[:PER_MESSAGE_ITEMS]):
             candidates.append({"n": number[u.seq], "pos": pos, "kind": kind,
                                "strength": strength, "text": text, "at": u.at,
@@ -257,20 +287,36 @@ def consolidate(turns: list[Turn]) -> dict[str, Any]:
         for key in ("replaced_by", "maybe_replaced_by"):
             if first_item[0].get(key):
                 out["first"][key] = first_item[0][key]
-    # fill the budget: revisions/answers and strong cues first, newer before older;
-    # requirements a later message replaced go last (they are shown only as history)
+    # fill the budget: revisions/answers and strong cues first; within a tier, items
+    # grounded in what the agent did, then newer before older; requirements a later
+    # message replaced go last (they are shown only as history)
+    for c in candidates:
+        c["grounded"] = bool(context_terms) and bool(_terms_of(c["text"]) & context_terms)
     ranked = sorted(candidates, key=lambda c: (c.get("replaced_by") is None, c["strength"],
-                                               c["n"]), reverse=True)
+                                               c["grounded"], c["n"]), reverse=True)
     budget = ledger_budget(len(users))
     chosen, used = [], 0
+    chosen_words: list[set[str]] = []
     for c in ranked:
         cost = len(c["text"]) + 12
+        words = set(_norm(c["text"]).split())
+        # near-duplicates of something already kept add nothing (diversity, MMR-style)
+        if c["kind"] == "statement" and any(_jaccard(words, w) > NEAR_DUPLICATE
+                                            for w in chosen_words):
+            out["omitted_items"] += 1
+            continue
         if used + cost > budget:
             out["omitted_items"] += 1
             continue
         chosen.append(c)
+        chosen_words.append(words)
         used += cost
     out["ledger"] = sorted(chosen, key=lambda c: (c["n"], c["pos"]))
+    # what the user pasted, newest first by importance (errors first), as typed
+    # summaries outside the requirements: a fact to look at, not an instruction
+    shown = sorted(pasted, key=lambda p: (p["strength"], p["n"]), reverse=True)
+    out["pasted"] = sorted(shown[:PASTED_SHOWN], key=lambda p: p["n"])
+    out["pasted_total"] = len(pasted)
 
     # recent messages whole, if they carry content the ledger did not already keep
     in_ledger = {c["n"] for c in out["ledger"]}
@@ -290,7 +336,86 @@ def consolidate(turns: list[Turn]) -> dict[str, Any]:
                 r[key] = probe[key]
     represented = in_ledger | {r["n"] for r in out["recent"]} | {1, len(users)}
     out["omitted_messages"] = len(users) - len(represented)
+    out["index"] = chat_index(users, number) if len(users) >= INDEX_MIN_MESSAGES else []
     return out
+
+
+_STOP = frozenset({
+    "the", "and", "for", "that", "this", "with", "from", "into", "what", "which", "there",
+    "their", "they", "them", "then", "than", "have", "will", "would", "should", "could",
+    "using", "make", "made", "just", "also", "please", "about", "after", "before", "when",
+    "where", "while", "your", "you", "our", "can", "now", "all", "any", "some", "more",
+    "less", "only", "very", "much", "many", "each", "every", "other", "like", "need",
+    "want", "does", "done", "doing", "been", "being", "were", "was", "are", "is", "it's",
+    "let's", "okay", "yes", "thanks", "thank", "sure", "here", "these", "those",
+    "still", "again", "first", "next", "last", "same", "keep", "it", "its", "not",
+    "but", "out", "how", "why", "who", "use", "used", "add", "fix", "run", "get", "set"})
+_TERM = re.compile(r"`([^`]+)`|([A-Za-z_][\w./-]{2,})")
+
+
+def _terms_of(text: str) -> set[str]:
+    """Content words and identifiers of a text, lower case (for grounding and the index)."""
+    out: set[str] = set()
+    for quoted, word in _TERM.findall(text):
+        term = (quoted or word).lower().strip("./-")
+        if len(term) >= 3 and term not in _STOP:
+            out.add(term)
+    return out
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    return len(a & b) / len(a | b) if a and b else 0.0
+
+
+def chat_index(users: list[Turn], number: dict[int, int]) -> list[dict[str, Any]]:
+    """An index of the whole conversation, so nothing is out of reach (D-046): the chat
+    cut into stretches (a new app or chat, an hour's pause, or every
+    ``INDEX_SPAN`` messages), each named by its most distinctive words (tf-idf against the
+    rest of the chat), not by a keyword list. The next model asks ``coding_recall`` for a
+    stretch it needs."""
+    import math
+
+    docs = [_terms_of(" ".join(prose(u.text))) for u in users]   # the person's words
+    df: dict[str, int] = {}
+    for d in docs:
+        for t in d:
+            df[t] = df.get(t, 0) + 1
+    spans: list[list[int]] = []
+    for i, u in enumerate(users):
+        start_new = not spans or len(spans[-1]) >= INDEX_SPAN or (
+            users[spans[-1][-1]].chat, users[spans[-1][-1]].source) != (u.chat, u.source)
+        if not start_new and spans:
+            gap = _gap_seconds(users[spans[-1][-1]].at, u.at)
+            start_new = gap is not None and gap > 3600
+        if start_new:
+            spans.append([i])
+        else:
+            spans[-1].append(i)
+    while len(spans) > INDEX_MAX_LINES:           # merge the smallest neighbouring pair
+        k = min(range(len(spans) - 1), key=lambda j: len(spans[j]) + len(spans[j + 1]))
+        spans[k:k + 2] = [spans[k] + spans[k + 1]]
+    total = len(users)
+    out = []
+    for span in spans:
+        tf: dict[str, int] = {}
+        for i in span:
+            for t in docs[i]:
+                tf[t] = tf.get(t, 0) + 1
+        score = {t: n * math.log(1 + total / df[t]) for t, n in tf.items()}
+        top = sorted(score, key=lambda t: (-score[t], t))[:INDEX_TERMS]
+        first, last = users[span[0]], users[span[-1]]
+        out.append({"from": number[first.seq], "to": number[last.seq],
+                    "source": first.source, "terms": top})
+    return out
+
+
+def _gap_seconds(a: str, b: str) -> float | None:
+    from datetime import datetime
+
+    try:
+        return (datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds()
+    except (TypeError, ValueError):
+        return None
 
 
 # What a change of mind replaces: "use B instead of A", "B rather than A", "change it
@@ -381,13 +506,24 @@ def supersede(candidates: list[dict[str, Any]]) -> None:
 
 
 def readable(text: str) -> str:
-    """A message as prose: pasted output (logs, traces, code) replaced by a short marker."""
-    kept = prose(text)
-    total = len([line for line in _FENCE.sub("\n<pasted>\n", text).splitlines()
-                 if line.strip()])
-    dropped = total - len(kept)
-    body = " ".join(kept)
-    return body + (f" [{dropped} pasted line(s) omitted]" if dropped > 0 else "")
+    """A message as prose, each pasted block (trace, diff, log, JSON, table, code)
+    replaced in place by its typed summary; the full text stays in the journal."""
+    from continuum.coding.segments import readable as typed
+
+    return typed(text)
+
+
+def pasted_items(text: str) -> list[tuple[str, int, str]]:
+    """Ledger items for what the user pasted: an error, a diff or a table is a fact the
+    next model needs, summarised by structure (D-046)."""
+    from continuum.coding.segments import technical
+
+    items = []
+    for seg in technical(text):
+        strength = 2 if seg.kind == "traceback" else 1
+        if seg.kind in ("traceback", "diff", "table", "json", "log", "code", "shell"):
+            items.append(("pasted", strength, f"pasted {seg.summary}"))
+    return items
 
 
 def ledger_budget(messages: int) -> int:

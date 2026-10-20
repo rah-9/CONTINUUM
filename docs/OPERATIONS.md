@@ -112,7 +112,9 @@ Upgrades: re-running `continuum db-init` adds new constraints and indexes to an 
   continuum coding resolve SESSION CALL --outcome applied|not_applied|accepted_unknown \
       --actor alice --reason "the push never reached origin"
   ```
-- **Drill-down:** `continuum coding show SESSION --seq N` (or `--blob ID`) prints any `[#N]` from the brief, or a stored output or diff.
+- **Drill-down:** `continuum coding show SESSION --seq N` (or `--blob ID`) prints any `[#N]` from the brief, or a stored output or diff. `continuum coding media SESSION ID --out FILE` saves an `[image #ID]` (a screenshot from the chat or a tool).
+- **Lost pushes proven automatically** (D-047): after a turn, each unresolved external `git push` is checked with `git ls-remote` (read-only, no credential prompt, 15 s timeout). When the remote shows the pushed commit, it is recorded as applied by `reconciler:git` with the evidence and the block lifts. If the remote is unreachable or shows another commit, nothing is recorded and a person decides as before.
+- **Images and long messages** (D-046): images and documents in chats and tool results are kept in `coding_media` (up to 10 MB each; larger ones are described, not stored). Messages of any length are kept whole (a blob beyond 16,000 characters).
 
 ## Data retention and erasure (coding sessions)
 

@@ -9,7 +9,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 REQUIRED_PREFIXES = {
-    **{f"R{i}": 1 for i in range(1, 17)}, **{f"U{i}": 1 for i in range(1, 10)},
+    **{f"R{i}": 1 for i in range(1, 19)}, **{f"U{i}": 1 for i in range(1, 10)},
     **{f"I{i}": 1 for i in range(1, 9)}, **{f"NF{i}": 1 for i in range(1, 10)},
     **{f"G{i}": 1 for i in range(1, 7)},
 }
