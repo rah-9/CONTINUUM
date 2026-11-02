@@ -98,6 +98,27 @@ def test_an_oversized_memory_is_tightened_then_bounded(coding, repo):
     assert coding.brief(sid)["markdown"].count("### Section") == 3   # every section kept
 
 
+def test_any_overflow_is_tightened_and_the_newest_facts_survive_the_cut():
+    """Found on the real 255k-token session: a memory just over the cap skipped the
+    tightening and was cut to equal shares from the end of each section, so the newest
+    facts (appended last) were lost and late questions scored 0/4."""
+    def memory(n: int) -> str:
+        return "\n".join(f"## Section {k}\n" + "".join(f"- old fact {k}.{i}\n" for i in range(n))
+                         + f"- NEWEST fact {k}\n" for k in range(7))
+    over = memory(int(wm.MEMORY_CHARS * 1.05 / 7 / 16))
+    assert wm.MEMORY_CHARS < len(over) < wm.MEMORY_CHARS * 1.15
+    model = Scripted([over, over])                     # it overflows, then ignores the cap
+    text, _, calls = wm.update_text(model, "", [(1, "USER: x" * 100)])
+    assert calls == 2                                  # tightened although only 5% over
+    assert len(text) <= wm.MEMORY_CHARS
+    assert all(f"NEWEST fact {k}" in text for k in range(7))
+    big = "## Big\n" + "".join(f"- b{i}\n" for i in range(4000)) + "- NEWEST big\n"
+    small = "## Small\n- s1\n- NEWEST small\n"
+    cut = wm._bounded(big + small)
+    assert "NEWEST big" in cut and "NEWEST small" in cut and "- s1" in cut
+    assert "omitted" in cut                            # the cut is visible
+
+
 def test_a_failing_model_writes_nothing(coding, repo):
     sid = _session(coding, repo, "Build the CSV export with a long enough first message.")
 
