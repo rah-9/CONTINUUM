@@ -31,6 +31,10 @@ from continuum_lab.harness import ModelFaults, build_runtime, fake_router, make_
 from continuum_lab.tasks.catalog import get_task
 from continuum_lab.tasks.definition import ServiceEnv, TaskDefinition
 
+# Tests never call a real model: the working memory (D-048) is off unless a test sets a
+# fake one (AGENTS.md: deterministic fake model by default; live calls are opt-in).
+os.environ.setdefault("CONTINUUM_MEMORY_MODEL", "off")
+
 DSN = os.environ.get("CONTINUUM_TEST_DATABASE_URL",
                      "postgresql://continuum:continuum@localhost:5432/continuum_test")
 

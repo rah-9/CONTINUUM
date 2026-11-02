@@ -98,8 +98,8 @@ class Lock:
     the kernel when its process exits, so it never goes stale and is never taken over
     while its holder is still working."""
 
-    def __init__(self) -> None:
-        self.path = spool_dir() / "drain.lock"
+    def __init__(self, name: str = "drain") -> None:
+        self.path = spool_dir() / f"{name}.lock"
         self.fd: int | None = None
 
     @property

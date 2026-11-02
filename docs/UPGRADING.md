@@ -13,6 +13,16 @@ an older installation stops with `schema_too_new`.
 4. **Check** with `continuum doctor`. It must report `"ok": true`.
 5. **Upgrade every machine** that uses the same database. An older Continuum refuses to start on the newer schema instead of writing to it.
 
+## 1.0.0rc3 → 1.0.0rc4
+
+Schema v7 → v8. Automatic; nothing is rewritten.
+
+| Change | What you do |
+|---|---|
+| **Working memory** written by a model in the background (D-048), a new event `WorkingMemoryUpdated`. | Nothing if Claude Code is installed (Haiku, your own login). To use another model set `CONTINUUM_MEMORY_MODEL`; to send nothing to a model set it to `off`. |
+| **Upgrade fix:** databases with tool-call events no longer fail the schema upgrade. | Nothing. |
+| **`continuum coding memory`** | Nothing. |
+
 ## 1.0.0rc2 → 1.0.0rc3
 
 Schema v6 → v7. Automatic; nothing is rewritten.

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0rc4 — unreleased
+
+Working memory that a model keeps (D-048; schema v8). Measured on this project's own 255k-token session in `eval/compression_test` (results in its `RESULTS.md`).
+
+### Added
+- **Working memory:** after each turn, a model updates a structured memory of the session in seven sections (goal, user decisions, what was built, problems and fixes, results, research, open items), part by part, in the background. The brief shows it first, labelled as a model's account up to `#N`. Default `claude-cli:haiku` when Claude Code is installed; any LiteLLM provider, a local Ollama model, or an OpenAI-compatible endpoint (`CONTINUUM_MEMORY_MODEL`, `CONTINUUM_MEMORY_API_BASE`); `off` keeps the rule-based brief.
+- `continuum coding memory [--update]` shows or updates it.
+- `eval/compression_test`: the 32-question test of context-compression methods on a real session.
+
+### Fixed
+- Upgrading a database that already had tool-call events failed: an old v4 step re-created the event-type check with a short list (`CheckViolation`). Found by upgrading the live-test database; regression test added.
+
 ## 1.0.0rc3 — unreleased
 
 Lossless memory with a real grasp of technical content, the chat's real shape, and unknown

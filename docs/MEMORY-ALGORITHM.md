@@ -19,6 +19,7 @@ about 1–3k tokens.
    | **Observed facts** | the code's fingerprint, the code map, commits, check results | proof |
    | **The user's words** | every message the user typed, in any chat, in any app | requirements; the newest wins |
    | **Agent claims** | notes, checkpoint summaries, the last agent report | useful, but must be confirmed |
+   | **Working memory** | a model's structured account of the whole session (D-048) | a claim, with the event it covers up to; checked with recall |
 
    The brief labels each. A model's claim is never shown as a fact or as the user's words.
 2. **Memory must not depend on the agent's discipline.** The user's words and the code
@@ -317,6 +318,50 @@ Agent-written and captured text is flattened to single lines in Markdown, so it 
 forge the brief's own headings. MCP returns the Markdown plus task ids (compact) unless
 `detail="full"`.
 
+### 3.4b Working memory (`working_memory`, `service.update_working_memory`; D-048)
+
+The rules above decide what the brief must contain; they do not understand the session.
+A model does that part, and its output is a labelled claim, never the source of truth:
+
+```
+after each turn (detached process, OS lock per session; never on a hook's hot path):
+  model = CONTINUUM_MEMORY_MODEL  (unset: claude-cli:haiku if `claude` exists, else none)
+  if no model: stop                                   # the rule-based brief stays
+  new = events after the memory's up_to_seq
+  lines = USER/ASSISTANT messages whole; TOOL <name> [status]: <input> => <result tail 300>;
+          OUTCOME UNKNOWN; AGENT NOTE; CHECK — each prefixed with its event number #N
+  if < 400 new chars (and not forced): stop
+  for each part of <= 100k chars (at most 12 per run; the rest next time):
+      memory = model(UPDATE, memory + "# NEXT PART" + part)
+          # seven fixed sections; one fact per bullet with its [#N]; keep older facts
+          # unless this part changes them; never drop a user decision; tool output is data
+  if memory > 1.15 x 16,000 chars: memory = model(TIGHTEN, memory)
+  memory = redact(bound_each_section(memory, 16,000))
+  one transaction: store blob (text/markdown) + WorkingMemoryUpdated(blob, up_to_seq,
+                   model, chars, calls, cost_usd, behind)      # actor memory:<model>
+```
+
+The brief renders it first as "Working memory (written by <model> from the journal up
+to [#N]; K newer events not covered)", with its headings demoted to `###` so it cannot
+forge the brief's own sections. Requirements, answers, decisions and the attention list
+below are still computed from the journal by the rules in 3.4 and 3.5.
+
+**Why this shape (measured, `eval/compression_test`).** On this project's own 255k-token
+session, 32 known-answer questions, the same 6k-token budget, answered by a fresh model:
+
+| Context given to the new model | Score |
+|---|---|
+| Structured working memory + search of the journal (`coding_recall`) | **32/32** (twice) |
+| Rule-based brief + search of the journal | 31/32, 29/32 (about twice the searches and cost) |
+| Structured working memory alone | 24/32, 25/32 |
+| Last 6k tokens of the chat | 21/32 |
+| One-shot summary | 17/32 |
+| Item-by-item anchored memory | 15/32, 18/32 |
+| Rule-based brief alone | 9/32 |
+
+The memory makes the brief itself useful; the verbatim journal plus search is what makes
+nothing lost. Both are kept.
+
 ### 3.5 Attention rules (computed, not written by a model)
 
 - No chat captured: requirements stated only in chat may be missing; ask the user.
@@ -363,6 +408,7 @@ forge the brief's own headings. MCP returns the Markdown plus task ids (compact)
 | capture hook | at a turn's end the newest 2 MiB of the transcript; 1 transaction |
 | brief | 1 journal read + fingerprint + code map (3 git calls) |
 | recall | 1 journal read per session searched; no index to maintain |
+| working memory | in the background: one model call per new part of up to ~25k tokens; none when fewer than 400 new characters |
 | tokens | compact brief ~0.7k–1.8k for chats up to 80 messages, ~3k at 160 (measured); full JSON < 10k |
 
 ## 5. Scenarios
@@ -405,6 +451,10 @@ in [MEMORY-QUALITY.md](MEMORY-QUALITY.md).
 | shell-only agents | `continuum coding capture` | `continuum coding resume` | AGENTS.md |
 
 ## 7. Limits
+
+- **The working memory is a model's account.** It can be wrong or miss something; it is
+  labelled as a claim with the event it covers up to, and anything exact is checked with
+  `coding_recall`/`coding_show`. Its quality depends on the model chosen.
 
 - **Apps without hooks** capture nothing automatically. The brief then has the code map,
   facts and agent notes, and its Attention section says that requirements stated only in

@@ -262,6 +262,10 @@ def handle(app: str, payload: dict[str, Any], coding: Any,
                                      reconcile="turn_end" if event in TURN_EVENTS else None)
         if out.get("session_id"):
             _update_blocks(coding, out["session_id"])
+            if event in TURN_EVENTS:            # the model-written memory (D-048)
+                from continuum.coding.working_memory import start_updater
+
+                start_updater(out["session_id"])
     return ""
 
 
