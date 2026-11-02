@@ -365,7 +365,9 @@ session, 32 known-answer questions, the same 6k-token budget, answered by a fres
 The first product build scored below the test's own memory because a size guard cut
 every section's newest bullets; fixed (any overflow is tightened by the model; a
 last-resort cut keeps each section's first and newest bullets), with the cap raised to
-24,000 characters, the size measured. An earlier "32/32 with search" was invalid: the
+24,000 characters, the size measured; re-scored, the fixed build answered 12/32 alone and
+18/32 with search, still below the test's own build (open work: it is tightened along the
+way, the test's build was not). An earlier "32/32 with search" was invalid: the
 searched journal contained the test's answer key (`eval/compression_test/RESULTS.md`).
 
 The memory makes the brief itself useful; the verbatim journal stays the source of truth

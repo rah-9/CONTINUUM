@@ -47,7 +47,15 @@ could find them. On a clean copy the scores are those above. `clean-copy` now pr
 size guard cut each section to an equal share from the end, where the model appends the
 newest facts: the late questions scored 0/4. Fixed: any overflow is tightened by the
 model, and a last-resort cut keeps each section's first and newest bullets. The cap is
-24,000 characters, the size the test measured. The fixed build has not been re-scored yet.
+24,000 characters, the size the test measured.
+
+**Fixed product build, re-scored:** 12/32 alone, 18/32 with search (memory 22,979
+characters, 14 Haiku calls, $0.31). It is still well below the test's own build
+(24–25/32), though both read nearly the same history (about 1.05M characters in 11
+parts). The likely cause is the size guard. The test's build never tightened: it grew to
+38k characters and the reader saw its first 24k. The product's build was squeezed back
+under 24k three times along the way, and each squeeze loses detail. Matching the test's
+quality is open work.
 
 By part, for the best method and the old default:
 
