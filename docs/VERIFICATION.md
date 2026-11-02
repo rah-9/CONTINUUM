@@ -77,6 +77,8 @@ eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-sw
 | Scenario test (v0.8.0) | A key pasted into chat was stored unless it was in this process's environment | `test_s7_secrets_pasted_into_chat_are_never_stored` |
 | Real handoff trial (v0.8.0) | `continuum … \| head` crashed with a `BrokenPipeError` traceback | `test_p3_cli_output_into_a_closed_pipe_is_not_a_crash` |
 | Code review (v0.8.0) | The code map read an untracked file whole (a multi-GB data file into memory) | bounded scan in `repo._scan_new_file` |
+| Upgrading the live-test database (1.0.0rc4) | A database with tool-call events failed the schema upgrade: an old v4 step re-created the event-type check with a short list | `test_a_database_with_tool_calls_upgrades_again` |
+| Compression test on a real session (1.0.0rc4) | The rule-based brief answered only 9 of 32 questions about a 255k-token session (a design gap, not a crash): fixed by the model-written working memory (D-048) | `eval/compression_test`, `tests/integration/test_working_memory.py` |
 | Real handoff trial (v0.7.0) | Every `continuum` in paths and commands was redacted, because the default DB password is that dictionary word | `test_dictionary_word_url_passwords_never_corrupt_ordinary_text` |
 | Real handoff trial (v0.7.0) | Decision reasons and next steps were clipped at 300 characters, so the next model lost the *why* | `test_b4_decision_reasons_and_next_steps_reach_the_next_model_whole` |
 | Real handoff trial (v0.7.0) | The commit id was part of the fingerprint, so every commit flagged verified work as needing re-verification | `test_committing_or_staging_identical_content_keeps_the_fingerprint` |
@@ -85,7 +87,12 @@ eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-sw
 | Core audit (v0.6.2) | Transient verifier error treated as drift (run failed); one process re-entered a live lease; DNS rebinding; orphan run on a bad model alias; raw tracebacks from config/MCP/CLI; zero registry cost recorded as $0; secrets in rejection reasons; malformed provider responses; unvalidated blob refs | `tests/integration/test_core_hardening.py` (K1–K9) |
 | Full-codebase audit (v0.6.1) | 23 coding-layer issues: fail-open git fingerprint, diff drivers, no-HEAD staged changes, orphan sessions, closed-session check runs, `human:` spoofing, brief forging, schema downgrade, migration race, CLI `--`, rename parsing and others | `tests/integration/test_coding_hardening.py` (H1–H21) |
 
-## Latest results (2026-10-19, v1.0.0rc1)
+## Latest results (2026-11-02, v1.0.0rc4)
+
+- `make check`: ruff clean, `mypy --strict` clean. **491 passed**, 5 live tests skipped (opt-in). Tests never call a real model: the working memory is tested with scripted fakes.
+- Context compression on a real 255k-token session: see [`eval/compression_test/RESULTS.md`](../eval/compression_test/RESULTS.md).
+
+## Results of 2026-10-19 (v1.0.0rc1)
 
 - `make check`: ruff clean, `mypy --strict` clean. **482 passed**, 5 live tests skipped (opt-in). CI runs the same gates against PostgreSQL 16 on Linux, and the unit, integration and contract suites on Windows and macOS.
 - **Hardened schema:** the whole suite, including chaos, runs against the new CHECK constraints with zero violations. The runtime never writes a state the database considers invalid.

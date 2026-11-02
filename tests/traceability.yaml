@@ -268,3 +268,9 @@ R18_unknown_outcomes_resolved_by_proof:
   - tests/integration/test_capture_review.py::test_a_lost_push_is_checked_against_the_remote_never_assumed
   - tests/unit/test_activity.py::test_push_commands_are_parsed_for_a_read_only_probe
   - tests/unit/test_activity.py::test_a_probe_never_runs_with_injected_options
+R19_working_memory:
+  - tests/integration/test_working_memory.py::test_the_memory_leads_the_brief_and_is_updated_incrementally
+  - tests/integration/test_working_memory.py::test_without_a_model_the_brief_is_rule_based_and_says_nothing_false
+  - tests/integration/test_working_memory.py::test_model_text_cannot_forge_the_brief_or_leak_a_secret
+  - tests/integration/test_working_memory.py::test_a_failing_model_writes_nothing
+  - tests/integration/test_upgrade.py::test_a_database_with_tool_calls_upgrades_again

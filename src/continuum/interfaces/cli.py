@@ -160,6 +160,11 @@ def build_parser() -> argparse.ArgumentParser:
     shw.add_argument("--seq", type=int)
     shw.add_argument("--blob")
     shw.add_argument("--offset", type=int, default=0)
+    mem = csub.add_parser("memory", help="the model-written working memory (D-048): "
+                                         "update it now, or show it")
+    mem.add_argument("--repo", default=".")
+    mem.add_argument("--session")
+    mem.add_argument("--update", action="store_true", help="bring it up to date now")
     med = csub.add_parser("media", help="save an image or document from the chat or a tool "
                                         "result ([image #...] in the brief) to a file")
     med.add_argument("session")
@@ -414,6 +419,16 @@ def _coding(sdk: Continuum, args: argparse.Namespace) -> int:
         case "show":
             _print(coding.show(args.session, seq=args.seq, blob=args.blob,
                                offset=args.offset))
+        case "memory":
+            sid = args.session or coding.latest_active(args.repo)
+            if args.update:
+                _print(coding.update_working_memory(sid, force=True))
+            else:
+                brief = coding.brief(sid)
+                section = brief["markdown"].split("## Working memory", 1)
+                _print({"session_id": sid, "working_memory": brief.get("working_memory"),
+                        "markdown": ("## Working memory" + section[1].split("\n## ", 1)[0])
+                        if len(section) > 1 else None})
         case "media":
             found = coding.media(args.session, args.image)
             Path(args.out).write_bytes(found.pop("content"))

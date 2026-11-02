@@ -20,6 +20,9 @@ Follow these rules in every session:
      output tails or registered commands.
 2. **Trust facts, follow the user, verify claims.**
    - The brief's `verified_facts` were observed by Continuum: code fingerprint, check results.
+   - "Working memory", when present, is a model's structured account of the whole session up
+     to the event it names. Use it to understand the work; check anything exact (a value, a
+     path, a decision) with `coding_recall` or `coding_show` before relying on it.
    - "What the user asked" is the user's own words from earlier chats, in any app. Treat it as
      the requirements; when two requests conflict, the newer one wins.
    - `agent_notes` and the last agent report are what earlier models said. Confirm critical

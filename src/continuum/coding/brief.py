@@ -94,6 +94,7 @@ class SessionView:
     session_changes: dict[str, Any] | None = None
     chat: list[dict[str, Any]] = field(default_factory=list)
     withdrawn: int = 0          # user messages on abandoned branches (rewind, edit)
+    working_memory: dict[str, Any] | None = None   # the latest WorkingMemoryUpdated
     tools: list[dict[str, Any]] = field(default_factory=list)   # D-042 activity events
     moves: list[dict[str, Any]] = field(default_factory=list)  # checkout changes
     start_branch: str | None = None
@@ -203,6 +204,8 @@ class SessionView:
                            "changed_during_session": self._registered_after_start(c)}
                     for name, c in sorted(self.registered_checks.items())},
             },
+            "working_memory": ({k: v for k, v in self.working_memory.items()}
+                               if self.working_memory else None),
             "user_requests": memory,
             "work_log": self.work_log(),
             "attention": self.attention(memory),
@@ -436,6 +439,8 @@ def build_view(session: dict[str, Any], events: list[dict[str, Any]], current: R
                 # the transcript's copy of a message captured live: only its time is new
                 base = str(p.get("key", "")).split("@", 1)[0]
                 alias_times.setdefault(base, []).append(p.get("sent_at"))
+            case "WorkingMemoryUpdated":
+                view.working_memory = {**p, "seq": e["seq"], "at": at}
             case "ChatWithdrawn":
                 withdrawn_keys.update(p.get("keys") or [])
             case "ChatCaptured":
@@ -524,6 +529,7 @@ def render_markdown(view: SessionView, d: dict[str, Any] | None = None) -> str:
              "Agents so far: " + _agents_line(view.agents)]
     if d["attention"]:
         lines += ["", "## Attention", ""] + [f"- ⚠ {_line(a, 400)}" for a in d["attention"]]
+    lines += _render_working_memory(view)
     lines += _render_memory(d["user_requests"])
     lines += ["", "## Verified facts (observed by Continuum)", "",
              f"- Code now: {cur['vcs']} `{(cur.get('head') or '')[:12]}` on "
@@ -611,6 +617,26 @@ def render_markdown(view: SessionView, d: dict[str, Any] | None = None) -> str:
 
 def _absolute(path: str) -> bool:
     return path.startswith(("/", "~")) or (len(path) > 2 and path[1] == ":")
+
+
+def _render_working_memory(view: SessionView) -> list[str]:
+    """The model-written understanding of the session (D-048), first, labelled as what it
+    is: a model's account of the journal, with sources the next model can check."""
+    from continuum.coding import working_memory as wm
+
+    m = view.working_memory
+    if not m or not m.get("text"):
+        return []
+    behind = max(0, view.last_seq - int(m["up_to_seq"]) - 1)
+    note = (f"; {behind} newer event(s) are not in it yet: see the sections below"
+            if behind else "")
+    head = [
+        "", f"## Working memory (written by {_line(m['model'], 60)} from the journal up "
+            f"to [#{m['up_to_seq']}]{note})", "",
+        "_A model's account of the whole session, in sections, with the source event of "
+        "each fact as [#N]. The user's own words, observed facts and checks below win if "
+        "they disagree; `coding_recall` / `coding_show` give the original._", ""]
+    return [*head, *wm.render(m["text"])]
 
 
 def _maybe(item: dict[str, Any]) -> str:

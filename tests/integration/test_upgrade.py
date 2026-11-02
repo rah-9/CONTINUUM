@@ -73,6 +73,30 @@ def test_a_0_9_database_upgrades_to_1_0_without_losing_anything(store, old_schem
             rls = conn.execute(b"SELECT relrowsecurity FROM pg_class "
                                b"WHERE oid = 'coding_sessions'::regclass").fetchone()
             conn.rollback()
-        assert version == "7" and rls["relrowsecurity"] is True
+        assert version == Store.SCHEMA_VERSION and rls["relrowsecurity"] is True
     finally:
         old.close()
+
+
+def test_a_database_with_tool_calls_upgrades_again(store, tmp_path, monkeypatch):
+    """Upgrading a database that already holds tool calls (rc2+) re-ran an old step that
+    re-added the v4 list of event types and failed on those rows: found by upgrading a
+    real session's database from v7 to v8."""
+    monkeypatch.setenv("CONTINUUM_HOME", str(tmp_path / "home"))
+    repo = tmp_path / "app"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    coding = CodingContinuity(store, clock=SystemClock(), ids=RandomIds())
+    coding.capture(str(repo), [Message("user", "Fix the export.")], source="claude-code")
+    coding.record_activity(str(repo), [
+        {"v": 1, "app": "claude-code", "chat": "c", "phase": "start", "call_key": "call:1",
+         "tool": "Bash", "kind": "shell", "effect": "write", "input": {"command": "ls"}}],
+        source="claude-code")
+    with psycopg.connect(DSN, autocommit=True,
+                         options=f"-c search_path={store.schema}") as conn:
+        conn.execute(b"UPDATE schema_meta SET value = '7' WHERE key = 'schema_version'")
+    assert store.ensure_schema() is True                  # v7 -> current, with tool calls
+    with psycopg.connect(DSN, options=f"-c search_path={store.schema}") as conn:
+        version = conn.execute(b"SELECT value FROM schema_meta WHERE key = "
+                               b"'schema_version'").fetchone()[0]
+    assert version == Store.SCHEMA_VERSION
