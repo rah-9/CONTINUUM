@@ -28,6 +28,7 @@ class CodingEventType(StrEnum):
     COMPACTION_OBSERVED = "CompactionObserved"
     SUBAGENT_REPORTED = "SubagentReported"
     CHAT_WITHDRAWN = "ChatWithdrawn"
+    WORKING_MEMORY_UPDATED = "WorkingMemoryUpdated"
 
 
 NoteKind = Literal["decision", "context", "next_step", "blocker"]
@@ -269,6 +270,21 @@ class ChatWithdrawn(_P):
     chat_id: str | None = None
 
 
+class WorkingMemoryUpdated(_P):
+    """The session's working memory as a model wrote it from the journal (D-048): the
+    text is the blob ``blob``; it covers events up to ``up_to_seq``. A model's account,
+    shown as a claim; the journal stays the source of truth. ``cost_usd`` None: the
+    provider did not report a cost (never assumed zero)."""
+
+    blob: str
+    up_to_seq: int
+    model: str
+    chars: int
+    calls: int
+    cost_usd: float | None = None
+    behind: int = 0              # events still not covered (a backlog over MAX_PARTS)
+
+
 PAYLOADS: dict[CodingEventType, type[_P]] = {
     CodingEventType.SESSION_STARTED: SessionStarted,
     CodingEventType.AGENT_JOINED: AgentJoined,
@@ -287,5 +303,6 @@ PAYLOADS: dict[CodingEventType, type[_P]] = {
     CodingEventType.COMPACTION_OBSERVED: CompactionObserved,
     CodingEventType.SUBAGENT_REPORTED: SubagentReported,
     CodingEventType.CHAT_WITHDRAWN: ChatWithdrawn,
+    CodingEventType.WORKING_MEMORY_UPDATED: WorkingMemoryUpdated,
 }
 TYPE_OF: dict[type[_P], CodingEventType] = {v: k for k, v in PAYLOADS.items()}

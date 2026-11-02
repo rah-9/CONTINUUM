@@ -51,6 +51,25 @@ Continuum brief carried the same requirements in **~2.1k tokens**. In Trials 2�
 B used ~14–17k work tokens and read 3–4 files. Without it, B used ~21–29k, read 12+ files
 and still delivered the wrong thing.
 
+### Context compression, measured on a real 255k-token session (1.0.0rc4)
+
+32 known-answer questions about this project's own development session; every method gets
+the same ~6k-token budget; a fresh model answers from that context alone, or with search
+over the journal (`coding_recall`). Method and harness: [`eval/compression_test`](eval/compression_test/RESULTS.md).
+
+| What the new model is given | Correct |
+|---|---|
+| **Working memory (model-written) + search of the journal** | **32/32**, twice |
+| Rule-based brief + search of the journal | 31/32 and 29/32, with about twice the searches and cost |
+| Working memory alone | 24/32 and 25/32 |
+| The last 6k tokens of the chat | 21/32 |
+| A one-shot summary | 17/32 |
+| Rule-based brief alone | 9/32 |
+
+So the brief now leads with a working memory that a model keeps up to date after each
+turn (Claude Haiku through Claude Code by default, any other or local model, or off), and the
+verbatim journal stays the source of truth.
+
 ### Memory, measured without a model
 
 | Question | Result |
@@ -237,6 +256,8 @@ The 22 MCP tools are:
 | `CONTINUUM_DB_TIMEOUT_SECONDS` | `10` | how long a command waits for the database |
 | `CONTINUUM_OWNER_ID` | `ctl-<host>-<pid>-<random>` | lease identity; must be unique per process if set |
 | `CONTINUUM_HOOKS` | on | `off` disables app hooks (capture, session-start brief, refusals) |
+| `CONTINUUM_MEMORY_MODEL` | `claude-cli:haiku` if Claude Code is installed | the model that keeps the working memory: `claude-cli:<model>`, `<provider>/<model>` via LiteLLM (e.g. `ollama/qwen3:4b`), or `off` |
+| `CONTINUUM_MEMORY_API_BASE` | unset | an OpenAI-compatible or self-hosted endpoint for that model |
 
 API keys come only from the environment. They are redacted before anything is stored, as are URL passwords that look like secrets and well-known token formats pasted into chat. Full reference: [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 

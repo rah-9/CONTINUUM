@@ -73,6 +73,8 @@ Tools run as **trusted, explicitly registered Python adapters** with schema vali
 
 **R18 Unknown outcomes resolved by proof, never by assumption:** a `git push` whose result was lost is checked read-only against the remote (`git ls-remote`); when the remote branch shows exactly the pushed commit, the call is recorded as applied with that evidence and the block lifts. A probe never records that something did not happen; otherwise a person decides (D-047, AGENTS.md invariant 5).
 
+**R19 Working memory that understands the session:** after each turn a model keeps a structured memory of the whole session (goal, the user's decisions, what was built, problems and fixes, results, research, open items), updated incrementally from the journal in the background, and the brief shows it first as a labelled model account. Any model can do it (Claude Code's own login by default, any LiteLLM provider, a local model or an OpenAI-compatible endpoint); without one the rule-based brief remains. Requirements, decisions and the unknown-outcome gate never come from it, and the verbatim journal with recall stays the source of truth (D-048).
+
 ## 5. Non-functional requirements
 
 - PostgreSQL row locks (`FOR NO KEY UPDATE` on the run row) + `lock_timeout`, short transactions, no DB lock held over model or tool network calls. A single machine is supported; no cross-host guarantee.
