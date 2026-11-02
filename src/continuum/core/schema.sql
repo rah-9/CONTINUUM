@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-INSERT INTO schema_meta (key, value) VALUES ('schema_version', '7')
+INSERT INTO schema_meta (key, value) VALUES ('schema_version', '8')
   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- TRUNCATE would bypass the row-level immutability trigger.
@@ -264,11 +264,8 @@ CREATE TABLE IF NOT EXISTS coding_checks (
 
 SELECT continuum_add_constraint('coding_sessions', 'coding_sessions_status_valid',
   $c$CHECK (status IN ('active', 'closed'))$c$);
--- Schema v4 added ChatCaptured: replace the v3 list (an older constraint would reject it).
-ALTER TABLE coding_events DROP CONSTRAINT IF EXISTS coding_events_type_valid;
-SELECT continuum_add_constraint('coding_events', 'coding_events_type_valid', $c$CHECK (type IN (
-  'SessionStarted', 'AgentJoined', 'TaskAdded', 'TaskStatusChanged', 'NoteRecorded',
-  'CheckpointCaptured', 'CheckRan', 'ChatCaptured', 'SessionClosed'))$c$);
+-- The list of event types is set once, further down (schema v6+ block): re-adding an
+-- older, shorter list here failed on any database that already held newer events.
 SELECT continuum_add_constraint('coding_events', 'coding_events_seq_positive',
   'CHECK (seq > 0)');
 SELECT continuum_add_constraint('coding_checks', 'coding_checks_timeout_positive',
@@ -357,7 +354,7 @@ SELECT continuum_add_constraint('coding_events', 'coding_events_type_valid', $c$
   'SessionStarted', 'AgentJoined', 'TaskAdded', 'TaskStatusChanged', 'NoteRecorded',
   'CheckpointCaptured', 'CheckRan', 'ChatCaptured', 'SessionClosed', 'ToolCallStarted',
   'ToolCallFinished', 'ToolCallUnresolved', 'ToolCallResolved', 'FileImpactObserved',
-  'CompactionObserved', 'SubagentReported', 'ChatWithdrawn'))$c$);
+  'CompactionObserved', 'SubagentReported', 'ChatWithdrawn', 'WorkingMemoryUpdated'))$c$);
 CREATE INDEX IF NOT EXISTS idx_coding_events_call_key ON coding_events
   (session_id, (payload_json->>'call_key'), type) WHERE payload_json ? 'call_key';
 
@@ -395,6 +392,8 @@ ALTER TABLE coding_blobs ADD COLUMN IF NOT EXISTS search tsvector
     THEN content ELSE left(content, 65536) || ' ' || right(content, 65536) END)) STORED;
 CREATE INDEX IF NOT EXISTS idx_coding_blobs_search ON coding_blobs USING gin (search);
 
+-- Schema v8: working memory (D-048). A model-written understanding of the session,
+-- stored as a session blob and a WorkingMemoryUpdated event (in the type check above).
 -- Schema v7: lossless capture (D-046). Images and documents from chats and tool results
 -- are stored as bytes, owned by the session (same row-level security, immutability and
 -- human-only erasure as events). Messages on an abandoned branch (rewound, or edited

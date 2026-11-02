@@ -1,0 +1,10 @@
+history.txt
+run/
+ctx_*
+answers_*
+cost_*
+anchored_*
+*.log
+mcp.json
+home/
+qa.private.json

@@ -558,6 +558,19 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 
 **Rejected.** Probing by repeating the action (`git push --dry-run` contacts the remote with write intent), and inferring "not applied".
 
+## D-048 — Working memory: a model keeps a structured account; the journal stays the truth
+
+**Context.** The user judged the rule-based brief "not real memory: storing and dumping". We measured it. On this project's own 255k-token session, with the same 6k-token budget and a fresh model answering 32 known-answer questions (`eval/compression_test`), the rule-based brief answered 9/32. The last 6k tokens of the chat answered 21/32, a one-shot summary 17/32, an item-by-item anchored memory 15-18/32, and a structured memory a model keeps updating 24-25/32. With search over the verbatim journal (`coding_recall`), the structured memory answered 32/32 twice; the rule-based brief reached 31 and 29 with nearly twice the searches and cost. Published work agrees: structured, incrementally updated summaries beat full rewrites ("context collapse"), and file and artifact tracking is the weakest part of every summary, which is why the journal must stay.
+
+**Decision.**
+- After each turn, a detached background process gives a model the current memory plus the events it does not yet cover (messages whole; each tool call as one line with status and the end of its result), part by part, and stores the updated memory in seven fixed sections. It never runs on a hook's hot path; one updater per session (OS lock).
+- The memory is a session blob plus a `WorkingMemoryUpdated` event (schema v8) in one transaction, written by actor `memory:<model>`. The output is redacted; headings are demoted so a model cannot forge the brief's own sections; size is bounded (one tightening call, then a hard cut per section).
+- The brief shows it first, labelled as a model's account up to event `#N`, with how many newer events it does not cover. Requirements, decisions and the unknown-outcome gate are still computed from the journal, never from this text (invariants 1, 7, 8).
+- Models: `CONTINUUM_MEMORY_MODEL` unset uses `claude-cli:haiku` when Claude Code is installed (the person's own login, no key); `claude-cli:<model>`, `litellm:<provider/model>` or `<provider>/<model>` (any LiteLLM provider, a local Ollama model, or any OpenAI-compatible endpoint with `CONTINUUM_MEMORY_API_BASE`); `off`. No model, or a failing model, leaves the rule-based brief: nothing is written, nothing breaks.
+- Tests never call a real model (`CONTINUUM_MEMORY_MODEL=off` in the test suite; fakes in the memory tests).
+
+**Rejected.** Token pruning (LLMLingua-style): it shortens text but does not choose what matters. One-shot summaries of the whole history: lower scores and unbounded cost per update. Rewriting the memory from scratch each turn: loses older facts. Replacing the journal with the memory: summaries lose exact paths and values; the journal plus recall is what reached 32/32. Vendor compaction (Codex's is encrypted): not portable between models.
+
 ---
 
 _Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._
