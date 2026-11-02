@@ -11,6 +11,8 @@ Working memory that a model keeps (D-048; schema v8). Measured on this project's
 
 ### Fixed
 - Upgrading a database that already had tool-call events failed: an old v4 step re-created the event-type check with a short list (`CheckViolation`). Found by upgrading the live-test database; regression test added.
+- The memory's size guard cut each section's end, so the newest facts were lost (late questions 0/4 on the real session). Any overflow is now tightened by the model, and a last-resort cut keeps each section's first and newest bullets. Cap 24,000 characters.
+- The compression test's first "32/32 with search" was invalid: the searched journal held the test's own answer key. Withdrawn; `run_eval.py clean-copy` searches a copy cut before the test.
 
 ## 1.0.0rc3 — unreleased
 

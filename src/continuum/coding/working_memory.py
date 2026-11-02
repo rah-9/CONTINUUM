@@ -8,9 +8,9 @@ Measured on this project's own 255k-token session (eval/compression_test): with 
 * the rule-based brief alone answered 9/32, the last 6k tokens of the chat 21/32,
   a one-shot summary 17/32, an item-by-item anchored memory 15-18/32;
 * a structured memory a model keeps updating, part by part, answered 24-25/32;
-* with search over the verbatim journal (``coding_recall``), the structured memory
-  answered 32/32 twice, the rule-based brief 31/32 and 29/32 with nearly twice the
-  searches and cost.
+* with search over the verbatim journal (``coding_recall``): 24/32 for that memory,
+  17/32 for the rule-based brief (an earlier 32/32 was invalid: the journal searched
+  held the test's own answer key).
 
 So the verbatim journal stays the source of truth, and the brief leads with this memory.
 
