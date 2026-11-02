@@ -45,7 +45,7 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-MEMORY_CHARS = 16_000          # the memory in the brief (~4k tokens)
+MEMORY_CHARS = 24_000          # the memory in the brief (~6k tokens, as measured)
 PART_CHARS = 100_000           # history per model call (~25k tokens)
 MAX_PARTS = 12                 # per update; a larger backlog is caught up next time
 MIN_NEW_CHARS = 400            # less new material than this is not worth a call
@@ -253,7 +253,7 @@ def update_text(model: Summarizer, memory: str, lines: list[tuple[int, str]]
         cost = None if cost is None or c is None else cost + c
         if not memory.strip():
             raise MemoryModelError(f"{model.name} returned an empty memory")
-        if len(memory) > MEMORY_CHARS * 1.15:           # one chance to tighten itself
+        if len(memory) > MEMORY_CHARS:                  # one chance to tighten itself
             memory, c = model.complete(TIGHTEN, memory)
             calls += 1
             cost = None if cost is None or c is None else cost + c
@@ -261,13 +261,48 @@ def update_text(model: Summarizer, memory: str, lines: list[tuple[int, str]]
 
 
 def _bounded(memory: str) -> str:
-    """Within the cap whatever the model did: every section keeps its share."""
+    """Within the cap whatever the model did. Each section is trimmed in proportion to
+    its size, by whole bullets from its middle: its first bullets (the oldest, merged
+    facts) and its last ones (the newest, appended by the latest update) stay, and the
+    cut is marked. Cutting each section's end lost the newest facts (found on a real
+    255k-token session: late questions 0/4)."""
     memory = memory.strip()
     if len(memory) <= MEMORY_CHARS:
         return memory
-    blocks = re.split(r"(?m)^(?=## )", memory)
-    share = MEMORY_CHARS // max(1, len(blocks))
-    return "\n".join(b[:share].rstrip() for b in blocks)[:MEMORY_CHARS]
+    blocks = [b.strip("\n") for b in re.split(r"(?m)^(?=## )", memory) if b.strip()]
+    room = MEMORY_CHARS - 60 * len(blocks)
+    total = sum(len(b) for b in blocks)
+    out = []
+    for block in blocks:
+        out.append(_trim(block, max(200, room * len(block) // total)))
+    return "\n".join(out)[:MEMORY_CHARS]
+
+
+def _trim(block: str, limit: int) -> str:
+    if len(block) <= limit:
+        return block
+    lines = block.splitlines()
+    head, tail = lines[:1], lines[1:]          # the heading always stays
+    keep_front: list[str] = []
+    keep_back: list[str] = []
+    used = len(head[0]) + 40
+    front, back = 0, len(tail) - 1
+    take_back = True                           # alternate, newest first
+    while front <= back:
+        line = tail[back] if take_back else tail[front]
+        if used + len(line) + 1 > limit:
+            break
+        used += len(line) + 1
+        if take_back:
+            keep_back.insert(0, line)
+            back -= 1
+        else:
+            keep_front.append(line)
+            front += 1
+        take_back = not take_back
+    omitted = back - front + 1
+    middle = [f"- ({omitted} older line(s) omitted: see the journal)"] if omitted > 0 else []
+    return "\n".join(head + keep_front + middle + keep_back)
 
 
 def render(memory: str) -> list[str]:
