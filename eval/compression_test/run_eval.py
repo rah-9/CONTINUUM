@@ -279,7 +279,7 @@ def answer(method: str, model: str = "sonnet") -> None:
 
 def answer_recall(method: str, sid: str, model: str = "sonnet") -> None:
     """The real product setup: the brief in context PLUS search over the stored history
-    (coding_recall / coding_show over MCP). Bounded to 12 tool turns."""
+    (coding_recall / coding_show over MCP). Bounded to 40 turns."""
     ctx = (HERE / f"ctx_{method}.md").read_text()[:BUDGET_CHARS]
     qa = json.loads((HERE / "qa.json").read_text())
     questions = "\n".join(f"{q['id']}. {q['q']}" for q in qa)
@@ -308,8 +308,19 @@ def answer_recall(method: str, sid: str, model: str = "sonnet") -> None:
           f"{r.get('num_turns')} turns")
 
 
+def _private_keys(qa: list[dict]) -> None:
+    """A withheld question's keys come from ``qa.private.json`` (not in git), if present."""
+    private = HERE / "qa.private.json"
+    if private.is_file():
+        keys = {q["id"]: q["keys"] for q in json.loads(private.read_text())}
+        for q in qa:
+            q["keys"] = keys.get(q["id"], q["keys"])
+
+
 def score() -> None:
     qa = json.loads((HERE / "qa.json").read_text())
+    _private_keys(qa)
+    qa = [q for q in qa if q["keys"]]          # withheld and no private copy: not scored
     rows = []
     for f in sorted(HERE.glob("answers_*.json")):
         method = f.stem.removeprefix("answers_")

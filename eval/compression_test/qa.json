@@ -20,7 +20,7 @@
  {"id": 19, "part": "capture", "q": "Which pull request number merged the README update after rc2?", "keys": [["18"]]},
  {"id": 20, "part": "capture", "q": "Which competitor raised a $60M seed round, according to the product research?", "keys": [["entire"]]},
  {"id": 21, "part": "capture", "q": "What did Windows CI find in the review round about erasing a session?", "keys": [["read-only", "read only", "readonly"]]},
- {"id": 22, "part": "research", "q": "Whose name goes into the hidden ownership mark?", "keys": [["tarachand"]]},
+ {"id": 22, "part": "research", "q": "(withheld: a private detail; kept only in the private copy)", "keys": [], "withheld": true},
  {"id": 23, "part": "research", "q": "Did the user choose to store screenshots and images in full or only metadata?", "keys": [["store", "full"]]},
  {"id": 24, "part": "research", "q": "Why was the ownership secret key not generated inside the cloud session?", "keys": [["block", "denied", "safety", "classifier"]]},
  {"id": 25, "part": "research", "q": "Which read-only git command proves that a lost git push happened?", "keys": [["ls-remote"]]},

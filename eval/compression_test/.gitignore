@@ -7,3 +7,4 @@ anchored_*
 *.log
 mcp.json
 home/
+qa.private.json
