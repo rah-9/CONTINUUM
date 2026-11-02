@@ -277,9 +277,46 @@ def answer(method: str, model: str = "sonnet") -> None:
     print(f"{method}: answered {len(answers)} questions, ${cost:.3f}")
 
 
+def clean_copy(sid: str, schema: str) -> None:
+    """Copy the session into ``schema``, cut before the first event that mentions this test.
+
+    When the session under test is the one that built the test, its journal holds
+    ``qa.json`` with the answers, and search finds them: a first run scored 32/32 that way.
+    Search must only see the history from before the test was written."""
+    import psycopg
+
+    from continuum.core.clock import SystemClock
+    from continuum.core.ids import RandomIds
+    from continuum.core.store import Store
+
+    dsn, src = os.environ["CONTINUUM_DATABASE_URL"], os.environ["CONTINUUM_DB_SCHEMA"]
+    Store(dsn, schema=schema, clock=SystemClock(), ids=RandomIds()).migrate()
+    marks = ("%qa.json%", "%compression_test%", "%known-answer question%")
+    with psycopg.connect(dsn) as c:
+        row = c.execute(
+            f"SELECT min(seq) FROM {src}.coding_events WHERE session_id = %s AND "
+            "(payload_json::text LIKE %s OR payload_json::text LIKE %s "
+            "OR payload_json::text LIKE %s)", (sid, *marks)).fetchone()
+        cut = row[0] if row and row[0] else 1 << 62
+        c.execute(f"INSERT INTO {schema}.coding_sessions SELECT session_id, repo_root, goal, "
+                  f"status, {cut - 1}, created_at, updated_at, repo_key, owner_role "
+                  f"FROM {src}.coding_sessions WHERE session_id = %s", (sid,))
+        c.execute(f"INSERT INTO {schema}.coding_events (session_id, seq, type, actor, "
+                  f"payload_json, occurred_at) SELECT session_id, seq, type, actor, "
+                  f"payload_json, occurred_at FROM {src}.coding_events "
+                  f"WHERE session_id = %s AND seq < %s", (sid, cut))
+        c.execute(f"INSERT INTO {schema}.coding_blobs (session_id, digest, media_type, chars, "
+                  f"content, truncated, created_at) SELECT session_id, digest, media_type, "
+                  f"chars, content, truncated, created_at FROM {src}.coding_blobs "
+                  f"WHERE session_id = %s AND content NOT LIKE %s AND content NOT LIKE %s "
+                  f"AND content NOT LIKE %s", (sid, *marks))
+    print(f"{schema}: events before #{cut}; point mcp.json at CONTINUUM_DB_SCHEMA={schema}")
+
+
 def answer_recall(method: str, sid: str, model: str = "sonnet") -> None:
     """The real product setup: the brief in context PLUS search over the stored history
-    (coding_recall / coding_show over MCP). Bounded to 40 turns."""
+    (coding_recall / coding_show over MCP). Bounded to 40 turns. The searched journal must
+    not contain this test: see ``clean_copy``."""
     ctx = (HERE / f"ctx_{method}.md").read_text()[:BUDGET_CHARS]
     qa = json.loads((HERE / "qa.json").read_text())
     questions = "\n".join(f"{q['id']}. {q['q']}" for q in qa)
@@ -346,6 +383,8 @@ if __name__ == "__main__":
         export(sys.argv[2])
     elif cmd == "build":
         build(sys.argv[2])
+    elif cmd == "clean-copy":
+        clean_copy(sys.argv[2], sys.argv[3])
     elif cmd == "recall":
         answer_recall(sys.argv[2], sys.argv[3])
     elif cmd == "answer":
