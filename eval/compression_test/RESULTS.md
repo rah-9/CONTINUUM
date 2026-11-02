@@ -10,8 +10,8 @@ matters?
   tool calls, exported verbatim from its transcript (`run_eval.py export`).
 - 32 known-answer questions (`qa.json`), spread over the session: early, middle, capture
   work, research, late. Examples: what the user decided, which PR merged what, why
-  something failed, what a measurement was. One question about a private detail is
-  withheld from the published file. Its keys are in `qa.private.json`, kept outside git.
+  something failed, what a measurement was. Three questions about private details are
+  withheld from the published file. Their keys are in `qa.private.json`, kept outside git.
 - Every method gets the same budget: 24,000 characters (about 6k tokens).
 - A fresh model (Sonnet) answers all 32 questions from that context alone. With
   "+ search", it may also call `coding_recall` and `coding_show` over MCP against the

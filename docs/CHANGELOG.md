@@ -17,8 +17,7 @@ Working memory that a model keeps (D-048; schema v8). Measured on this project's
 ## 1.0.0rc3 — unreleased
 
 Lossless memory with a real grasp of technical content, the chat's real shape, and unknown
-outcomes resolved by proof (D-046, D-047; schema v7). Research and measurements in
-`reports/Memory and product research (2026-10).md`.
+outcomes resolved by proof (D-046, D-047; schema v7).
 
 ### Added
 - **Images and documents** from chats and tool results are stored (`coding_media`) and shown to the next model with `coding_view_image` (MCP, read-only) or saved with `continuum coding media`. The brief labels them `[image #…: image/png 1280x800]`.
@@ -42,8 +41,7 @@ outcomes resolved by proof (D-046, D-047; schema v7). Research and measurements 
 
 ## 1.0.0rc2 — unreleased
 
-Everything the agent did, with results and impact (D-042 to D-044, schema v6). Based on
-the research in `reports/Agent memory capture architecture.md`; measured in
+Everything the agent did, with results and impact (D-042 to D-044, schema v6). Measured in
 `docs/MEMORY-QUALITY.md` and Trial 7 (`docs/HANDOFF-TRIALS.md`).
 
 ### Added

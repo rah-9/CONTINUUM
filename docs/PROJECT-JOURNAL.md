@@ -190,7 +190,7 @@ Every feature is judged by one question: *does it keep valid work and prevent un
 
 ### Phase 12: v1.0.0rc2, everything the agent did
 
-- **Research first.** Papers, production memory systems, benchmarks, and what each coding app exposes (`reports/Agent memory capture architecture.md`). Extraction and summaries lose facts; recalling the agent's own actions is the weakest ability; hooks expose every tool call with its result.
+- **Research first.** Papers, production memory systems, benchmarks, and what each coding app exposes. Extraction and summaries lose facts; recalling the agent's own actions is the weakest ability; hooks expose every tool call with its result.
 - **The user's decisions:** store full output (redacted); on a lost result, warn and block external actions only; no LLM in this round.
 - **Built:**
   - every tool call with its result, from Claude Code, Codex, Gemini CLI and Cursor hooks and from transcripts

@@ -432,7 +432,7 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 
 ## D-042 — Record everything the agent did, verbatim, with results and observed impact
 
-**Context.** The research behind this round (`reports/Agent memory capture architecture.md`) found that agent memory systems lose information when they extract or summarize, that recalling what the agent itself did is their weakest point, and that hiding failure signals makes the next agent slower. Every major coding app now exposes tool calls and their results through hooks. Continuum kept only one-line summaries of tool calls (D-041), with no results, no file impact, nothing from subagents and nothing about calls that never finished.
+**Context.** The research behind this round found that agent memory systems lose information when they extract or summarize, that recalling what the agent itself did is their weakest point, and that hiding failure signals makes the next agent slower. Every major coding app now exposes tool calls and their results through hooks. Continuum kept only one-line summaries of tool calls (D-041), with no results, no file impact, nothing from subagents and nothing about calls that never finished.
 
 **Decision.**
 - **Capture every tool call twice-safely.**

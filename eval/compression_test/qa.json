@@ -22,13 +22,13 @@
  {"id": 21, "part": "capture", "q": "What did Windows CI find in the review round about erasing a session?", "keys": [["read-only", "read only", "readonly"]]},
  {"id": 22, "part": "research", "q": "(withheld: a private detail; kept only in the private copy)", "keys": [], "withheld": true},
  {"id": 23, "part": "research", "q": "Did the user choose to store screenshots and images in full or only metadata?", "keys": [["store", "full"]]},
- {"id": 24, "part": "research", "q": "Why was the ownership secret key not generated inside the cloud session?", "keys": [["block", "denied", "safety", "classifier"]]},
+ {"id": 24, "part": "research", "q": "(withheld: a private detail; kept only in the private copy)", "keys": [], "withheld": true},
  {"id": 25, "part": "research", "q": "Which read-only git command proves that a lost git push happened?", "keys": [["ls-remote"]]},
  {"id": 26, "part": "research", "q": "What happens to messages that the user edited and resent, or rewound?", "keys": [["withdraw", "abandon"]]},
  {"id": 27, "part": "research", "q": "What score did plain BM25 keyword retrieval get on MemoryAgentBench in the research?", "keys": [["41.5"]]},
  {"id": 28, "part": "research", "q": "Which pull request number merged 1.0.0rc3 (lossless memory)?", "keys": [["19"]]},
  {"id": 29, "part": "late", "q": "How many messages were captured when this session's real transcript was imported live?", "keys": [["726"]]},
- {"id": 30, "part": "late", "q": "Roughly what did the brand-new-Claude recap demo cost?", "keys": [["0.11", "11 cents", "0,11"]]},
+ {"id": 30, "part": "late", "q": "(withheld: a private detail; kept only in the private copy)", "keys": [], "withheld": true},
  {"id": 31, "part": "late", "q": "What is the user's main complaint in their most recent messages about the memory?", "keys": [["compress", "shrink", "summar", "dump", "storing"]]},
  {"id": 32, "part": "late", "q": "What did the user ask to be done in their very latest message?", "keys": [["research", "compress", "test"]]}
 ]
