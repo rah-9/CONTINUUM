@@ -76,7 +76,7 @@ Run `continuum doctor` to check the database, schema, tasks and model profiles.
 After each turn, a detached process updates the session's working memory with the model in `CONTINUUM_MEMORY_MODEL` (D-048). It never blocks a hook. `continuum coding memory` prints it; `--update` runs an update now and reports `updated`, `current`, `busy`, `failed` or `off`. Failures are logged to `hooks.log` under `CONTINUUM_HOME` and leave the previous memory.
 
 - **What is sent:** the session's messages and one line per tool call (redacted, as stored) go to the configured provider. Use a local model (`ollama/<model>`, or `CONTINUUM_MEMORY_API_BASE`) or `off` when chat content must not leave the machine.
-- **Cost:** one call per new part of up to ~25k tokens. Catching up this project's own 255k-token session took 12 Haiku calls; an ordinary turn is one small call. With `claude-cli`, calls count against the person's Claude Code plan; a plan limit makes the update fail cleanly until it resets.
+- **Cost:** one call per new part of up to ~25k tokens. Catching up this project's own 255k-token session took 12–15 Haiku calls, about 20 minutes and $0.30; an ordinary turn is one small call. With `claude-cli`, calls count against the person's Claude Code plan; a plan limit makes the update fail cleanly until it resets.
 - `litellm` providers need the `live` extra (`pip install 'continuum[live]'`) and their usual key variables.
 
 ## Database schema (designed for invariants)
