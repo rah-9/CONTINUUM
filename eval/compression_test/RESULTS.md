@@ -21,34 +21,51 @@ matters?
 
 ## Results
 
+All search runs below used a copy of the journal cut before the test was written
+(`run_eval.py clean-copy`).
+
 | Context given to the new model | Correct | Notes |
 |---|---|---|
-| **Structured working memory + search of the journal** | **32/32**, twice | $0.16 and $0.09 to answer; 9 and 12 turns |
-| Rule-based brief + search of the journal | 31/32, 29/32 | $0.27; 21 turns: it has to search for what the brief lacks |
-| Structured working memory (a model updates 7 fixed sections, part by part) | 24/32, 25/32 | |
+| **Structured working memory** (a model updates 7 fixed sections, part by part) | **24/32, 25/32** | the best method found |
+| The same, with search of the journal | 24/32 | the reader chose not to search |
 | Brief's user words + working memory ("combined") | 22/32, 20/32 | |
 | The last 6k tokens of the chat | 21/32 | knows only the end |
+| Product brief, first build of the memory, with search | 19/32 | 6 turns |
 | Anchored memory (itemised facts, merged by rules) | 15/32, 18/32 | the item merging lost detail |
 | One-shot summary of the whole chat | 17/32 | |
+| Rule-based brief + search of the journal | 17/32 | 14 turns |
+| Product brief, first build of the memory | 16/32, 17/32 | its memory alone: 9/32 |
 | Hybrid (summary + tail) | 16/32 | |
 | Rule-based brief alone (1.0.0rc3) | 9/32 | 0/9 on the capture work, 1/7 on research |
 
-By part, for the best and the old default:
+**Withdrawn result.** A first run reported 32/32 for the working memory with search and
+31/32 and 29/32 for the rule-based brief with search. The session under test is the one
+that built this test, so its journal contained `qa.json` with the answers, and search
+could find them. On a clean copy the scores are those above. `clean-copy` now prevents it.
+
+**First product build.** The product's memory scored below the test's own build. Its
+size guard cut each section to an equal share from the end, where the model appends the
+newest facts: the late questions scored 0/4. Fixed: any overflow is tightened by the
+model, and a last-resort cut keeps each section's first and newest bullets. The cap is
+24,000 characters, the size the test measured. The fixed build has not been re-scored yet.
+
+By part, for the best method and the old default:
 
 | | early | middle | capture | research | late |
 |---|---|---|---|---|---|
-| working memory + search | 7/7 | 5/5 | 9/9 | 7/7 | 4/4 |
+| structured working memory | 3/7 | 4/5 | 8/9 | 6/7 | 4/4 |
 | rule-based brief alone | 4/7 | 2/5 | 0/9 | 1/7 | 2/4 |
 
 ## What this means
 
 1. The rule-based brief kept the user's words but did not understand the work. On its
    own it was the worst method.
-2. A memory that a model keeps updating in fixed sections was the best context on its
-   own. Updating it part by part keeps older facts. Rewriting it in one shot loses
-   them: the one-shot summary scored 17/32.
-3. No compressed context reaches 32/32 alone. The verbatim journal plus search makes
-   nothing lost, and a good memory halves the searching needed.
+2. A memory that a model keeps updating in fixed sections was the best context. Updating
+   it part by part keeps older facts. Rewriting it in one shot loses them: the one-shot
+   summary scored 17/32.
+3. No method answered everything. The early part of a long session is the hardest. The
+   verbatim journal stays the source of truth and is searchable, but in this test search
+   added little: the reader often did not search.
 
 Built into Continuum 1.0.0rc4 as the working memory (D-048, `docs/MEMORY-ALGORITHM.md`
 §3.4b).
@@ -61,7 +78,8 @@ cp eval/compression_test/qa.json "$COMPRESSION_TEST_DIR"/
 python eval/compression_test/run_eval.py export <claude-code-transcript.jsonl>
 python eval/compression_test/run_eval.py build state      # or tail, summary, anchored, ...
 python eval/compression_test/run_eval.py answer state
-python eval/compression_test/run_eval.py recall state <continuum session id>  # + search
+python eval/compression_test/run_eval.py clean-copy <session id> eval_clean   # then point mcp.json at it
+python eval/compression_test/run_eval.py recall state <session id>   # + search
 python eval/compression_test/run_eval.py score
 ```
 

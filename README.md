@@ -59,12 +59,15 @@ over the journal (`coding_recall`). Method and harness: [`eval/compression_test`
 
 | What the new model is given | Correct |
 |---|---|
-| **Working memory (model-written) + search of the journal** | **32/32**, twice |
-| Rule-based brief + search of the journal | 31/32 and 29/32, with about twice the searches and cost |
-| Working memory alone | 24/32 and 25/32 |
+| **Working memory (model-written, structured)** | **24/32, 25/32** |
+| The same, with search of the journal | 24/32 |
 | The last 6k tokens of the chat | 21/32 |
 | A one-shot summary | 17/32 |
+| Rule-based brief + search of the journal | 17/32 |
 | Rule-based brief alone | 9/32 |
+
+A first "32/32 with search" was invalid (the searched journal held the test's answer key)
+and is withdrawn.
 
 So the brief now leads with a working memory that a model keeps up to date after each
 turn (Claude Haiku through Claude Code by default, any other or local model, or off), and the

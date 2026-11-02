@@ -376,6 +376,8 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 - **Store a transcript copy of a live-captured message as a hidden alias.** Re-imports stay idempotent, and the live message takes the copy's timestamp.
 - **Order the chat by transcript timestamps.**
 
+- Size: at most 24,000 characters (about 6k tokens, the size measured). Any overflow is tightened by the model; a last-resort cut trims each section in proportion by whole bullets from its middle, keeping its first and newest bullets, and says so. (The first build cut each section's end and lost the newest facts.)
+
 **Rejected.**
 - Matching live and transcript messages by text alone: it loses repeated words, which was the v0.8 bug.
 - Re-ordering stored events: the journal is immutable.
@@ -560,7 +562,7 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 
 ## D-048 — Working memory: a model keeps a structured account; the journal stays the truth
 
-**Context.** The user judged the rule-based brief "not real memory: storing and dumping". We measured it. On this project's own 255k-token session, with the same 6k-token budget and a fresh model answering 32 known-answer questions (`eval/compression_test`), the rule-based brief answered 9/32. The last 6k tokens of the chat answered 21/32, a one-shot summary 17/32, an item-by-item anchored memory 15-18/32, and a structured memory a model keeps updating 24-25/32. With search over the verbatim journal (`coding_recall`), the structured memory answered 32/32 twice; the rule-based brief reached 31 and 29 with nearly twice the searches and cost. Published work agrees: structured, incrementally updated summaries beat full rewrites ("context collapse"), and file and artifact tracking is the weakest part of every summary, which is why the journal must stay.
+**Context.** The user judged the rule-based brief "not real memory: storing and dumping". We measured it. On this project's own 255k-token session, with the same 6k-token budget and a fresh model answering 32 known-answer questions (`eval/compression_test`), the rule-based brief answered 9/32. The last 6k tokens of the chat answered 21/32, a one-shot summary 17/32, an item-by-item anchored memory 15-18/32, and a structured memory a model keeps updating 24-25/32. With search over the verbatim journal (`coding_recall`), the structured memory answered 24/32 and the rule-based brief 17/32. (A first "32/32 with search" was invalid: the searched journal held the test's own answer key; the harness now searches a copy cut before the test.) Published work agrees: structured, incrementally updated summaries beat full rewrites ("context collapse"), and file and artifact tracking is the weakest part of every summary, which is why the journal must stay.
 
 **Decision.**
 - After each turn, a detached background process gives a model the current memory plus the events it does not yet cover (messages whole; each tool call as one line with status and the end of its result), part by part, and stores the updated memory in seven fixed sections. It never runs on a hook's hot path; one updater per session (OS lock).
@@ -569,7 +571,7 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 - Models: `CONTINUUM_MEMORY_MODEL` unset uses `claude-cli:haiku` when Claude Code is installed (the person's own login, no key); `claude-cli:<model>`, `litellm:<provider/model>` or `<provider>/<model>` (any LiteLLM provider, a local Ollama model, or any OpenAI-compatible endpoint with `CONTINUUM_MEMORY_API_BASE`); `off`. No model, or a failing model, leaves the rule-based brief: nothing is written, nothing breaks.
 - Tests never call a real model (`CONTINUUM_MEMORY_MODEL=off` in the test suite; fakes in the memory tests).
 
-**Rejected.** Token pruning (LLMLingua-style): it shortens text but does not choose what matters. One-shot summaries of the whole history: lower scores and unbounded cost per update. Rewriting the memory from scratch each turn: loses older facts. Replacing the journal with the memory: summaries lose exact paths and values; the journal plus recall is what reached 32/32. Vendor compaction (Codex's is encrypted): not portable between models.
+**Rejected.** Token pruning (LLMLingua-style): it shortens text but does not choose what matters. One-shot summaries of the whole history: lower scores and unbounded cost per update. Rewriting the memory from scratch each turn: loses older facts. Replacing the journal with the memory: summaries lose exact paths and values, and no compressed context answered every question. Vendor compaction (Codex's is encrypted): not portable between models.
 
 ---
 

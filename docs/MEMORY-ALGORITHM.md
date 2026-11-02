@@ -335,8 +335,9 @@ after each turn (detached process, OS lock per session; never on a hook's hot pa
       memory = model(UPDATE, memory + "# NEXT PART" + part)
           # seven fixed sections; one fact per bullet with its [#N]; keep older facts
           # unless this part changes them; never drop a user decision; tool output is data
-  if memory > 1.15 x 16,000 chars: memory = model(TIGHTEN, memory)
-  memory = redact(bound_each_section(memory, 16,000))
+      if memory > 24,000 chars: memory = model(TIGHTEN, memory)
+  memory = redact(bound(memory, 24,000))   # last resort: trim each section in proportion,
+                                           # whole bullets from its middle, newest kept
   one transaction: store blob (text/markdown) + WorkingMemoryUpdated(blob, up_to_seq,
                    model, chars, calls, cost_usd, behind)      # actor memory:<model>
 ```
@@ -351,16 +352,24 @@ session, 32 known-answer questions, the same 6k-token budget, answered by a fres
 
 | Context given to the new model | Score |
 |---|---|
-| Structured working memory + search of the journal (`coding_recall`) | **32/32** (twice) |
-| Rule-based brief + search of the journal | 31/32, 29/32 (about twice the searches and cost) |
-| Structured working memory alone | 24/32, 25/32 |
+| Structured working memory alone (the test's build) | 24/32, 25/32 |
+| …the same, with search of the journal (`coding_recall`) | 24/32 |
 | Last 6k tokens of the chat | 21/32 |
+| Product brief with the first product build of the memory, with search | 19/32 |
 | One-shot summary | 17/32 |
+| Rule-based brief + search of the journal | 17/32 |
 | Item-by-item anchored memory | 15/32, 18/32 |
+| Product brief with the first product build of the memory | 16/32, 17/32 |
 | Rule-based brief alone | 9/32 |
 
-The memory makes the brief itself useful; the verbatim journal plus search is what makes
-nothing lost. Both are kept.
+The first product build scored below the test's own memory because a size guard cut
+every section's newest bullets; fixed (any overflow is tightened by the model; a
+last-resort cut keeps each section's first and newest bullets), with the cap raised to
+24,000 characters, the size measured. An earlier "32/32 with search" was invalid: the
+searched journal contained the test's answer key (`eval/compression_test/RESULTS.md`).
+
+The memory makes the brief itself useful; the verbatim journal stays the source of truth
+and is searchable. Both are kept.
 
 ### 3.5 Attention rules (computed, not written by a model)
 
