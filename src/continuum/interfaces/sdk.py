@@ -102,14 +102,23 @@ class Continuum:
             checks["database"] = {"ok": True, "server_version": version["server_version"]
                                   if version else None}
         except Exception as exc:  # report, never raise: doctor must always answer
-            checks["database"] = {"ok": False, "error": type(exc).__name__, "detail": str(exc)}
-        try:
-            with self.store.read() as q:
-                q.run_ids()
-            checks["schema"] = {"ok": True, "schema": self.settings.db_schema}
-        except Exception as exc:
-            checks["schema"] = {"ok": False, "hint": "run `continuum db-init`",
-                                "error": type(exc).__name__}
+            checks["database"] = {
+                "ok": False, "error": type(exc).__name__, "detail": str(exc)[:300],
+                "hint": "start PostgreSQL 14+ and point CONTINUUM_DATABASE_URL at it, e.g. "
+                        "`docker run -d --name continuum-pg -p 5432:5432 -e POSTGRES_USER="
+                        "continuum -e POSTGRES_PASSWORD=continuum -e POSTGRES_DB=continuum "
+                        "postgres:16` (see INSTALL.md)"}
+        if checks["database"]["ok"]:
+            try:
+                with self.store.read() as q:
+                    q.run_ids()
+                checks["schema"] = {"ok": True, "schema": self.settings.db_schema}
+            except Exception as exc:
+                checks["schema"] = {"ok": False, "hint": "run `continuum db-init`",
+                                    "error": type(exc).__name__}
+        else:
+            checks["schema"] = {"ok": False, "skipped": "the database is unreachable"}
+        checks["memory"] = _memory_status()
         tasks = self.registry.task_ids()
         # No pre-registered tasks is a valid install (coding continuity needs none);
         # task files that do not load are a fault.
@@ -129,6 +138,9 @@ class Continuum:
         except Exception as exc:
             models["error"] = str(exc)
         checks["live_models"] = models
+        # the live model profiles serve task delegation only; coding memory needs none
+        checks["live_models"]["note"] = ("only needed to delegate pre-registered tasks to "
+                                         "live models; coding continuity works without")
         checks["ok"] = all(checks[k]["ok"] for k in ("database", "schema", "tasks"))
         return checks
 
@@ -139,3 +151,34 @@ class Continuum:
     def runs(self) -> list[str]:
         with self.store.read() as q:
             return q.run_ids()
+
+
+def _memory_status() -> dict[str, Any]:
+    """Which session memory the brief will use, and whether it can work (never a key)."""
+    import os
+    import shutil
+
+    from continuum.coding import working_memory as wm
+
+    mode = wm.mode()
+    out: dict[str, Any] = {"ok": True, "mode": mode}
+    if mode == "digest":
+        out["detail"] = "session digest, no model: offline and free"
+    elif mode == "llm":
+        model = wm.configured()
+        out["model"] = model.name if model else None
+        name = out["model"] or ""
+        if name.startswith("openrouter:"):
+            out["key_set"] = bool(os.environ.get("OPENROUTER_API_KEY"))
+            out["ok"] = out["key_set"]
+            if not out["key_set"]:
+                out["hint"] = "set OPENROUTER_API_KEY in the environment"
+        elif name.startswith("claude-cli:"):
+            out["ok"] = shutil.which("claude") is not None
+            out["note"] = "uses the Claude Code plan of whoever runs it"
+        elif name.startswith("openai-compatible:"):
+            out["api_base"] = os.environ.get("CONTINUUM_MEMORY_API_BASE",
+                                             "http://localhost:8000/v1")
+        out["fallback"] = "the session digest is shown until the model's first memory"
+    return out
+

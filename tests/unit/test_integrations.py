@@ -105,3 +105,27 @@ def test_apps_journal_the_chat_through_the_hook_command():
 def test_packaged_agent_rules_match_the_published_rules():
     packaged = ROOT / "src" / "continuum" / "coding" / "agent_rules.md"
     assert packaged.read_text() == (INTEGRATIONS / "AGENT_RULES.md").read_text()
+
+
+def test_every_continuum_command_in_install_md_exists():
+    """INSTALL.md is followed by people and by agents: every `continuum ...` command in
+    it must be one the CLI accepts."""
+    import re
+    import subprocess
+    import sys
+
+    text = (ROOT / "INSTALL.md").read_text()
+    commands = set(re.findall(r"(?m)(?:^|`|\s)continuum ((?:[a-z][a-z-]*)(?: [a-z][a-z-]*)?)",
+                              text))
+    assert {"doctor", "mcp", "coding setup", "coding brief"} <= commands
+    for cmd in sorted(commands):
+        args = cmd.split()
+        out = subprocess.run([sys.executable, "-m", "continuum.interfaces.cli", *args,
+                              "--help"], capture_output=True, text=True, timeout=60)
+        assert out.returncode == 0, (cmd, out.stderr[-300:])
+
+
+def test_the_plugin_mcp_server_has_a_database_default():
+    cfg = json.loads((INTEGRATIONS / "claude-code" / ".mcp.json").read_text())
+    env = cfg["mcpServers"]["continuum"]["env"]
+    assert env["CONTINUUM_DATABASE_URL"].startswith("${CONTINUUM_DATABASE_URL:-postgresql://")

@@ -1,5 +1,7 @@
 # Continuum as a plugin for coding agents (MCP)
 
+Installing: [`INSTALL.md`](../INSTALL.md) (a person or an agent can follow it step by step).
+
 Continuum ships a **local stdio MCP server** (`continuum mcp`). Any MCP-capable agent can use it
 to delegate pre-registered tasks and follow them. Progress stays durable and verified,
 external effects are never repeated, and a run can continue on a different model from

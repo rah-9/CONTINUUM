@@ -11,7 +11,12 @@ Memory without a model, and free models only by default (D-049).
 - The digest covers the whole session: changed files, commits, pull requests, test and build summaries, failures with their later fix, pastes summarised by type, unknown outcomes (always kept). Benchmark (`python -m continuum_lab.digest_bench`): 100% / 87.6% / 56.4% of facts kept at 16k / 8k / 4k characters on held-out sessions of 60-300 turns.
 - Model memory: retries with backoff, fallback models (`CONTINUUM_MEMORY_FALLBACKS`), broken or shrunken answers rejected (the previous memory stays), made-up `[#N]` sources marked.
 
+- `INSTALL.md`: installation written so a coding agent can do it ("install Continuum by following its INSTALL.md"), with one-command options for Claude Code (plugin, or `claude mcp add`) and a check for each step. A test keeps every command in it valid.
+- `continuum doctor` reports which session memory the brief will use (and whether its key is set, never the key), and says how to start PostgreSQL when it is unreachable.
+
 ### Fixed
+- `continuum doctor` (and other commands) printed the connection pool's retry errors over and over when the database was down; they now report it once.
+- The Claude Code plugin's MCP server had no database default; it now uses `CONTINUUM_DATABASE_URL`, else the local default, like the project configuration.
 - Tool inputs were cut at 300 characters in JSON order, so a file write's content hid its path from both memories; paths and short fields now come first.
 - The digest could exceed its budget by its headings and cut the newest lines; every line and heading is now counted exactly.
 

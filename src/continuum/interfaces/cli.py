@@ -230,7 +230,17 @@ def _utf8_output() -> None:
             stream.reconfigure(encoding="utf-8", errors="replace")
 
 
+def _quiet_driver_logs() -> None:
+    """The connection pool logs every failed attempt to stderr; the CLI reports the
+    failure itself, once, with a hint (``database_unavailable``, ``doctor``)."""
+    import logging
+
+    for name in ("psycopg.pool", "psycopg"):
+        logging.getLogger(name).setLevel(logging.CRITICAL)
+
+
 def main(argv: list[str] | None = None) -> int:
+    _quiet_driver_logs()
     try:
         code = _main(argv)
         sys.stdout.flush()  # buffered output reaches a closed pipe here, not at exit

@@ -145,6 +145,18 @@ app's documented hook payloads. The GPT → Claude runbook is in
 
 ## Quickstart
 
+**Let your coding agent install it.** Tell Claude Code (or any agent with a shell):
+
+> Install the Continuum MCP server from https://github.com/rah-9/CONTINUUM by following
+> its INSTALL.md, then check it with `continuum doctor`.
+
+[`INSTALL.md`](INSTALL.md) is written so an agent can run every step and check each one.
+In Claude Code the plugin is two commands: `/plugin marketplace add rah-9/CONTINUUM`, then
+`/plugin install continuum@continuum`; the MCP server alone is one:
+`claude mcp add continuum --scope user -e CONTINUUM_DATABASE_URL="$CONTINUUM_DATABASE_URL" -- continuum mcp`.
+
+By hand:
+
 **The only service is PostgreSQL 14+.** There is no Continuum server to run. The CLI, SDK and MCP server are short-lived processes that share the database.
 
 ```bash
