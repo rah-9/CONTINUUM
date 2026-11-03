@@ -73,7 +73,7 @@ summary higher than the reader did).
 |---|---|---|
 | One-shot summary (model) | 22/32 | 17/32 |
 | Structured working memory (model) | 20/32 | 24/32, 25/32 |
-| **Session digest (no model), latest** | **18/32** (first version 20/32) | to be run |
+| **Session digest (no model), latest** | **19/32** (first version 20/32) | to be run |
 | Brief's user words + working memory | 20/32 | 22/32, 20/32 |
 | **Product brief with the digest (no model)** | **19/32** | to be run |
 | Anchored memory (model) | 18/32 | 15/32, 18/32 |

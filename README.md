@@ -51,50 +51,64 @@ Continuum brief carried the same requirements in **~2.1k tokens**. In Trials 2�
 B used ~14–17k work tokens and read 3–4 files. Without it, B used ~21–29k, read 12+ files
 and still delivered the wrong thing.
 
-### Context compression, measured on a real 255k-token session (1.0.0rc4)
+### Session memory: compressing a long session (1.0.0rc5)
 
-32 known-answer questions about this project's own development session; every method gets
-the same ~6k-token budget; a fresh model answers from that context alone, or with search
-over the journal (`coding_recall`). Method and harness: [`eval/compression_test`](eval/compression_test/RESULTS.md).
+A new model gets a few thousand tokens, not the whole session. Continuum fills them
+with a memory of the **whole** session, in one of two ways:
 
-| What the new model is given | Correct |
-|---|---|
-| **Working memory (model-written, structured)** | **24/32, 25/32** |
-| The same, with search of the journal | 24/32 |
-| The last 6k tokens of the chat | 21/32 |
-| A one-shot summary | 17/32 |
-| Rule-based brief + search of the journal | 17/32 |
-| Rule-based brief alone | 9/32 |
-
-A first "32/32 with search" was invalid (the searched journal held the test's answer key)
-and is withdrawn.
-
-So the brief now leads with a memory of the whole session, in one of two ways:
-
-- **Session digest, no model** (the default): our own extractive algorithm picks the most
-  specific statements of every turn (the user's words and decisions always, then numbers,
-  paths, identifiers and rare terms, without near-duplicates) and spreads the space over
-  the whole timeline. Offline, free, deterministic, ~0.15 s for a 1M-character session.
+- **Session digest, no model** (the default): Continuum's own extractive algorithm.
+  It keeps the user's requests, decisions and pastes. Then it picks the most specific
+  statements and outcomes of every turn: reports, changed files, commits, pull requests,
+  test results, failures and their fixes, and calls whose outcome is unknown. It drops
+  near-duplicates and spreads the space over the whole timeline. Every line is quoted
+  with its source `[#N]`, so nothing is invented. Offline, free, deterministic, under
+  0.2 s.
 - **Working memory, written by a model**: a free OpenRouter model when
-  `OPENROUTER_API_KEY` is set, or any local or OpenAI-compatible model.
+  `OPENROUTER_API_KEY` is set, or any local or OpenAI-compatible model. Paid models are
+  refused by default. It retries, falls back to other free models, and rejects a broken
+  or shrunken answer, keeping the previous memory.
 
-The digest covers everything that happened, not only the chat: the user's words,
-decisions and pastes, the agent's reports, changed files, commits, pull requests, test
-and build results, failures and their fixes, and calls whose outcome is unknown.
-Benchmark of 13 kinds of facts in generated sessions of 60-300 turns, held out from
-development (`python -m continuum_lab.digest_bench`):
+**Benchmark: 13 kinds of facts in generated coding sessions of 60-300 turns**, scored
+on sessions held out from development (`python -m continuum_lab.digest_bench`). A fact
+counts when its value is still in the memory.
 
-| Memory size | Session digest | Last N characters |
+| Memory size | Session digest | First digest version | Last N characters of the session |
+|---|---|---|---|
+| 16,000 chars (~4k tokens) | **100%** | 59.7% | 30.6% |
+| 8,000 chars (~2k tokens) | **87.6%** | 30.8% | 16.1% |
+| 4,000 chars (~1k tokens) | **56.4%** | 15.7% | 8.6% |
+
+By kind of fact, at 8,000 characters:
+
+| Kept by the digest | Kinds |
+|---|---|
+| **100%** | the user's decisions, pasted errors and config, changed values, measurements, changed files, pull requests, calls with an unknown outcome |
+| 98% | test and build summaries |
+| 82% | the user's requirements |
+| 65-68% | commits; errors that were later fixed |
+| 26% | root causes stated only in the agent's prose (the weakest) |
+
+**A real 255k-token session**: this project's own development chat. There were 32
+known-answer questions and ~6k tokens per method. The model-graded rows had Sonnet
+answer from the context alone. The search rows used a copy of the journal cut before
+the test was written. An earlier "32/32 with search" was invalid, because the journal
+held the test's answer key, and is withdrawn.
+
+| What the new model is given | Answered (model-graded) | Offline check |
 |---|---|---|
-| 16,000 chars (~4k tokens) | **100%** | 30.6% |
-| 8,000 chars | **87.6%** | 16.1% |
-| 4,000 chars | **56.4%** | 8.6% |
+| Working memory written by a model (Haiku) | **24/32, 25/32** | 20/32 |
+| The same, with search of the journal | 24/32 | |
+| **Session digest, no model** | to be run with a free model | **19/32** |
+| The last 6k tokens of the chat | 21/32 | 12/32 |
+| A one-shot summary | 17/32 | 22/32 |
+| Rule-based brief (before 1.0.0rc5) + search | 17/32 | |
+| Rule-based brief (before 1.0.0rc5) | 9/32 | 10/32 |
 
-On the real 255k-token session, offline check: digest 18/32, the model-written memory
-20/32, the old rule-based brief 10/32.
-The model-graded scores of the digest are to be run with a free model
-([`eval/compression_test`](eval/compression_test/RESULTS.md)). The verbatim journal stays
-the source of truth.
+The offline check needs no model. It counts a question as answerable when its answer
+appears next to the question's own topic words. It ranks the extremes like the model
+does, but not the middle. Method, harness and how to rerun everything with free models:
+[`eval/compression_test`](eval/compression_test/RESULTS.md). Algorithm:
+[`docs/MEMORY-ALGORITHM.md`](docs/MEMORY-ALGORITHM.md) §3.4b-c.
 
 ### Memory, measured without a model
 
@@ -301,7 +315,7 @@ API keys come only from the environment. They are redacted before anything is st
 
 ## Verified
 
-`make check`: ruff and `mypy --strict` clean, **482 passed** (5 live-provider tests are opt-in), on
+`make check`: ruff and `mypy --strict` clean, **516 passed** (5 live-provider tests are opt-in), on
 Linux, Windows and macOS in CI. The layers:
 - unit
 - integration
@@ -315,6 +329,7 @@ Linux, Windows and macOS in CI. The layers:
 - continuity scenarios (app switch, another checkout, abrupt end, long sessions, secrets in chat; see [`docs/MEMORY-ALGORITHM.md`](docs/MEMORY-ALGORITHM.md) §5)
 - long-chat memory quality (planted requirements in chats of 10–160 messages, pinned at ≥95% recall and zero noise)
 - exact preservation of both sides of the chat through hook outages
+- session memory: the digest's determinism, budget (a property test over random journals), quoting only journal text, and a quality floor on the 13-kind benchmark; the model memory against a local OpenAI-compatible server, with retries, fallbacks, rejected answers and rate limits that never show the key
 - capture of everything the agent did: each app's hook formats, file impact inside and outside git, unknown outcomes and refusals, redaction of outputs and diffs (`tests/integration/test_capture_review.py`, scenarios S15–S15d)
 
 Every requirement maps to tests in [`tests/traceability.yaml`](tests/traceability.yaml), and every defect found has a regression test. Results are in [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
@@ -325,6 +340,8 @@ continuum-lab run --suite safety --out results/safety    # B0 vs Continuum, 912 
 eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-switch trial
 eval/handoff_trials/capture_fidelity/run.sh <dir> <claude-wrapper>   # Trial 7: capture in real Claude Code
 python -m continuum_lab.memory_bench                      # long-chat memory benchmark
+python -m continuum_lab.digest_bench --budget 8000 --lengths 60,150,300 --per-kind 4
+                                                          # session memory, 13 fact kinds
 ```
 
 ## Repository layout

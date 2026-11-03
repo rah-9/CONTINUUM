@@ -438,7 +438,7 @@ the journal (a commit is shown as "Commit: <subject>", an answer as "User decide
 At 8,000 characters for 300 turns, root causes stated in the agent's prose are the
 weakest kind (26%); the user's decisions, pastes, measurements, changed files, test
 results and unknown outcomes are kept in 98-100%. On the real 255k-token session the
-offline check (`eval/compression_test`) gives 18/32 at 24,000 characters (the
+offline check (`eval/compression_test`) gives 19/32 at 24,000 characters (the
 model-written memory 20/32). About 0.1-0.2 s for a 1M-character session.
 
 ### 3.5 Attention rules (computed, not written by a model)
