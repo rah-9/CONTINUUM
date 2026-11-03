@@ -95,6 +95,7 @@ class SessionView:
     chat: list[dict[str, Any]] = field(default_factory=list)
     withdrawn: int = 0          # user messages on abandoned branches (rewind, edit)
     working_memory: dict[str, Any] | None = None   # the latest WorkingMemoryUpdated
+    digest: dict[str, Any] | None = None   # the no-model session digest, when it is used
     tools: list[dict[str, Any]] = field(default_factory=list)   # D-042 activity events
     moves: list[dict[str, Any]] = field(default_factory=list)  # checkout changes
     start_branch: str | None = None
@@ -206,6 +207,7 @@ class SessionView:
             },
             "working_memory": ({k: v for k, v in self.working_memory.items()}
                                if self.working_memory else None),
+            "digest": dict(self.digest) if self.digest else None,
             "user_requests": memory,
             "work_log": self.work_log(),
             "attention": self.attention(memory),
@@ -529,7 +531,7 @@ def render_markdown(view: SessionView, d: dict[str, Any] | None = None) -> str:
              "Agents so far: " + _agents_line(view.agents)]
     if d["attention"]:
         lines += ["", "## Attention", ""] + [f"- ⚠ {_line(a, 400)}" for a in d["attention"]]
-    lines += _render_working_memory(view)
+    lines += _render_working_memory(view) or _render_digest(view)
     lines += _render_memory(d["user_requests"])
     lines += ["", "## Verified facts (observed by Continuum)", "",
              f"- Code now: {cur['vcs']} `{(cur.get('head') or '')[:12]}` on "
@@ -637,6 +639,25 @@ def _render_working_memory(view: SessionView) -> list[str]:
         "each fact as [#N]. The user's own words, observed facts and checks below win if "
         "they disagree; `coding_recall` / `coding_show` give the original._", ""]
     return [*head, *wm.render(m["text"])]
+
+
+def _render_digest(view: SessionView) -> list[str]:
+    """The session digest (no model): lines quoted from the journal, each with its
+    source event, chosen by the extractive algorithm in ``digest.py``."""
+    d = view.digest
+    if not d or not d.get("text"):
+        return []
+    head = [
+        "", f"## Session digest (no model: quoted from the journal up to [#{d['up_to_seq']}])",
+        "",
+        "_The most specific statements of the whole session, turn by turn, each with its "
+        "source event [#N]. The user's words are requirements; the agent's lines are its "
+        "own reports, so confirm before relying on them. `coding_show` opens any [#N]._",
+        ""]
+    # every digest line is one quoted line ("- [#N] ..."): it cannot pose as a heading
+    body = [ln if ln.startswith(("- ", "### Turn ")) else "- " + ln
+            for ln in d["text"].splitlines() if ln.strip()]
+    return [*head, *body]
 
 
 def _maybe(item: dict[str, Any]) -> str:

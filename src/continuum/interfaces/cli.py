@@ -160,8 +160,9 @@ def build_parser() -> argparse.ArgumentParser:
     shw.add_argument("--seq", type=int)
     shw.add_argument("--blob")
     shw.add_argument("--offset", type=int, default=0)
-    mem = csub.add_parser("memory", help="the model-written working memory (D-048): "
-                                         "update it now, or show it")
+    mem = csub.add_parser("memory", help="the session's memory: the model-written working "
+                                         "memory (D-048) or, without a model, the "
+                                         "session digest (D-049); show it or update it")
     mem.add_argument("--repo", default=".")
     mem.add_argument("--session")
     mem.add_argument("--update", action="store_true", help="bring it up to date now")
@@ -424,11 +425,18 @@ def _coding(sdk: Continuum, args: argparse.Namespace) -> int:
             if args.update:
                 _print(coding.update_working_memory(sid, force=True))
             else:
+                from continuum.coding import working_memory as wm
+
                 brief = coding.brief(sid)
-                section = brief["markdown"].split("## Working memory", 1)
-                _print({"session_id": sid, "working_memory": brief.get("working_memory"),
-                        "markdown": ("## Working memory" + section[1].split("\n## ", 1)[0])
-                        if len(section) > 1 else None})
+                md = brief["markdown"]
+                title = next((t for t in ("## Working memory", "## Session digest")
+                              if t in md), None)
+                _print({"session_id": sid, "mode": wm.mode(),
+                        "working_memory": brief.get("working_memory"),
+                        "digest": {k: v for k, v in (brief.get("digest") or {}).items()
+                                   if k != "text"} or None,
+                        "markdown": (title + md.split(title, 1)[1].split("\n## ", 1)[0])
+                        if title else None})
         case "media":
             found = coding.media(args.session, args.image)
             Path(args.out).write_bytes(found.pop("content"))

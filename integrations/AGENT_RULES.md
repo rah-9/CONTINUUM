@@ -23,6 +23,8 @@ Follow these rules in every session:
    - "Working memory", when present, is a model's structured account of the whole session up
      to the event it names. Use it to understand the work; check anything exact (a value, a
      path, a decision) with `coding_recall` or `coding_show` before relying on it.
+     Without a model the brief has a "Session digest" instead: lines quoted from the
+     journal, each with its `[#N]`.
    - "What the user asked" is the user's own words from earlier chats, in any app. Treat it as
      the requirements; when two requests conflict, the newer one wins.
    - `agent_notes` and the last agent report are what earlier models said. Confirm critical

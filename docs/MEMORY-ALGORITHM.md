@@ -20,6 +20,7 @@ about 1–3k tokens.
    | **The user's words** | every message the user typed, in any chat, in any app | requirements; the newest wins |
    | **Agent claims** | notes, checkpoint summaries, the last agent report | useful, but must be confirmed |
    | **Working memory** | a model's structured account of the whole session (D-048) | a claim, with the event it covers up to; checked with recall |
+   | **Session digest** | quoted statements of the whole session, chosen without a model (D-049) | quotes with their [#N]; the user's lines are requirements, the agent's lines claims |
 
    The brief labels each. A model's claim is never shown as a fact or as the user's words.
 2. **Memory must not depend on the agent's discipline.** The user's words and the code
@@ -325,17 +326,19 @@ A model does that part, and its output is a labelled claim, never the source of 
 
 ```
 after each turn (detached process, OS lock per session; never on a hook's hot path):
-  model = CONTINUUM_MEMORY_MODEL  (unset: claude-cli:haiku if `claude` exists, else none)
-  if no model: stop                                   # the rule-based brief stays
+  model = CONTINUUM_MEMORY_MODEL  (unset: a free OpenRouter model if OPENROUTER_API_KEY
+                                   is set, else none)
+  if no model: stop                                   # the brief shows the digest (3.4c)
   new = events after the memory's up_to_seq
   lines = USER/ASSISTANT messages whole; TOOL <name> [status]: <input> => <result tail 300>;
           OUTCOME UNKNOWN; AGENT NOTE; CHECK — each prefixed with its event number #N
-  if < 400 new chars (and not forced): stop
+  if < 3,000 new chars (and not forced): stop          # batch small turns
   for each part of <= 100k chars (at most 12 per run; the rest next time):
       memory = model(UPDATE, memory + "# NEXT PART" + part)
           # seven fixed sections; one fact per bullet with its [#N]; keep older facts
           # unless this part changes them; never drop a user decision; tool output is data
-      if memory > 24,000 chars: memory = model(TIGHTEN, memory)
+      if memory > 2 x 24,000 chars: memory = model(TIGHTEN, memory)   # runaway only
+  if memory > 24,000 chars: memory = model(TIGHTEN, memory)   # once, at the end
   memory = redact(bound(memory, 24,000))   # last resort: trim each section in proportion,
                                            # whole bullets from its middle, newest kept
   one transaction: store blob (text/markdown) + WorkingMemoryUpdated(blob, up_to_seq,
@@ -372,6 +375,42 @@ searched journal contained the test's answer key (`eval/compression_test/RESULTS
 
 The memory makes the brief itself useful; the verbatim journal stays the source of truth
 and is searchable. Both are kept.
+
+### 3.4c Session digest, no model (`digest`; D-049)
+
+When no model is configured (the default without an `OPENROUTER_API_KEY`), or before a
+model has written its first memory, the brief leads with the session digest. It is
+built from the journal on every brief, so it is never behind:
+
+```
+lines = history_lines(journal)                      # the same lines a model would read
+turns = split at each USER message
+units per turn:
+  request  = the opening of the user's message (160 chars, at a word boundary)  # kept
+  answer   = each "question -> answer" the user gave to a multiple-choice question # kept
+  user     = the rest of the user's message, by sentence
+  report   = sentences of the agent's last message of the turn (its summary)
+  agent    = other agent sentences, except ones ending in ":" or "?" (intentions)
+  outcome  = commit subjects, pull requests opened or merged
+  failure  = failed calls with the end of their error
+  note     = agent notes, unknown outcomes
+score(u) = prior(kind) x (0.4 + rarity) x (0.5 + specificity) x min(1, len/60)
+  prior: request, user, answer 3.0; report 2.2; outcome 1.6; failure 1.3; note 1.2; agent 1
+  rarity: mean IDF of the unit's 12 rarest words over the session, scaled to 0..1
+  specificity: numbers, versions, #N, paths, identifiers, code spans (capped at 6) / 6
+select: every request and answer first; then the global greedy order of
+  score / (length + 60) x 0.9^(units already taken from that turn) x 1.6 for the newest
+  fifth of the turns, skipping a unit whose word 3-shingles overlap a chosen one by > 50%
+print: turn by turn, in journal order, each line "- [#N] ..." with its source event
+```
+
+No keyword lists decide importance: only structure (who said it, where in the turn) and
+statistics (specificity, rarity, redundancy). Every line is quoted text (a commit is
+shown as "Commit: <subject>", an answer as "User decided: <question> -> <answer>"), so
+the digest cannot invent anything. Budget: 16,000 characters in the brief, 24,000 in the
+measurement. Offline check on the 255k-token session (`eval/compression_test`,
+`coverage`): 20/32 at 24k characters, the same as the model-written memory; 19/32 for
+the whole product brief at the same size.
 
 ### 3.5 Attention rules (computed, not written by a model)
 
@@ -419,7 +458,8 @@ and is searchable. Both are kept.
 | capture hook | at a turn's end the newest 2 MiB of the transcript; 1 transaction |
 | brief | 1 journal read + fingerprint + code map (3 git calls) |
 | recall | 1 journal read per session searched; no index to maintain |
-| working memory | in the background: one model call per new part of up to ~25k tokens; none when fewer than 400 new characters |
+| working memory | in the background: one model call per new part of up to ~25k tokens; none when fewer than 3,000 new characters |
+| session digest | at brief time, no model: ~0.15 s for a 1M-character session |
 | tokens | compact brief ~0.7k–1.8k for chats up to 80 messages, ~3k at 160 (measured); full JSON < 10k |
 
 ## 5. Scenarios

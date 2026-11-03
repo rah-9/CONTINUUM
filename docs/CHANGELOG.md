@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0rc5 — unreleased
+
+Memory without a model, and free models only by default (D-049).
+
+### Added
+- **Session digest (no model):** Continuum's own extractive compression of the whole session: every user request and decision, then the most specific statements of each turn, without near-duplicates, across the whole timeline, each with its `[#N]`. Default when no model is configured; ~0.15 s for a 1M-character session; offline check 20/32, equal to the model-written memory.
+- **OpenRouter and any OpenAI-compatible server** as the memory model, with a built-in client (no extra package): `openrouter:<model>` (free `:free` models only unless `CONTINUUM_MEMORY_ALLOW_PAID=1`), `openai-compatible:<model>` with `CONTINUUM_MEMORY_API_BASE`.
+- `eval/compression_test`: `build digest`, `build product`, an offline `coverage` score, and model calls through OpenRouter or any OpenAI-compatible server.
+
+### Changed
+- The default memory is the digest, or a free OpenRouter model when `OPENROUTER_API_KEY` is set. Claude Code's command is used only when chosen (`claude-cli:<model>`).
+- The model memory grows while it reads a backlog and is tightened once at the end; updates wait for about 3,000 new characters.
+
 ## 1.0.0rc4 — unreleased
 
 Working memory that a model keeps (D-048; schema v8). Measured on this project's own 255k-token session in `eval/compression_test` (results in its `RESULTS.md`).

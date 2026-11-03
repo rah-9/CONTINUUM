@@ -268,6 +268,13 @@ R18_unknown_outcomes_resolved_by_proof:
   - tests/integration/test_capture_review.py::test_a_lost_push_is_checked_against_the_remote_never_assumed
   - tests/unit/test_activity.py::test_push_commands_are_parsed_for_a_read_only_probe
   - tests/unit/test_activity.py::test_a_probe_never_runs_with_injected_options
+R20_memory_without_a_model:
+  - tests/unit/test_digest.py::test_every_line_is_quoted_from_the_journal_with_its_source
+  - tests/unit/test_digest.py::test_every_user_request_and_decision_is_kept_even_when_space_is_tight
+  - tests/unit/test_digest.py::test_the_whole_session_is_covered_not_only_its_end
+  - tests/unit/test_digest.py::test_any_journal_gives_a_bounded_digest
+  - tests/integration/test_working_memory.py::test_without_a_model_the_brief_leads_with_the_digest
+  - tests/integration/test_working_memory.py::test_the_default_never_uses_a_paid_plan
 R19_working_memory:
   - tests/integration/test_working_memory.py::test_the_memory_leads_the_brief_and_is_updated_incrementally
   - tests/integration/test_working_memory.py::test_without_a_model_the_brief_is_rule_based_and_says_nothing_false

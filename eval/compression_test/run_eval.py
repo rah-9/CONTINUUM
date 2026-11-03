@@ -5,10 +5,21 @@
 Builds several compressed versions of the same history (same size budget), then has a
 fresh model answer questions with known answers from each version alone.
 
-  python run_eval.py export TRANSCRIPT  (writes history.txt from a Claude Code transcript)
-  python run_eval.py build  METHOD   (tail | summary | state | anchored | hybrid | combined)
-  python run_eval.py answer METHOD   (any method with a ctx_<METHOD>.md file)
+  python run_eval.py export TRANSCRIPT   writes history.txt from a coding-app transcript
+  python run_eval.py build METHOD [SID]  tail | summary | state | anchored | hybrid |
+                                         combined (model-built); digest | product (from
+                                         the Continuum journal of session SID)
+  python run_eval.py coverage            offline score, no model: is each answer stated
+                                         near the question's own topic words?
+  python run_eval.py answer METHOD       a reader model answers from ctx_<METHOD>.md
+  python run_eval.py recall METHOD SID   the same, plus coding_recall/coding_show tools
   python run_eval.py score
+
+Models: every call goes to an OpenAI-compatible endpoint, by default OpenRouter's free
+models (key from OPENROUTER_API_KEY). EVAL_MODEL builds the model-built methods and
+EVAL_READER answers; both default to a free model, and a paid OpenRouter model is
+refused unless CONTINUUM_MEMORY_ALLOW_PAID=1. CONTINUUM_MEMORY_API_BASE points the calls
+at another server (a local llama.cpp, vLLM, LM Studio or Ollama).
 """
 
 from __future__ import annotations
@@ -16,13 +27,15 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 import sys
+import time
 from pathlib import Path
 
+from continuum.coding import working_memory as wm
+
 HERE = Path(os.environ.get("COMPRESSION_TEST_DIR", Path(__file__).resolve().parent))
-# a command that runs `claude` with the right environment (e.g. `env` or a wrapper)
-WRAP = Path(os.environ.get("CLAUDE_WRAPPER", "/usr/bin/env"))
+EVAL_MODEL = os.environ.get("EVAL_MODEL", wm.DEFAULT_OPENROUTER_MODEL)
+EVAL_READER = os.environ.get("EVAL_READER", EVAL_MODEL)
 RUN = HERE / "run"
 BUDGET_CHARS = 24_000           # ~6k tokens: the same budget for every method
 CHUNK_CHARS = 110_000           # ~27k tokens per step for the model-based methods
@@ -54,19 +67,27 @@ def export(transcript: str) -> None:
     (HERE / "history.txt").write_text("\n".join(x[1] for x in out))
 
 
-def llm(instruction: str, data: str, model: str = "haiku",
-        timeout: int = 900) -> tuple[str, float]:
-    RUN.mkdir(exist_ok=True)
-    out = subprocess.run(  # noqa: S603 - fixed argv, no shell
-        [str(WRAP), "claude", "-p", instruction, "--model", model, "--output-format", "json",
-         "--disallowedTools", "Bash Read Write Edit Grep Glob WebFetch WebSearch Task "
-                              "NotebookEdit TodoWrite"],
-        input=data, capture_output=True, text=True, cwd=RUN, timeout=timeout)
-    try:
-        r = json.loads(out.stdout)
-    except ValueError as err:
-        raise SystemExit(f"model call failed: {out.stdout[-500:]} {out.stderr[-500:]}") from err
-    return str(r.get("result", "")), float(r.get("total_cost_usd", 0) or 0)
+def _client(model: str) -> wm.OpenAICompatibleSummarizer:
+    base = os.environ.get("CONTINUUM_MEMORY_API_BASE")
+    if base:
+        return wm.OpenAICompatibleSummarizer(model, base_url=base,
+                                             key_env="CONTINUUM_MEMORY_API_KEY",
+                                             label="openai-compatible")
+    return wm.OpenAICompatibleSummarizer(model)
+
+
+def llm(instruction: str, data: str, model: str = "") -> tuple[str, float]:
+    """One model call; a rate limit waits and retries twice, then stops the run."""
+    client = _client(model or EVAL_MODEL)
+    for attempt in range(3):
+        try:
+            text, cost = client.complete(instruction, data)
+            return text, cost or 0.0
+        except wm.MemoryModelError as err:
+            if "limit" not in str(err) or attempt == 2:
+                raise SystemExit(f"model call failed: {err}") from err
+            time.sleep(30 * (attempt + 1))
+    raise SystemExit("unreachable")
 
 
 def chunks(text: str, size: int) -> list[str]:
@@ -193,9 +214,35 @@ def _render(items: dict[int, dict], limit: int) -> str:
     return "\n".join(out)[:limit]
 
 
-def build(method: str) -> None:
+def _service():
+    from continuum.coding.service import CodingContinuity
+    from continuum.core.clock import SystemClock
+    from continuum.core.ids import RandomIds
+    from continuum.core.store import Store
+
+    store = Store(os.environ.get("CONTINUUM_DATABASE_URL",
+                                 "postgresql://continuum:continuum@localhost:5432/continuum"),
+                  schema=os.environ.get("CONTINUUM_DB_SCHEMA", "public"),
+                  clock=SystemClock(), ids=RandomIds())
+    return CodingContinuity(store, clock=SystemClock(), ids=RandomIds())
+
+
+def _journal_lines(sid: str) -> list[tuple[int, str]]:
+    _, events = _service()._events(sid)
+    return wm.history_lines(events)
+
+
+def build(method: str, sid: str = "") -> None:
     cost = 0.0
-    if method == "tail":
+    if method == "digest":
+        # no model: the extractive session digest, from the journal (D-049)
+        from continuum.coding import digest
+
+        ctx = digest.build(_journal_lines(sid), BUDGET_CHARS)
+    elif method == "product":
+        # the brief the product gives a new model, whatever its memory mode
+        ctx = _service().brief(sid)["markdown"]
+    elif method == "tail":
         ctx = HISTORY[-BUDGET_CHARS:]
     elif method == "summary":
         parts = []
@@ -265,11 +312,12 @@ work is the context below. Answer each question briefly from it. If the context 
 say, answer exactly "unknown" (never guess). Return only JSON: {"1": "...", "2": "...", ...}."""
 
 
-def answer(method: str, model: str = "sonnet") -> None:
+def answer(method: str, model: str = "") -> None:
     ctx = (HERE / f"ctx_{method}.md").read_text()[:BUDGET_CHARS]   # same budget for all
     qa = json.loads((HERE / "qa.json").read_text())
     questions = "\n".join(f"{q['id']}. {q['q']}" for q in qa)
-    text, cost = llm(ANSWER, f"# CONTEXT\n{ctx}\n\n# QUESTIONS\n{questions}", model=model)
+    text, cost = llm(ANSWER, f"# CONTEXT\n{ctx}\n\n# QUESTIONS\n{questions}",
+                     model=model or EVAL_READER)
     m = re.search(r"\{.*\}", text, re.S)
     answers = json.loads(m.group(0)) if m else {}
     (HERE / f"answers_{method}.json").write_text(json.dumps(
@@ -313,36 +361,70 @@ def clean_copy(sid: str, schema: str) -> None:
     print(f"{schema}: events before #{cut}; point mcp.json at CONTINUUM_DB_SCHEMA={schema}")
 
 
-def answer_recall(method: str, sid: str, model: str = "sonnet") -> None:
+RECALL_TOOLS = [
+    {"type": "function", "function": {
+        "name": "coding_recall", "description": "Search the session's whole journal.",
+        "parameters": {"type": "object", "required": ["query"], "properties": {
+            "query": {"type": "string"}}}}},
+    {"type": "function", "function": {
+        "name": "coding_show", "description": "Open one journal event by its number.",
+        "parameters": {"type": "object", "required": ["seq"], "properties": {
+            "seq": {"type": "integer"}}}}}]
+
+
+def answer_recall(method: str, sid: str, model: str = "", max_turns: int = 12) -> None:
     """The real product setup: the brief in context PLUS search over the stored history
-    (coding_recall / coding_show over MCP). Bounded to 40 turns. The searched journal must
-    not contain this test: see ``clean_copy``."""
+    (coding_recall / coding_show, run in-process against CONTINUUM_DB_SCHEMA). The
+    searched journal must not contain this test: see ``clean_copy``."""
+    import urllib.request
+
+    coding = _service()
     ctx = (HERE / f"ctx_{method}.md").read_text()[:BUDGET_CHARS]
     qa = json.loads((HERE / "qa.json").read_text())
     questions = "\n".join(f"{q['id']}. {q['q']}" for q in qa)
     instruction = (ANSWER.replace("is the context below", "is the context below and what "
                    "you find with the coding_recall and coding_show tools")
-                   + f" The Continuum session id is {sid}. Search for anything the context "
-                   "does not answer; keep searches short and specific.")
-    RUN.mkdir(exist_ok=True)
-    out = subprocess.run(  # noqa: S603 - fixed argv, no shell
-        [str(WRAP), "claude", "-p", instruction, "--model", model, "--output-format", "json",
-         "--mcp-config", str(HERE / "mcp.json"), "--strict-mcp-config", "--max-turns", "40",
-         "--allowedTools", "mcp__continuum__coding_recall mcp__continuum__coding_show",
-         "--disallowedTools", "Bash Read Write Edit Grep Glob WebFetch WebSearch Task"],
-        input=f"# CONTEXT\n{ctx}\n\n# QUESTIONS\n{questions}", capture_output=True,
-        text=True, cwd=RUN, timeout=1800)
-    r = json.loads(out.stdout)
-    text = str(r.get("result", ""))
+                   + " Search for anything the context does not answer; keep searches "
+                   "short and specific.")
+    client = _client(model or EVAL_READER)
+    if (client.label == "openrouter" and not client.model.endswith(":free")
+            and os.environ.get("CONTINUUM_MEMORY_ALLOW_PAID") != "1"):
+        raise SystemExit(f"{client.model} is not a free model")
+    messages: list[dict] = [{"role": "system", "content": instruction},
+                            {"role": "user", "content": f"# CONTEXT\n{ctx}\n\n# QUESTIONS\n"
+                                                        f"{questions}"}]
+    key = os.environ.get(client.key_env, "")
+    turns, text = 0, ""
+    while turns < max_turns:
+        turns += 1
+        body = json.dumps({"model": client.model, "temperature": 0, "messages": messages,
+                           "tools": RECALL_TOOLS}).encode()
+        req = urllib.request.Request(  # noqa: S310 - https/http base from the client
+            f"{client.base_url.rstrip('/')}/chat/completions", data=body, method="POST",
+            headers={"Content-Type": "application/json",
+                     **({"Authorization": f"Bearer {key}"} if key else {})})
+        with urllib.request.urlopen(req, timeout=600) as resp:  # noqa: S310
+            msg = json.loads(resp.read())["choices"][0]["message"]
+        messages.append(msg)
+        calls = msg.get("tool_calls") or []
+        if not calls:
+            text = msg.get("content") or ""
+            break
+        for call in calls:
+            args = json.loads(call["function"].get("arguments") or "{}")
+            if call["function"]["name"] == "coding_recall":
+                found = coding.recall(str(args.get("query", "")), session_id=sid)
+            else:
+                found = coding.show(sid, seq=int(args.get("seq", 0)))
+            messages.append({"role": "tool", "tool_call_id": call["id"],
+                             "content": json.dumps(found, default=str)[:6000]})
     m = re.search(r"\{.*\}", text, re.S)
     answers = json.loads(m.group(0)) if m else {}
     name = f"{method}+recall"
     (HERE / f"ctx_{name}.md").write_text(ctx)
     (HERE / f"answers_{name}.json").write_text(json.dumps(
-        {"answers": answers, "answer_usd": r.get("total_cost_usd"),
-         "turns": r.get("num_turns")}, indent=1))
-    print(f"{name}: {len(answers)} answers, ${r.get('total_cost_usd', 0):.3f}, "
-          f"{r.get('num_turns')} turns")
+        {"answers": answers, "turns": turns}, indent=1))
+    print(f"{name}: {len(answers)} answers, {turns} turns")
 
 
 def _private_keys(qa: list[dict]) -> None:
@@ -352,6 +434,47 @@ def _private_keys(qa: list[dict]) -> None:
         keys = {q["id"]: q["keys"] for q in json.loads(private.read_text())}
         for q in qa:
             q["keys"] = keys.get(q["id"], q["keys"])
+
+
+STOP = {
+    "what", "which", "when", "where", "why", "how", "who", "whom", "does", "did", "do", "the",
+    "a", "an", "of", "to", "in", "on", "for", "from", "and", "or", "was", "were", "is", "are",
+    "be", "been", "with", "that", "this", "these", "those", "than", "then", "into", "about",
+    "after", "before", "by", "as", "at", "it", "its", "user", "users", "continuum", "ask",
+    "asked", "want", "wanted", "number", "name", "named", "kind", "roughly", "besides",
+    "according", "first", "second", "their", "there", "they", "them", "said", "say", "says",
+    "make", "made", "used", "use", "using", "get", "got", "two", "one", "being", "under",
+    "over", "also", "only", "most", "more", "much", "many", "some", "any", "each", "every",
+    "other", "others",
+}
+
+
+def _covered(text: str, q: dict, window: int = 500) -> bool:
+    """The answer keys stated within ``window`` characters of at least two of the
+    question's own topic words (so a stray number elsewhere does not count)."""
+    topic = [w for w in re.findall(r"[a-z][a-z0-9\-]{2,}", q["q"].lower()) if w not in STOP]
+    groups = q["keys"]
+    for k in groups[0]:
+        for m in re.finditer(r"(?<![\w.])" + re.escape(k.lower()) + r"(?![\w])", text):
+            near = text[max(0, m.start() - window): m.end() + window]
+            rest = all(any(re.search(r"(?<![\w.])" + re.escape(x.lower()) + r"(?![\w])",
+                                     near) for x in g) for g in groups[1:])
+            if rest and sum(1 for w in topic if w[:6] in near) >= min(2, len(topic)):
+                return True
+    return False
+
+
+def coverage() -> None:
+    """Offline score, no model: a proxy for what a reader could answer. It agreed with
+    the reader's ranking on the earlier runs (the rule-based brief lowest, the model
+    memory highest) but is not a substitute for ``answer``."""
+    qa = json.loads((HERE / "qa.json").read_text())
+    _private_keys(qa)
+    qa = [q for q in qa if q["keys"]]
+    for f in sorted(HERE.glob("ctx_*.md")):
+        text = f.read_text()[:BUDGET_CHARS].lower()
+        hits = sum(_covered(text, q) for q in qa)
+        print(f"{f.stem.removeprefix('ctx_'):<18} {hits:>2}/{len(qa)}")
 
 
 def score() -> None:
@@ -382,7 +505,9 @@ if __name__ == "__main__":
     if cmd == "export":
         export(sys.argv[2])
     elif cmd == "build":
-        build(sys.argv[2])
+        build(sys.argv[2], *(sys.argv[3:4]))
+    elif cmd == "coverage":
+        coverage()
     elif cmd == "clean-copy":
         clean_copy(sys.argv[2], sys.argv[3])
     elif cmd == "recall":

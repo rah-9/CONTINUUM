@@ -69,9 +69,21 @@ over the journal (`coding_recall`). Method and harness: [`eval/compression_test`
 A first "32/32 with search" was invalid (the searched journal held the test's answer key)
 and is withdrawn.
 
-So the brief now leads with a working memory that a model keeps up to date after each
-turn (Claude Haiku through Claude Code by default, any other or local model, or off), and the
-verbatim journal stays the source of truth.
+So the brief now leads with a memory of the whole session, in one of two ways:
+
+- **Session digest, no model** (the default): our own extractive algorithm picks the most
+  specific statements of every turn (the user's words and decisions always, then numbers,
+  paths, identifiers and rare terms, without near-duplicates) and spreads the space over
+  the whole timeline. Offline, free, deterministic, ~0.15 s for a 1M-character session.
+- **Working memory, written by a model**: a free OpenRouter model when
+  `OPENROUTER_API_KEY` is set, or any local or OpenAI-compatible model.
+
+Offline check (is each answer stated next to the question's own topic words, in the
+first 24k characters): digest **20/32**, the model-written memory 20/32, a one-shot
+summary 22/32, the product brief with the digest 19/32, the old rule-based brief 10/32.
+The model-graded scores of the digest are to be run with a free model
+([`eval/compression_test`](eval/compression_test/RESULTS.md)). The verbatim journal stays
+the source of truth.
 
 ### Memory, measured without a model
 
@@ -259,8 +271,8 @@ The 22 MCP tools are:
 | `CONTINUUM_DB_TIMEOUT_SECONDS` | `10` | how long a command waits for the database |
 | `CONTINUUM_OWNER_ID` | `ctl-<host>-<pid>-<random>` | lease identity; must be unique per process if set |
 | `CONTINUUM_HOOKS` | on | `off` disables app hooks (capture, session-start brief, refusals) |
-| `CONTINUUM_MEMORY_MODEL` | `claude-cli:haiku` if Claude Code is installed | the model that keeps the working memory: `claude-cli:<model>`, `<provider>/<model>` via LiteLLM (e.g. `ollama/qwen3:4b`), or `off` |
-| `CONTINUUM_MEMORY_API_BASE` | unset | an OpenAI-compatible or self-hosted endpoint for that model |
+| `CONTINUUM_MEMORY_MODEL` | a free OpenRouter model if `OPENROUTER_API_KEY` is set, else `digest` | the session's memory: `digest` (no model), `openrouter:<model>` (only `:free` models unless `CONTINUUM_MEMORY_ALLOW_PAID=1`), `openai-compatible:<model>`, `<provider>/<model>` via LiteLLM, `claude-cli:<model>`, or `off` |
+| `CONTINUUM_MEMORY_API_BASE` | unset | the server for `openai-compatible:` (a local llama.cpp, vLLM, LM Studio or Ollama) |
 
 API keys come only from the environment. They are redacted before anything is stored, as are URL passwords that look like secrets and well-known token formats pasted into chat. Full reference: [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 

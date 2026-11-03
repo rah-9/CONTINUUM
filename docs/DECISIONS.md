@@ -573,6 +573,19 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 
 **Rejected.** Token pruning (LLMLingua-style): it shortens text but does not choose what matters. One-shot summaries of the whole history: lower scores and unbounded cost per update. Rewriting the memory from scratch each turn: loses older facts. Replacing the journal with the memory: summaries lose exact paths and values, and no compressed context answered every question. Vendor compaction (Codex's is encrypted): not portable between models.
 
+## D-049 — Two memories: our own digest without a model, or a free model; never a paid plan by default
+
+**Context.** The working memory (D-048) called Claude Code's own command by default, which spends the person's paid plan, and the person asked for no plan or money to be used: open, free models, or none. They also asked whether a model is needed at all. The rule-based brief scored 9/32 on the real-session test, so the answer is not "no memory", but a model is not the only way to compress: an extractive algorithm can select what matters without paraphrasing anything.
+
+**Decision.**
+- **Session digest (no model), the default without a key** (`digest.py`). The history is split into turns at each user message; candidate units are the opening of every user message and every answer the user gave to a question (always kept), the rest of the user's words, the sentences of the agent's reports and messages (sentences ending in ":" or "?" are intentions, not results), commit subjects, pull requests and failures. Each unit is scored by structure and statistics only (who said it and where; numbers, paths and identifiers; mean IDF of its rarest words), never by keyword lists. Units are chosen globally by value per character with diminishing returns per turn and a boost for the newest fifth, skipping near-duplicates (3-shingle overlap above 50%), then printed turn by turn in journal order with their `[#N]`. It is computed at brief time (never behind), deterministic, ~0.15 s for a 1M-character session. Offline check: 20/32, equal to the model-written memory.
+- **Model memory, free by default.** With `OPENROUTER_API_KEY` set, the default memory model is a free OpenRouter model (`nvidia/nemotron-3-nano-30b-a3b:free`), called through a built-in OpenAI-compatible client (standard library only). A paid OpenRouter model is refused unless `CONTINUUM_MEMORY_ALLOW_PAID=1`. `openai-compatible:<model>` reaches any local server. Claude Code's command is used only when chosen explicitly. A rate or daily limit fails the update cleanly.
+- **Grow, then tighten once.** While reading a backlog the memory may grow to twice its cap; it is tightened once at the end (a memory squeezed after each part scored 12/32, one never squeezed 24-25/32). Updates wait for about 3,000 new characters, so free daily limits last.
+- Until a model has written a memory, the brief shows the digest; `CONTINUUM_MEMORY_MODEL=off` shows neither.
+- The compression test calls only OpenAI-compatible endpoints (free OpenRouter models by default) and has an offline `coverage` score that needs no model.
+
+**Rejected.** A trained compression model of our own: needs training data and compute we do not have, and an extractive method already matches the model memory on the offline check. Paraphrasing without a model (templates): would invent wording. Keeping Claude Code's command as the default: spends a paid plan without being asked.
+
 ---
 
 _Continuum is proprietary and confidential. © 2026 the Continuum copyright holder. All rights reserved. See [LICENSE](../LICENSE)._

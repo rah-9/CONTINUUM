@@ -89,7 +89,12 @@ eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-sw
 | Core audit (v0.6.2) | Transient verifier error treated as drift (run failed); one process re-entered a live lease; DNS rebinding; orphan run on a bad model alias; raw tracebacks from config/MCP/CLI; zero registry cost recorded as $0; secrets in rejection reasons; malformed provider responses; unvalidated blob refs | `tests/integration/test_core_hardening.py` (K1–K9) |
 | Full-codebase audit (v0.6.1) | 23 coding-layer issues: fail-open git fingerprint, diff drivers, no-HEAD staged changes, orphan sessions, closed-session check runs, `human:` spoofing, brief forging, schema downgrade, migration race, CLI `--`, rename parsing and others | `tests/integration/test_coding_hardening.py` (H1–H21) |
 
-## Latest results (2026-11-02, v1.0.0rc4)
+## Latest results (2026-11-03, v1.0.0rc5)
+
+- `make check`: ruff clean, `mypy --strict` clean. **507 passed**, 5 live tests skipped (opt-in). The session digest is tested for determinism, budget (a property test over random journals), quoting only journal text, keeping every user request and decision, and covering the whole session; the OpenAI-compatible client against a local server, including a rate limit that never shows the key.
+- Session digest on the 255k-token session: offline coverage 20/32 at 24k characters, equal to the model-written memory ([`eval/compression_test/RESULTS.md`](../eval/compression_test/RESULTS.md)).
+
+## Results of 2026-11-02 (v1.0.0rc4)
 
 - `make check`: ruff clean, `mypy --strict` clean. **492 passed**, 5 live tests skipped (opt-in). Tests never call a real model: the working memory is tested with scripted fakes.
 - Context compression on a real 255k-token session: see [`eval/compression_test/RESULTS.md`](../eval/compression_test/RESULTS.md).

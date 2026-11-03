@@ -13,6 +13,15 @@ an older installation stops with `schema_too_new`.
 4. **Check** with `continuum doctor`. It must report `"ok": true`.
 5. **Upgrade every machine** that uses the same database. An older Continuum refuses to start on the newer schema instead of writing to it.
 
+## 1.0.0rc4 → 1.0.0rc5
+
+No schema change.
+
+| Change | What you do |
+|---|---|
+| **The default memory is the session digest (no model)**, or a free OpenRouter model when `OPENROUTER_API_KEY` is set. Claude Code's command is no longer used unless chosen. | Nothing. To keep the old behaviour: `CONTINUUM_MEMORY_MODEL=claude-cli:haiku`. |
+| Paid OpenRouter models are refused by default. | Set `CONTINUUM_MEMORY_ALLOW_PAID=1` to allow them. |
+
 ## 1.0.0rc3 → 1.0.0rc4
 
 Schema v7 → v8. Automatic; nothing is rewritten.

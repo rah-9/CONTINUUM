@@ -1115,10 +1115,25 @@ class CodingContinuity:
         return str(row["content"]) if row else ""
 
     def brief(self, session_id: str, *, current: RepoState | None = None) -> dict[str, Any]:
+        from continuum.coding import digest as dg
+        from continuum.coding import working_memory as wm
+
         view = self._view(session_id, current)
-        if view.working_memory:
+        memory_mode = wm.mode()
+        if view.working_memory and memory_mode == "llm":
             view.working_memory["text"] = self._blob_text(session_id,
                                                           view.working_memory["blob"])
+        else:
+            view.working_memory = None
+        if memory_mode != "off" and not (view.working_memory or {}).get("text"):
+            # no model (or none has written a memory yet): the extractive digest,
+            # built fresh from the journal on every brief, so it is never behind
+            _, events = self._events(session_id)
+            lines = wm.history_lines(events)
+            text = dg.build(lines, dg.BRIEF_CHARS)
+            if text:
+                view.digest = {"text": text, "up_to_seq": lines[-1][0], "chars": len(text),
+                               "method": "extractive digest (no model)"}
         body = view.to_dict()
         body["markdown"] = render_markdown(view, body)
         return body

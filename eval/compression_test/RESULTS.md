@@ -17,7 +17,9 @@ matters?
   "+ search", it may also call `coding_recall` and `coding_show` over MCP against the
   same session imported into Continuum (at most 40 turns). An answer counts when it
   contains the expected keywords; "unknown" never counts.
-- Model-built contexts were made with Haiku.
+- Model-built contexts in the table below were made with Haiku and read by Sonnet. From
+  1.0.0rc5 the harness calls only OpenAI-compatible endpoints, free OpenRouter models by
+  default; rerun the model-graded rows with a free model to compare like with like.
 
 ## Results
 
@@ -57,6 +59,32 @@ parts). The likely cause is the size guard. The test's build never tightened: it
 under 24k three times along the way, and each squeeze loses detail. Matching the test's
 quality is open work.
 
+## Without a model: the session digest (1.0.0rc5)
+
+Continuum's own extractive algorithm (`src/continuum/coding/digest.py`, D-049) needs no
+model, so it was scored offline: `run_eval.py coverage` counts a question as answerable
+when its answer keys appear within 500 characters of at least two of the question's own
+topic words, in the first 24,000 characters. It is a proxy, not a reader: on the earlier
+contexts it put them in the same order as the reader at the extremes (rule-based brief
+lowest, model memory near the top) but disagrees in the middle (it rates the one-shot
+summary higher than the reader did).
+
+| Context (first 24,000 characters) | Offline coverage | Reader (earlier, Sonnet) |
+|---|---|---|
+| One-shot summary (model) | 22/32 | 17/32 |
+| Structured working memory (model) | 20/32 | 24/32, 25/32 |
+| **Session digest (no model)** | **20/32** | to be run |
+| Brief's user words + working memory | 20/32 | 22/32, 20/32 |
+| **Product brief with the digest (no model)** | **19/32** | to be run |
+| Anchored memory (model) | 18/32 | 15/32, 18/32 |
+| Hybrid (summary + tail) | 17/32 | 16/32 |
+| Product brief, fixed model build | 16/32 | 12/32 |
+| The last 6k tokens of the chat | 12/32 | 21/32 |
+| Rule-based brief (1.0.0rc3) | 10/32 | 9/32 |
+
+The digest takes about 0.15 s for the whole 1M-character session and costs nothing. At
+16,000 characters (its size in the brief) it covers 19/32; at 8,000, 9/32.
+
 By part, for the best method and the old default:
 
 | | early | middle | capture | research | late |
@@ -80,19 +108,32 @@ Built into Continuum 1.0.0rc4 as the working memory (D-048, `docs/MEMORY-ALGORIT
 
 ## Rerun
 
+Everything runs on free models or none. Put your key in the environment, never in a
+file in the repository:
+
 ```bash
-export COMPRESSION_TEST_DIR=/some/scratch/dir   # contexts, answers, logs (not in git)
+export OPENROUTER_API_KEY=...                      # free models only by default
+export COMPRESSION_TEST_DIR=/some/scratch/dir      # contexts, answers, logs (not in git)
 cp eval/compression_test/qa.json "$COMPRESSION_TEST_DIR"/
-python eval/compression_test/run_eval.py export <claude-code-transcript.jsonl>
-python eval/compression_test/run_eval.py build state      # or tail, summary, anchored, ...
-python eval/compression_test/run_eval.py answer state
-python eval/compression_test/run_eval.py clean-copy <session id> eval_clean   # then point mcp.json at it
-python eval/compression_test/run_eval.py recall state <session id>   # + search
+python eval/compression_test/run_eval.py export <transcript.jsonl>     # history.txt
+
+# without a model (from the Continuum journal of the session)
+python eval/compression_test/run_eval.py clean-copy <session id> eval_clean
+CONTINUUM_DB_SCHEMA=eval_clean python eval/compression_test/run_eval.py build digest <session id>
+CONTINUUM_DB_SCHEMA=eval_clean CONTINUUM_MEMORY_MODEL=digest \
+    python eval/compression_test/run_eval.py build product <session id>
+python eval/compression_test/run_eval.py coverage                     # offline score
+
+# with a free model (EVAL_MODEL builds, EVAL_READER answers)
+python eval/compression_test/run_eval.py build state                  # or tail, summary, ...
+python eval/compression_test/run_eval.py answer digest                # any ctx_<method>.md
+CONTINUUM_DB_SCHEMA=eval_clean python eval/compression_test/run_eval.py recall digest <session id>
 python eval/compression_test/run_eval.py score
 ```
 
-Model calls use the `claude` command. Set `CLAUDE_WRAPPER` if it needs a wrapper, for
-example a proxy.
+`CONTINUUM_MEMORY_API_BASE` sends the calls to another OpenAI-compatible server (a local
+llama.cpp, vLLM, LM Studio or Ollama) instead. A free tier's daily limit stops a run
+with "rate or daily limit reached": continue the next day, the finished files stay.
 
 ---
 

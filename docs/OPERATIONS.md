@@ -63,7 +63,7 @@ Human decisions never travel over MCP. For those, the agent calls `pending_decis
 | `CONTINUUM_OWNER_ID` | `ctl-<host>-<pid>-<random>` | lease owner identity; if you set it, it must be unique per process, because an equal id is treated as the same controller |
 | `CONTINUUM_HOOKS` | on | `off` disables `continuum hook` (chat capture and the session-start brief) |
 | `CONTINUUM_LEASE_TTL_SECONDS` | `30` | heartbeat renews every TTL/3 |
-| `CONTINUUM_MEMORY_MODEL` | `claude-cli:haiku` if `claude` is installed, else off | the model that keeps the working memory (D-048): `claude-cli:<model>`, `litellm:<provider/model>`, `<provider>/<model>` (e.g. `ollama/qwen3:4b`), `fake`, `off` |
+| `CONTINUUM_MEMORY_MODEL` | `openrouter:nvidia/nemotron-3-nano-30b-a3b:free` if `OPENROUTER_API_KEY` is set, else `digest` (no model) | the model that keeps the working memory (D-048): `claude-cli:<model>`, `litellm:<provider/model>`, `<provider>/<model>` (e.g. `ollama/qwen3:4b`), `fake`, `off` |
 | `CONTINUUM_MEMORY_API_BASE` | none | an OpenAI-compatible or self-hosted endpoint for a LiteLLM memory model |
 | Provider keys | none | e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`; redacted everywhere |
 
@@ -71,12 +71,16 @@ Run `continuum doctor` to check the database, schema, tasks and model profiles.
 
 `CONTINUUM_CODING_ROOTS` (optional, `:`-separated; `;` on Windows) restricts which directories coding sessions may observe. `CONTINUUM_DB_TIMEOUT_SECONDS` (default 10) bounds how long a command waits for the database before reporting `database_unavailable`.
 
-## Working memory (model-written, optional)
+## Session memory: the digest (no model) or a model's working memory
 
-After each turn, a detached process updates the session's working memory with the model in `CONTINUUM_MEMORY_MODEL` (D-048). It never blocks a hook. `continuum coding memory` prints it; `--update` runs an update now and reports `updated`, `current`, `busy`, `failed` or `off`. Failures are logged to `hooks.log` under `CONTINUUM_HOME` and leave the previous memory.
+Without a model (`CONTINUUM_MEMORY_MODEL=digest`, the default when no `OPENROUTER_API_KEY` is set) the brief leads with the session digest (D-049): built from the journal on every brief, in about 0.15 s for a 1M-character session, offline and free. Nothing to run or schedule.
+
+With a model, after each turn a detached process updates the session's working memory with the model in `CONTINUUM_MEMORY_MODEL` (D-048, D-049). Until the first memory is written, the brief shows the digest. It never blocks a hook. `continuum coding memory` prints it; `--update` runs an update now and reports `updated`, `current`, `busy`, `failed` or `off`. Failures are logged to `hooks.log` under `CONTINUUM_HOME` and leave the previous memory.
 
 - **What is sent:** the session's messages and one line per tool call (redacted, as stored) go to the configured provider. Use a local model (`ollama/<model>`, or `CONTINUUM_MEMORY_API_BASE`) or `off` when chat content must not leave the machine.
-- **Cost:** one call per new part of up to ~25k tokens. Catching up this project's own 255k-token session took 12–15 Haiku calls, about 20 minutes and $0.30; an ordinary turn is one small call. With `claude-cli`, calls count against the person's Claude Code plan; a plan limit makes the update fail cleanly until it resets.
+- **Cost:** one call per new part of up to ~25k tokens, and an update only after about 3,000 new characters, so small turns are batched. Catching up a 255k-token session takes 11–15 calls. OpenRouter's free models cost nothing; only `:free` models are used unless `CONTINUUM_MEMORY_ALLOW_PAID=1`. Free tiers have a daily request limit: when it is reached the update fails cleanly (`rate or daily limit reached`) and the brief keeps the previous memory. `claude-cli:<model>` is used only when chosen explicitly; its calls count against that person's Claude Code plan.
+- **OpenRouter:** set `OPENROUTER_API_KEY` in the environment (never in a file in the repository). Another free model: `CONTINUUM_MEMORY_MODEL=openrouter:<model>:free`.
+- **Local server:** `CONTINUUM_MEMORY_MODEL=openai-compatible:<model>` with `CONTINUUM_MEMORY_API_BASE=http://localhost:8080/v1` (llama.cpp, vLLM, LM Studio, Ollama); nothing leaves the machine.
 - `litellm` providers need the `live` extra (`pip install 'continuum[live]'`) and their usual key variables.
 
 ## Database schema (designed for invariants)
