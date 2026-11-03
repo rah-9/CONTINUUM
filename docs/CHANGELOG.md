@@ -8,6 +8,12 @@ Memory without a model, and free models only by default (D-049).
 - **Session digest (no model):** Continuum's own extractive compression of the whole session: every user request and decision, then the most specific statements of each turn, without near-duplicates, across the whole timeline, each with its `[#N]`. Default when no model is configured; ~0.15 s for a 1M-character session; offline check 20/32, equal to the model-written memory.
 - **OpenRouter and any OpenAI-compatible server** as the memory model, with a built-in client (no extra package): `openrouter:<model>` (free `:free` models only unless `CONTINUUM_MEMORY_ALLOW_PAID=1`), `openai-compatible:<model>` with `CONTINUUM_MEMORY_API_BASE`.
 - `eval/compression_test`: `build digest`, `build product`, an offline `coverage` score, and model calls through OpenRouter or any OpenAI-compatible server.
+- The digest covers the whole session: changed files, commits, pull requests, test and build summaries, failures with their later fix, pastes summarised by type, unknown outcomes (always kept). Benchmark (`python -m continuum_lab.digest_bench`): 100% / 87.6% / 56.4% of facts kept at 16k / 8k / 4k characters on held-out sessions of 60-300 turns.
+- Model memory: retries with backoff, fallback models (`CONTINUUM_MEMORY_FALLBACKS`), broken or shrunken answers rejected (the previous memory stays), made-up `[#N]` sources marked.
+
+### Fixed
+- Tool inputs were cut at 300 characters in JSON order, so a file write's content hid its path from both memories; paths and short fields now come first.
+- The digest could exceed its budget by its headings and cut the newest lines; every line and heading is now counted exactly.
 
 ### Changed
 - The default memory is the digest, or a free OpenRouter model when `OPENROUTER_API_KEY` is set. Claude Code's command is used only when chosen (`claude-cli:<model>`).

@@ -46,8 +46,8 @@ def test_every_line_is_quoted_from_the_journal_with_its_source():
     source = _source_text(lines)
     seqs = {seq for seq, _ in lines}
     for line in digest.build(lines, 6000).splitlines():
-        if line.startswith("### Turn"):
-            continue
+        if line.startswith(("### Turn", "- (")):
+            continue                               # headings and the "left out" count
         m = re.match(r"- \[#(\d+)\] (?:USER(?: \(cont\.\))?: |NOTE: )?(.*)$", line)
         assert m, line
         assert int(m.group(1)) in seqs
@@ -103,3 +103,32 @@ def test_a_user_message_cannot_forge_a_heading():
 def test_any_journal_gives_a_bounded_digest(rows, budget):
     lines = [(i + 1, f"#{i + 1} {who}: {text}") for i, (who, text) in enumerate(rows)]
     assert len(digest.build(lines, budget)) <= budget
+
+
+def test_the_digest_keeps_facts_of_every_kind_on_the_benchmark():
+    """A quality floor on held-out generated sessions (``continuum_lab.digest_bench``):
+    thirteen kinds of facts among realistic noise, 60 and 150 turns, 8,000 characters."""
+    from continuum_lab import digest_bench as bench
+
+    res = bench.run(digest.build, seeds=[200, 201, 202], lengths=(60, 150), budget=8000,
+                    per_kind=3)
+    kept = sum(a for a, _ in res["by_kind"].values())
+    total = sum(b for _, b in res["by_kind"].values())
+    assert kept / total >= 0.85
+    for kind, (a, b) in res["by_kind"].items():
+        assert a / b >= 0.5, kind                  # no kind of fact is left behind
+    tail = bench.run(lambda lines, n: "\n".join(x for _, x in lines)[-n:], seeds=[200],
+                     lengths=(150,), budget=8000, per_kind=3)
+    assert sum(a for a, _ in tail["by_kind"].values()) < 0.3 * total / 2
+
+
+def test_a_large_session_is_digested_quickly():
+    from continuum_lab import digest_bench as bench
+
+    s = bench.session(7, 600, 6)
+    assert sum(len(x) for _, x in s.lines) > 400_000
+    import time
+
+    t = time.perf_counter()
+    out = digest.build(s.lines, 16_000)
+    assert time.perf_counter() - t < 5.0 and 0 < len(out) <= 16_000

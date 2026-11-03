@@ -379,38 +379,67 @@ and is searchable. Both are kept.
 ### 3.4c Session digest, no model (`digest`; D-049)
 
 When no model is configured (the default without an `OPENROUTER_API_KEY`), or before a
-model has written its first memory, the brief leads with the session digest. It is
-built from the journal on every brief, so it is never behind:
+model has written its first memory, the brief leads with the session digest. It covers
+the whole session, not only the chat: what the user said and pasted, what the agent
+reported, and what the tools did (files changed, commits, pull requests, test and build
+results, failures and their fixes, calls whose outcome is unknown). It is built from the
+journal on every brief, so it is never behind:
 
 ```
-lines = history_lines(journal)                      # the same lines a model would read
+lines = history_lines(journal)       # tool inputs: paths and short fields first,
+                                     # long contents as head + length
 turns = split at each USER message
-units per turn:
-  request  = the opening of the user's message (160 chars, at a word boundary)  # kept
-  answer   = each "question -> answer" the user gave to a multiple-choice question # kept
-  user     = the rest of the user's message, by sentence
-  report   = sentences of the agent's last message of the turn (its summary)
-  agent    = other agent sentences, except ones ending in ":" or "?" (intentions)
-  outcome  = commit subjects, pull requests opened or merged
-  failure  = failed calls with the end of their error
-  note     = agent notes, unknown outcomes
-score(u) = prior(kind) x (0.4 + rarity) x (0.5 + specificity) x min(1, len/60)
-  prior: request, user, answer 3.0; report 2.2; outcome 1.6; failure 1.3; note 1.2; agent 1
+units:
+  user     = the user's prose by sentence; a run-on sentence (voice typing) by clause
+             (<= 200 chars); the best-scoring one of each message becomes its request,
+             unless the message is chatter (< 6 words, nothing specific)
+  paste    = each pasted block (segments.py): whole when short, else its summary (an
+             error signature with file, line and function; JSON keys; line counts)
+  answer   = each "question -> answer" the user gave to a multiple-choice question
+  report   = sentences of the agent's last message of the turn
+  agent    = other agent prose (code blocks skipped; sentences ending in ":" or "?"
+             skipped: they announce work, not results)
+  edit     = one line per turn: every file the turn changed, each once
+  outcome  = commit subjects; pull requests opened or merged
+  result   = the closing summary of a successful command ("214 passed in 41.0s")
+  failure  = a failed command with the line naming its error (else its closing
+             summary); "(passed at #N)" added when the same command later succeeds
+  unknown  = a call whose outcome is unknown
+score(u) = prior(kind) x (0.4 + rarity) x (0.5 + specificity) x shortness
+  prior: request, answer, paste, unknown 3.0; user 2.5; report 2.2; outcome, edit,
+         note 1.6; result 1.4; failure 1.3; agent 1.0
   rarity: mean IDF of the unit's 12 rarest words over the session, scaled to 0..1
   specificity: numbers, versions, #N, paths, identifiers, code spans (capped at 6) / 6
-select: every request and answer first; then the global greedy order of
-  score / (length + 60) x 0.9^(units already taken from that turn) x 1.6 for the newest
-  fifth of the turns, skipping a unit whose word 3-shingles overlap a chosen one by > 50%
-print: turn by turn, in journal order, each line "- [#N] ..." with its source event
+  shortness: 1 when the unit names anything specific, else min(1, length / 60)
+always kept (requests, pastes, answers, unknown outcomes), up to 60% of the room:
+  above that, requests go first, then pastes, then answers, unknown outcomes last;
+  within a tier the least value per character first; never the first request (the
+  goal) or the latest; the number left out is printed
+then, globally by score / (length + 60), x 0.9 per unit already taken from that turn,
+  x 1.6 for the newest fifth of the turns, skipping a unit whose wording overlaps a
+  chosen one by > 50% unless it names a number, path or identifier they do not
+print: turn by turn in journal order, "- [#N] ...", each heading and line counted
+  exactly, so the budget is never exceeded and no line is cut
 ```
 
-No keyword lists decide importance: only structure (who said it, where in the turn) and
-statistics (specificity, rarity, redundancy). Every line is quoted text (a commit is
-shown as "Commit: <subject>", an answer as "User decided: <question> -> <answer>"), so
-the digest cannot invent anything. Budget: 16,000 characters in the brief, 24,000 in the
-measurement. Offline check on the 255k-token session (`eval/compression_test`,
-`coverage`): 20/32 at 24k characters, the same as the model-written memory; 19/32 for
-the whole product brief at the same size.
+No keyword lists decide importance: only structure (who said it, where, what kind of
+tool call) and statistics (specificity, rarity, redundancy). Every line is quoted from
+the journal (a commit is shown as "Commit: <subject>", an answer as "User decided: <q>
+-> <a>", files as "Changed: ..."), so the digest cannot invent anything.
+
+**Measured.**
+
+| | 16,000 chars | 8,000 chars | 4,000 chars |
+|---|---|---|---|
+| Benchmark, held-out sessions of 60-300 turns, 13 kinds of facts (`continuum_lab.digest_bench`) | **100%** | **87.6%** | **56.4%** |
+| The same, last N characters of the session | 30.6% | 16.1% | 8.6% |
+| The same, first version of the digest | 59.7% | 30.8% | 15.7% |
+
+At 8,000 characters for 300 turns, root causes stated in the agent's prose are the
+weakest kind (26%); the user's decisions, pastes, measurements, changed files, test
+results and unknown outcomes are kept in 98-100%. On the real 255k-token session the
+offline check (`eval/compression_test`) gives 18/32 at 24,000 characters (the
+model-written memory 20/32). About 0.1-0.2 s for a 1M-character session.
 
 ### 3.5 Attention rules (computed, not written by a model)
 

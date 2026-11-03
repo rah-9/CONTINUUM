@@ -73,7 +73,7 @@ summary higher than the reader did).
 |---|---|---|
 | One-shot summary (model) | 22/32 | 17/32 |
 | Structured working memory (model) | 20/32 | 24/32, 25/32 |
-| **Session digest (no model)** | **20/32** | to be run |
+| **Session digest (no model), latest** | **18/32** (first version 20/32) | to be run |
 | Brief's user words + working memory | 20/32 | 22/32, 20/32 |
 | **Product brief with the digest (no model)** | **19/32** | to be run |
 | Anchored memory (model) | 18/32 | 15/32, 18/32 |
@@ -82,8 +82,11 @@ summary higher than the reader did).
 | The last 6k tokens of the chat | 12/32 | 21/32 |
 | Rule-based brief (1.0.0rc3) | 10/32 | 9/32 |
 
-The digest takes about 0.15 s for the whole 1M-character session and costs nothing. At
-16,000 characters (its size in the brief) it covers 19/32; at 8,000, 9/32.
+The digest takes about 0.15 s for the whole 1M-character session and costs nothing. The
+later versions trade a point here (within this check's noise) for much better coverage
+of the work itself: on the generated benchmark of 13 fact kinds
+(`python -m continuum_lab.digest_bench`), held-out sessions keep 100% / 87.6% / 56.4% of
+facts at 16k / 8k / 4k characters, against 59.7% / 30.8% / 15.7% for the first version.
 
 By part, for the best method and the old default:
 

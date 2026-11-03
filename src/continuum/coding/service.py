@@ -1081,6 +1081,9 @@ class CodingContinuity:
                         "reason": self.redactor.text(str(exc))[:300]}
             text = _clean(self.redactor.text(text))
             up_to = used[-1][0]
+            # a cited event must exist: a made-up [#N] is marked, never trusted
+            text, unverified = wm.check_sources(
+                text, {e["seq"] for e in events if e["seq"] <= up_to})
             behind = sum(1 for e in events if e["seq"] > up_to)
             with self.store.connection() as conn:
                 try:
@@ -1104,6 +1107,7 @@ class CodingContinuity:
                     raise
             return {"status": "updated", "session_id": session_id, "seq": seq,
                     "up_to_seq": up_to, "chars": len(text), "calls": calls,
+                    "unverified_sources": unverified,
                     "cost_usd": cost, "model": summarizer.name, "behind": behind}
         finally:
             lock.release()

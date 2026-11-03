@@ -51,6 +51,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -62,8 +63,13 @@ MAX_PARTS = 12                 # per update; a larger backlog is caught up next 
 MIN_NEW_CHARS = 3_000          # batch small turns: free tiers allow few calls a day
 TOOL_RESULT_CHARS = 300        # the end of each tool result in the history lines
 MODEL_TIMEOUT = 600
+RETRIES = 3                    # per call, on rate limits, server errors, dropped links
+RETRY_BASE_WAIT = 5.0          # seconds, doubled each time
+RETRY_MAX_WAIT = 60.0
 GROW_LIMIT = 2.0               # while reading a backlog the memory may grow to this x cap
 DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-nano-30b-a3b:free"
+# tried in order when the default is unavailable; free models only
+DEFAULT_FALLBACKS = ("nvidia/nemotron-nano-9b-v2:free", "qwen/qwen3-30b-a3b:free")
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
 SECTIONS = ("Goal and current task", "User decisions, preferences and constraints",
@@ -120,6 +126,9 @@ class OpenAICompatibleSummarizer:
     def name(self) -> str:
         return f"{self.label}:{self.model}"
 
+    def _post(self, req: urllib.request.Request) -> dict[str, Any]:
+        return _post_with_retries(self.name, req)
+
     def complete(self, instruction: str, data: str) -> tuple[str, float | None]:
         free = self.model.endswith(":free")
         if (self.label == "openrouter" and not free
@@ -140,26 +149,72 @@ class OpenAICompatibleSummarizer:
         req = urllib.request.Request(  # noqa: S310 - scheme checked above
             f"{self.base_url.rstrip('/')}/chat/completions", data=body, headers=headers,
             method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=MODEL_TIMEOUT) as resp:  # noqa: S310
-                raw = json.loads(resp.read())
-        except urllib.error.HTTPError as exc:
-            reason = {401: "the key was refused", 402: "the account has no credit",
-                      429: "rate or daily limit reached; try again later"}.get(
-                          exc.code, f"HTTP {exc.code}")
-            raise MemoryModelError(f"{self.name}: {reason}") from exc
-        except (OSError, ValueError) as exc:
-            raise MemoryModelError(f"{self.name}: {type(exc).__name__}") from exc
+        raw = self._post(req)
         if raw.get("error"):
             raise MemoryModelError(f"{self.name}: provider error")
         try:
             text = raw["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as exc:
             raise MemoryModelError(f"{self.name}: unexpected response") from exc
+        if not str(text).strip():
+            raise MemoryModelError(f"{self.name}: returned an empty answer")
         usage = raw.get("usage") or {}
         cost = usage.get("cost")
         # a free model is known to cost nothing; otherwise unknown is unknown, never zero
         return str(text), (0.0 if free else (float(cost) if cost is not None else None))
+
+
+def _retry_after(exc: urllib.error.HTTPError, attempt: int) -> float:
+    try:
+        wait = float(exc.headers.get("Retry-After") or 0)
+    except (TypeError, ValueError):
+        wait = 0.0
+    return min(RETRY_MAX_WAIT, wait or RETRY_BASE_WAIT * 2 ** attempt)
+
+
+def _post_with_retries(name: str, req: urllib.request.Request) -> dict[str, Any]:
+    """POST with up to RETRIES retries on a rate limit, a server error or a dropped
+    connection (exponential backoff, honouring Retry-After); a refused key or an empty
+    account fails at once. Errors never include the request (it carries the key)."""
+    for attempt in range(RETRIES + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=MODEL_TIMEOUT) as resp:  # noqa: S310
+                return dict(json.loads(resp.read()))
+        except urllib.error.HTTPError as exc:
+            if exc.code in (408, 429, 500, 502, 503, 504) and attempt < RETRIES:
+                time.sleep(_retry_after(exc, attempt))
+                continue
+            reason = {401: "the key was refused", 402: "the account has no credit",
+                      429: "rate or daily limit reached; try again later"}.get(
+                          exc.code, f"HTTP {exc.code}")
+            raise MemoryModelError(f"{name}: {reason}") from exc
+        except (OSError, ValueError) as exc:
+            if attempt < RETRIES and not isinstance(exc, ValueError):
+                time.sleep(RETRY_BASE_WAIT * 2 ** attempt)
+                continue
+            raise MemoryModelError(f"{name}: {type(exc).__name__}") from exc
+    raise MemoryModelError(f"{name}: no answer")
+
+
+@dataclass
+class FallbackSummarizer:
+    """The first model, then the next ones when one is unavailable (a daily limit, an
+    outage): ``CONTINUUM_MEMORY_FALLBACKS`` lists more models of the same kind."""
+
+    models: list[Summarizer]
+
+    @property
+    def name(self) -> str:
+        return self.models[0].name
+
+    def complete(self, instruction: str, data: str) -> tuple[str, float | None]:
+        errors = []
+        for model in self.models:
+            try:
+                return model.complete(instruction, data)
+            except MemoryModelError as exc:
+                errors.append(str(exc))
+        raise MemoryModelError("; ".join(errors)[:400])
 
 
 @dataclass
@@ -260,6 +315,14 @@ def mode() -> str:
     return "llm"
 
 
+def _openrouter(model: str, fallbacks: str) -> Summarizer:
+    first = OpenAICompatibleSummarizer(model)
+    more = [m.strip() for m in fallbacks.split(",") if m.strip() and m.strip() != model]
+    if not more:
+        return first
+    return FallbackSummarizer([first, *(OpenAICompatibleSummarizer(m) for m in more)])
+
+
 def configured() -> Summarizer | None:
     """The memory model from ``CONTINUUM_MEMORY_MODEL`` (see the module doc), or None
     when no model is to be used (``digest`` or ``off``). Never Claude Code's own command
@@ -270,9 +333,11 @@ def configured() -> Summarizer | None:
     if choice == "fake":
         return FakeSummarizer()
     if not choice:
-        return OpenAICompatibleSummarizer(DEFAULT_OPENROUTER_MODEL)
+        return _openrouter(DEFAULT_OPENROUTER_MODEL, os.environ.get(
+            "CONTINUUM_MEMORY_FALLBACKS", ",".join(DEFAULT_FALLBACKS)))
     if choice.startswith("openrouter:"):
-        return OpenAICompatibleSummarizer(choice.split(":", 1)[1] or DEFAULT_OPENROUTER_MODEL)
+        return _openrouter(choice.split(":", 1)[1] or DEFAULT_OPENROUTER_MODEL,
+                           os.environ.get("CONTINUUM_MEMORY_FALLBACKS", ""))
     if choice.startswith("openai-compatible:"):
         base = os.environ.get("CONTINUUM_MEMORY_API_BASE", "http://localhost:8000/v1")
         return OpenAICompatibleSummarizer(choice.split(":", 1)[1], base_url=base,
@@ -302,8 +367,7 @@ def history_lines(events: list[dict[str, Any]]) -> list[tuple[int, str]]:
         elif kind == "ToolCallFinished":
             s = starts.get(p["call_key"], {})
             raw = s.get("input")
-            what = command_of(raw) if s.get("kind") == "shell" else json.dumps(
-                raw, ensure_ascii=False, default=str)
+            what = command_of(raw) if s.get("kind") == "shell" else _input_line(raw)
             result = (p.get("error") or p.get("output_excerpt") or "")
             keep = len(result) if s.get("tool") == "AskUserQuestion" else TOOL_RESULT_CHARS
             out.append((seq, f"#{seq} TOOL {p.get('tool')} [{p.get('status')}]: "
@@ -317,6 +381,28 @@ def history_lines(events: list[dict[str, Any]]) -> list[tuple[int, str]]:
             out.append((seq, f"#{seq} CHECK {p.get('name')}: "
                              f"{'passed' if p.get('passed') else 'failed'}"))
     return out
+
+
+_LEAD_KEYS = ("file_path", "path", "filePath", "notebook_path", "target_file", "url",
+              "pattern", "query", "title", "command", "name")
+
+
+def _input_line(raw: Any) -> str:
+    """A tool input as one short line that keeps what identifies the call: paths and other
+    short fields first, long values (file contents, edits) as their head and length.
+    Plain JSON order put a file's whole content before its path, so a 300-character cut
+    lost which file was written."""
+    if not isinstance(raw, dict):
+        return json.dumps(raw, ensure_ascii=False, default=str)
+    keys = sorted(raw, key=lambda k: (k not in _LEAD_KEYS,
+                                      len(json.dumps(raw[k], default=str)) > 120))
+    out = {}
+    for k in keys:
+        v = raw[k]
+        if isinstance(v, str) and len(v) > 120:
+            v = f"{' '.join(v[:60].split())}… ({len(v)} chars)"
+        out[k] = v
+    return json.dumps(out, ensure_ascii=False, default=str)
 
 
 def parts(lines: list[tuple[int, str]], size: int = PART_CHARS) -> list[list[tuple[int, str]]]:
@@ -337,15 +423,25 @@ def update_text(model: Summarizer, memory: str, lines: list[tuple[int, str]]
     """The memory after reading ``lines`` (in parts); returns (memory, cost, calls)."""
     cost: float | None = 0.0
     calls = 0
-    for part in parts(lines)[:MAX_PARTS]:
+    todo = parts(lines)[:MAX_PARTS]
+    for n, part in enumerate(todo, 1):
         data = (f"# CURRENT MEMORY\n{memory or '(empty: nothing recorded yet)'}\n\n"
                 f"# NEXT PART OF THE SESSION\n" + "\n".join(line for _, line in part))
+        before = memory
         memory, c = model.complete(UPDATE, data)
         calls += 1
         cost = None if cost is None or c is None else cost + c
-        if not memory.strip():
-            raise MemoryModelError(f"{model.name} returned an empty memory")
-        if len(memory) > MEMORY_CHARS * GROW_LIMIT:     # runaway growth only
+        problem = _invalid(memory, before)
+        if problem:                                     # one more try, then give up
+            memory, c = model.complete(UPDATE, data + f"\n\n# NOTE\nYour last answer {problem}."
+                                       " Return the whole updated memory in the sections.")
+            calls += 1
+            cost = None if cost is None or c is None else cost + c
+            problem = _invalid(memory, before)
+            if problem:
+                raise MemoryModelError(f"{model.name}: the memory {problem}; kept the "
+                                       "previous one")
+        if len(memory) > MEMORY_CHARS * GROW_LIMIT and n < len(todo):   # runaway only
             memory, c = model.complete(TIGHTEN, memory)
             calls += 1
             cost = None if cost is None or c is None else cost + c
@@ -354,6 +450,41 @@ def update_text(model: Summarizer, memory: str, lines: list[tuple[int, str]]
         calls += 1
         cost = None if cost is None or c is None else cost + c
     return _bounded(memory), cost, calls
+
+
+def _invalid(memory: str, before: str) -> str:
+    """Why a model's answer cannot replace the memory, or "" when it can: the answer
+    must keep the fixed sections, and must not lose most of a memory that existed (a
+    model that answers only about the new part would erase the session's history)."""
+    if not memory.strip():
+        return "was empty"
+
+    def sections(text: str) -> int:
+        return sum(1 for s in SECTIONS if re.search(rf"(?im)^#+\s*{re.escape(s)}", text))
+
+    found, had = sections(memory), sections(before)
+    if found == 0:
+        return "had none of the memory's sections"
+    if found < (had + 1) // 2:
+        return f"kept {found} of its {had} sections"
+    if len(before) > 4000 and len(memory) < 0.5 * len(before):
+        return f"shrank from {len(before)} to {len(memory)} characters"
+    return ""
+
+
+def check_sources(memory: str, known: set[int]) -> tuple[str, int]:
+    """A cited event that does not exist cannot be checked: its citation is marked
+    unverified instead of trusted. Returns the memory and how many were marked."""
+    bad = 0
+
+    def fix(m: re.Match[str]) -> str:
+        nonlocal bad
+        if int(m.group(1)) in known:
+            return m.group(0)
+        bad += 1
+        return f"[#{m.group(1)}: no such event]"
+
+    return re.sub(r"\[#(\d+)\]", fix, memory), bad
 
 
 def _bounded(memory: str) -> str:

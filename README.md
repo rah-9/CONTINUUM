@@ -78,9 +78,20 @@ So the brief now leads with a memory of the whole session, in one of two ways:
 - **Working memory, written by a model**: a free OpenRouter model when
   `OPENROUTER_API_KEY` is set, or any local or OpenAI-compatible model.
 
-Offline check (is each answer stated next to the question's own topic words, in the
-first 24k characters): digest **20/32**, the model-written memory 20/32, a one-shot
-summary 22/32, the product brief with the digest 19/32, the old rule-based brief 10/32.
+The digest covers everything that happened, not only the chat: the user's words,
+decisions and pastes, the agent's reports, changed files, commits, pull requests, test
+and build results, failures and their fixes, and calls whose outcome is unknown.
+Benchmark of 13 kinds of facts in generated sessions of 60-300 turns, held out from
+development (`python -m continuum_lab.digest_bench`):
+
+| Memory size | Session digest | Last N characters |
+|---|---|---|
+| 16,000 chars (~4k tokens) | **100%** | 30.6% |
+| 8,000 chars | **87.6%** | 16.1% |
+| 4,000 chars | **56.4%** | 8.6% |
+
+On the real 255k-token session, offline check: digest 18/32, the model-written memory
+20/32, the old rule-based brief 10/32.
 The model-graded scores of the digest are to be run with a free model
 ([`eval/compression_test`](eval/compression_test/RESULTS.md)). The verbatim journal stays
 the source of truth.
