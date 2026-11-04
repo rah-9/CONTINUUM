@@ -61,8 +61,9 @@ with a memory of the **whole** session, in one of two ways:
   statements and outcomes of every turn: reports, changed files, commits, pull requests,
   test results, failures and their fixes, and calls whose outcome is unknown. It drops
   near-duplicates and spreads the space over the whole timeline. Every line is quoted
-  with its source `[#N]`, so nothing is invented. Offline, free, deterministic, under
-  0.2 s.
+  with its source `[#N]`, so nothing is invented. Works in any language (Latin,
+  Devanagari, Arabic and CJK text). Offline, free, deterministic, under 0.2 s. In the
+  brief it covers the work only, since the user's words already have their own section.
 - **Working memory, written by a model**: a free OpenRouter model when
   `OPENROUTER_API_KEY` is set, or any local or OpenAI-compatible model. Paid models are
   refused by default. Each part of the history is sent with its key facts (picked by the
@@ -85,10 +86,10 @@ By kind of fact, at 8,000 characters:
 | Kept by the digest | Kinds |
 |---|---|
 | **100%** | the user's decisions, pasted errors and config, changed values, measurements, changed files, pull requests, calls with an unknown outcome |
-| 98% | test and build summaries |
-| 82% | the user's requirements |
-| 65-68% | commits; errors that were later fixed |
-| 26% | root causes stated only in the agent's prose (the weakest) |
+| 99% | test and build summaries |
+| 92% | the user's requirements |
+| 67-70% | commits; errors that were later fixed |
+| 32% | root causes stated only in the agent's prose (the weakest) |
 
 **A real 255k-token session**: this project's own development chat. There were 32
 known-answer questions and ~6k tokens per method. The model-graded rows had Sonnet
