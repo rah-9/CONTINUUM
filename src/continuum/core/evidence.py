@@ -116,9 +116,6 @@ class Workspace:
                 shutil.copyfile(src, dest)
                 dest.chmod(0o444)
 
-    def input_path(self, uri: str) -> str:
-        return uri if uri.startswith("inputs/") else f"inputs/{uri}"
-
     # ---- blobs ----------------------------------------------------------------------
 
     def put_blob(self, value: Any) -> str:

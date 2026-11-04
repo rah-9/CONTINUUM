@@ -36,7 +36,6 @@ from continuum.coding import working_memory as wm
 HERE = Path(os.environ.get("COMPRESSION_TEST_DIR", Path(__file__).resolve().parent))
 EVAL_MODEL = os.environ.get("EVAL_MODEL", wm.DEFAULT_OPENROUTER_MODEL)
 EVAL_READER = os.environ.get("EVAL_READER", EVAL_MODEL)
-RUN = HERE / "run"
 BUDGET_CHARS = 24_000           # ~6k tokens: the same budget for every method
 CHUNK_CHARS = 110_000           # ~27k tokens per step for the model-based methods
 HISTORY = (HERE / "history.txt").read_text() if (HERE / "history.txt").exists() else ""

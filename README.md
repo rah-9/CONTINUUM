@@ -65,8 +65,10 @@ with a memory of the **whole** session, in one of two ways:
   0.2 s.
 - **Working memory, written by a model**: a free OpenRouter model when
   `OPENROUTER_API_KEY` is set, or any local or OpenAI-compatible model. Paid models are
-  refused by default. It retries, falls back to other free models, and rejects a broken
-  or shrunken answer, keeping the previous memory.
+  refused by default. Each part of the history is sent with its key facts (picked by the
+  digest) so exact values are not missed. It retries, falls back to other free models,
+  rejects a broken or shrunken answer (keeping the previous memory), and restores any
+  user decision or unknown outcome the model dropped.
 
 **Benchmark: 13 kinds of facts in generated coding sessions of 60-300 turns**, scored
 on sessions held out from development (`python -m continuum_lab.digest_bench`). A fact
@@ -75,8 +77,8 @@ counts when its value is still in the memory.
 | Memory size | Session digest | First digest version | Last N characters of the session |
 |---|---|---|---|
 | 16,000 chars (~4k tokens) | **100%** | 59.7% | 30.6% |
-| 8,000 chars (~2k tokens) | **87.6%** | 30.8% | 16.1% |
-| 4,000 chars (~1k tokens) | **56.4%** | 15.7% | 8.6% |
+| 8,000 chars (~2k tokens) | **89.2%** | 30.8% | 16.1% |
+| 4,000 chars (~1k tokens) | **57.8%** | 15.7% | 8.6% |
 
 By kind of fact, at 8,000 characters:
 
@@ -99,6 +101,7 @@ held the test's answer key, and is withdrawn.
 | Working memory written by a model (Haiku) | **24/32, 25/32** | 20/32 |
 | The same, with search of the journal | 24/32 | |
 | **Session digest, no model** | to be run with a free model | **19/32** |
+| **The whole brief with the digest** (what a new model actually gets) | to be run with a free model | **18/32** |
 | The last 6k tokens of the chat | 21/32 | 12/32 |
 | A one-shot summary | 17/32 | 22/32 |
 | Rule-based brief (before 1.0.0rc5) + search | 17/32 | |
@@ -315,7 +318,7 @@ API keys come only from the environment. They are redacted before anything is st
 
 ## Verified
 
-`make check`: ruff and `mypy --strict` clean, **516 passed** (5 live-provider tests are opt-in), on
+`make check`: ruff and `mypy --strict` clean, **522 passed** (5 live-provider tests are opt-in), on
 Linux, Windows and macOS in CI. The layers:
 - unit
 - integration

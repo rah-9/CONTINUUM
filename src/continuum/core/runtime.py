@@ -45,7 +45,6 @@ from continuum.core.events import (
     ActionRejected,
     ActionSkipped,
     ApprovalDecided,
-    FaultInjected,
     ModelSessionEnded,
     NewEvent,
     RecoveryStarted,
@@ -318,12 +317,6 @@ class Runtime:
                     tx.append(make_event(RunCancelled(actor=actor, reason=reason),
                                          actor=f"human:{actor}"))
             return self._result(run_id)
-
-    def record_fault(self, run_id: str, boundary: str, detail: dict[str, Any]) -> None:
-        """Test-only: record that a fault was injected (Continuum Lab)."""
-        with self._owned(run_id) as lease, self.store.run_tx(run_id, lease.fence) as tx:
-            tx.append(make_event(FaultInjected(boundary=boundary, detail=detail),
-                                 actor="lab"))
 
     def status(self, run_id: str) -> dict[str, Any]:
         with self.store.read() as q:

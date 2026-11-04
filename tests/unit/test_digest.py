@@ -132,3 +132,36 @@ def test_a_large_session_is_digested_quickly():
     t = time.perf_counter()
     out = digest.build(s.lines, 16_000)
     assert time.perf_counter() - t < 5.0 and 0 < len(out) <= 16_000
+
+
+def test_in_the_brief_the_digest_spends_its_room_on_the_work():
+    lines = _session(10)
+    text = digest.build(lines, 6000, user=False)
+    assert "USER:" not in text and "Request 3:" not in text
+    assert "ms instead of" in text and "Commit: Export:" in text
+
+
+def test_a_failure_is_linked_to_the_later_success_of_the_same_long_command():
+    cmd = "pytest -q tests/integration/test_export.py " + "-k 'region and csv' " * 8
+    lines = [(1, "#1 USER: run the export tests please"),
+             (2, f"#2 TOOL Bash [error]: {cmd} => FAILED test_export - KeyError: 'region'"),
+             (3, f"#3 TOOL Bash [ok]: {cmd} => 12 passed in 3.1s")]
+    assert "(passed at #3)" in digest.build(lines, 4000)
+
+
+def test_words_in_any_script_count_and_split():
+    hindi = "निर्यात फ़ाइल अर्धविराम से अलग होनी चाहिए। रिपोर्ट हर सोमवार भेजो।"
+    units = digest.units([(1, f"#1 USER: {hindi}")])
+    assert len([u for u in units if u.kind == "user"]) == 2
+    digest._score(units)
+    assert all(u.score > 0 for u in units)
+
+
+def test_the_budget_holds_with_long_event_numbers():
+    lines = [(100_000 + i, f"#{100_000 + i} {'USER' if i % 3 == 0 else 'ASSISTANT'}: "
+                           f"Step {i} moved `mod_{i}.py` to 0.{i} s and fixed issue #{i}.")
+             for i in range(900)]
+    for budget in (500, 3000, 9000):
+        out = digest.build(lines, budget)
+        assert len(out) <= budget
+        assert out.rstrip().splitlines()[-1].startswith("- [#")    # nothing cut in half

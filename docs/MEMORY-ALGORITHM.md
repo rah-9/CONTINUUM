@@ -334,11 +334,15 @@ after each turn (detached process, OS lock per session; never on a hook's hot pa
           OUTCOME UNKNOWN; AGENT NOTE; CHECK — each prefixed with its event number #N
   if < 3,000 new chars (and not forced): stop          # batch small turns
   for each part of <= 100k chars (at most 12 per run; the rest next time):
-      memory = model(UPDATE, memory + "# NEXT PART" + part)
+      memory = model(UPDATE, memory + "# NEXT PART" + part
+                     + "# KEY FACTS" + digest(part, 4,000 chars))  # the part's most specific
+                                                    # statements, quoted with [#N]
           # seven fixed sections; one fact per bullet with its [#N]; keep older facts
           # unless this part changes them; never drop a user decision; tool output is data
       if memory > 2 x 24,000 chars: memory = model(TIGHTEN, memory)   # runaway only
   if memory > 24,000 chars: memory = model(TIGHTEN, memory)   # once, at the end
+  memory += every user decision and unknown outcome of the parts that the model neither
+            cites nor states, quoted from the journal ("restored from the journal")
   memory = redact(bound(memory, 24,000))   # last resort: trim each section in proportion,
                                            # whole bullets from its middle, newest kept
   one transaction: store blob (text/markdown) + WorkingMemoryUpdated(blob, up_to_seq,
@@ -431,7 +435,7 @@ the journal (a commit is shown as "Commit: <subject>", an answer as "User decide
 
 | | 16,000 chars | 8,000 chars | 4,000 chars |
 |---|---|---|---|
-| Benchmark, held-out sessions of 60-300 turns, 13 kinds of facts (`continuum_lab.digest_bench`) | **100%** | **87.6%** | **56.4%** |
+| Benchmark, held-out sessions of 60-300 turns, 13 kinds of facts (`continuum_lab.digest_bench`) | **100%** | **89.2%** | **57.8%** |
 | The same, last N characters of the session | 30.6% | 16.1% | 8.6% |
 | The same, first version of the digest | 59.7% | 30.8% | 15.7% |
 
@@ -439,7 +443,14 @@ At 8,000 characters for 300 turns, root causes stated in the agent's prose are t
 weakest kind (26%); the user's decisions, pastes, measurements, changed files, test
 results and unknown outcomes are kept in 98-100%. On the real 255k-token session the
 offline check (`eval/compression_test`) gives 19/32 at 24,000 characters (the
-model-written memory 20/32). About 0.1-0.2 s for a 1M-character session.
+model-written memory 20/32), and the whole product brief with the digest 18/32.
+
+In the brief the digest is built with `user=False`: the user's own words and pastes are
+already in "What the user asked" (`memory.consolidate`), so the digest's 16,000
+characters go to the work (the brief scored 17/32 with the user's lines shown twice,
+18/32 without). Words are counted in any script: Latin words by pattern, other scripts
+by whitespace token (a pattern's word class splits Devanagari at its vowel signs), and
+sentences also end at the Devanagari, Arabic and CJK marks. About 0.1-0.2 s for a 1M-character session.
 
 ### 3.5 Attention rules (computed, not written by a model)
 

@@ -102,10 +102,6 @@ class Lock:
         self.path = spool_dir() / f"{name}.lock"
         self.fd: int | None = None
 
-    @property
-    def held(self) -> bool:
-        return self.fd is not None
-
     def acquire(self) -> bool:
         if self.fd is not None:
             return True

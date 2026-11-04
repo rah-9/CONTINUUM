@@ -1079,6 +1079,8 @@ class CodingContinuity:
             except wm.MemoryModelError as exc:
                 return {"status": "failed", "session_id": session_id,
                         "reason": self.redactor.text(str(exc))[:300]}
+            # the user's decisions and unknown outcomes are never lost to a model
+            text, restored = wm.restore_guaranteed(text, used)
             text = _clean(self.redactor.text(text))
             up_to = used[-1][0]
             # a cited event must exist: a made-up [#N] is marked, never trusted
@@ -1107,7 +1109,7 @@ class CodingContinuity:
                     raise
             return {"status": "updated", "session_id": session_id, "seq": seq,
                     "up_to_seq": up_to, "chars": len(text), "calls": calls,
-                    "unverified_sources": unverified,
+                    "unverified_sources": unverified, "restored": restored,
                     "cost_usd": cost, "model": summarizer.name, "behind": behind}
         finally:
             lock.release()
@@ -1134,7 +1136,9 @@ class CodingContinuity:
             # built fresh from the journal on every brief, so it is never behind
             _, events = self._events(session_id)
             lines = wm.history_lines(events)
-            text = dg.build(lines, dg.BRIEF_CHARS)
+            # the user's words are already in "What the user asked" (memory.consolidate):
+            # the digest spends its room on the work
+            text = dg.build(lines, dg.BRIEF_CHARS, user=False)
             if text:
                 view.digest = {"text": text, "up_to_seq": lines[-1][0], "chars": len(text),
                                "method": "extractive digest (no model)"}

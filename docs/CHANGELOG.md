@@ -8,13 +8,21 @@ Memory without a model, and free models only by default (D-049).
 - **Session digest (no model):** Continuum's own extractive compression of the whole session: every user request and decision, then the most specific statements of each turn, without near-duplicates, across the whole timeline, each with its `[#N]`. Default when no model is configured; ~0.15 s for a 1M-character session; offline check 20/32, equal to the model-written memory.
 - **OpenRouter and any OpenAI-compatible server** as the memory model, with a built-in client (no extra package): `openrouter:<model>` (free `:free` models only unless `CONTINUUM_MEMORY_ALLOW_PAID=1`), `openai-compatible:<model>` with `CONTINUUM_MEMORY_API_BASE`.
 - `eval/compression_test`: `build digest`, `build product`, an offline `coverage` score, and model calls through OpenRouter or any OpenAI-compatible server.
-- The digest covers the whole session: changed files, commits, pull requests, test and build summaries, failures with their later fix, pastes summarised by type, unknown outcomes (always kept). Benchmark (`python -m continuum_lab.digest_bench`): 100% / 87.6% / 56.4% of facts kept at 16k / 8k / 4k characters on held-out sessions of 60-300 turns.
+- The digest covers the whole session: changed files, commits, pull requests, test and build summaries, failures with their later fix, pastes summarised by type, unknown outcomes (always kept). Benchmark (`python -m continuum_lab.digest_bench`): 100% / 89.2% / 57.8% of facts kept at 16k / 8k / 4k characters on held-out sessions of 60-300 turns.
 - Model memory: retries with backoff, fallback models (`CONTINUUM_MEMORY_FALLBACKS`), broken or shrunken answers rejected (the previous memory stays), made-up `[#N]` sources marked.
 
 - `INSTALL.md`: installation written so a coding agent can do it ("install Continuum by following its INSTALL.md"), with one-command options for Claude Code (plugin, or `claude mcp add`) and a check for each step. A test keeps every command in it valid.
 - `continuum doctor` reports which session memory the brief will use (and whether its key is set, never the key), and says how to start PostgreSQL when it is unreachable.
 
+- Model memory: each part is sent with its key facts (the part's most specific statements, picked by the digest, with sources), and any user decision or unknown outcome the model dropped is restored from the journal.
+- In the brief, the digest covers the work and leaves the user's words to "What the user asked" (they were shown twice); words and sentences in any script are recognised.
+
+### Removed
+- Unused code: two error classes, a lab-only runtime method, a manifest loader, an evidence helper, a lock property and two fault-injection helpers.
+
 ### Fixed
+- A failure was never linked to the later success of a long command (the two were cut at different lengths); they are now matched on the full call.
+- A session with six-digit event numbers could make the digest's headings longer than counted, so its newest line was cut; headings are now counted from the session's own numbers.
 - `continuum doctor` (and other commands) printed the connection pool's retry errors over and over when the database was down; they now report it once.
 - The Claude Code plugin's MCP server had no database default; it now uses `CONTINUUM_DATABASE_URL`, else the local default, like the project configuration.
 - Tool inputs were cut at 300 characters in JSON order, so a file write's content hid its path from both memories; paths and short fields now come first.

@@ -38,14 +38,6 @@ class CrashInjector:
                 self.fired.append((boundary, context))
                 raise SimulatedCrash(f"injected crash at {boundary}")
 
-    def disarm(self) -> None:
-        for rule in self.rules:
-            rule.remaining = 0
-
-
-def after_event(event_type: str) -> Predicate:
-    return lambda ctx: event_type in ctx.get("event_types", [])
-
 
 def for_tool(tool: str) -> Predicate:
     return lambda ctx: ctx.get("tool") == tool

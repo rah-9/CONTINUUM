@@ -10,11 +10,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Literal
 
 import jsonschema
-import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from continuum.core.errors import ManifestError
@@ -99,13 +97,6 @@ class ToolManifest(_M):
         return {"type": "function", "function": {
             "name": self.name, "description": self.description,
             "parameters": self.args_schema}}
-
-
-def load_manifest(path: Path) -> ToolManifest:
-    try:
-        return ToolManifest.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
-    except ValueError as exc:
-        raise ManifestError(f"{path}: {exc}") from exc
 
 
 class ToolCleanFailure(Exception):

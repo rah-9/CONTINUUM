@@ -42,12 +42,6 @@ class InvalidTransitionError(ContinuumError):
     code = "invalid_transition"
 
 
-class IntentConflictError(ContinuumError):
-    """Same operation identity proposed with different immutable arguments."""
-
-    code = "intent_conflict"
-
-
 class PathContainmentError(ContinuumError):
     code = "path_outside_workspace"
 
@@ -58,10 +52,6 @@ class PacketTooLargeError(ContinuumError):
 
 class UnsupportedCapabilityError(ContinuumError):
     code = "unsupported_capability"
-
-
-class BudgetExceededError(ContinuumError):
-    code = "budget_exceeded"
 
 
 class VerificationUnavailableError(ContinuumError):

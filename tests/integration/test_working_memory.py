@@ -281,13 +281,17 @@ def test_the_memory_grows_while_reading_and_is_tightened_once_at_the_end():
 
 def test_without_a_model_the_brief_leads_with_the_digest(coding, repo, monkeypatch):
     monkeypatch.setenv("CONTINUUM_MEMORY_MODEL", "digest")
-    sid = _session(coding, repo, "Build the CSV export with semicolons as delimiter.",
-                   "Also keep region_eu rows first, the export took 730 ms before.")
+    sid = _session(coding, repo, "Build the CSV export with semicolons as delimiter.")
+    coding.capture(str(repo), [Message("agent", "The export of region_eu now takes 140 ms "
+                                                    "instead of 730 ms in `export/run.py`.")],
+                   source="claude-code")
     md = coding.brief(sid)["markdown"]
     assert "## Session digest (no model" in md and "## Working memory" not in md
     assert md.index("## Session digest") < md.index("## What the user asked")
     section = md.split("## Session digest", 1)[1].split("\n## ", 1)[0]
-    assert "semicolons" in section and "[#" in section
+    assert "140 ms instead of 730 ms" in section and "[#" in section
+    # the user's own words are shown once, in "What the user asked", not again here
+    assert "semicolons" not in section and "semicolons" in md
     monkeypatch.setenv("CONTINUUM_MEMORY_MODEL", "off")
     assert "## Session digest" not in coding.brief(sid)["markdown"]
 
@@ -295,6 +299,9 @@ def test_without_a_model_the_brief_leads_with_the_digest(coding, repo, monkeypat
 def test_a_model_memory_not_written_yet_falls_back_to_the_digest(coding, repo, monkeypatch):
     monkeypatch.setenv("CONTINUUM_MEMORY_MODEL", "fake")
     sid = _session(coding, repo, "Build the CSV export with semicolons as delimiter.")
+    coding.capture(str(repo), [Message("agent", "The export now writes 1,204 rows to "
+                                                    "`out/export.csv` in 2.1 s.")],
+                   source="claude-code")
     md = coding.brief(sid)["markdown"]
     assert "## Session digest" in md                         # nothing written yet
     coding.update_working_memory(sid, force=True)
@@ -362,3 +369,29 @@ def test_a_made_up_source_is_marked_not_trusted(coding, repo):
 def test_tool_lines_name_the_file_first():
     line = wm._input_line({"content": "x" * 5000, "file_path": "src/app/export.py"})
     assert line.startswith('{"file_path": "src/app/export.py"') and "(5000 chars)" in line
+
+
+def test_a_decision_or_unknown_outcome_the_model_dropped_is_restored():
+    lines = [(5, '#5 TOOL AskUserQuestion [ok]: {"questions": []} => User has answered your '
+                 'questions: "Where should exports be stored?"="Object storage". Read them.'),
+             (9, "#9 OUTCOME UNKNOWN: Bash: git push origin feature/x was interrupted")]
+    forgetful = "## Goal and current task\n- exports [#1]\n## " + wm.SECTIONS[1] + "\n- none"
+    text, n = wm.restore_guaranteed(forgetful, lines)
+    assert n == 2
+    decisions = text.split(wm.SECTIONS[1], 1)[1]
+    assert "Where should exports be stored? -> Object storage [#5]" in decisions
+    assert "git push origin feature/x" in text.split(wm.SECTIONS[-1], 1)[1]
+    kept = "## " + wm.SECTIONS[1] + "\n- exports go to Object storage [#5]\n- push of x " \
+           "unknown [#9]"
+    assert wm.restore_guaranteed(kept, lines) == (kept, 0)      # already there: unchanged
+
+
+def test_the_model_gets_the_parts_key_facts_with_their_sources(coding, repo):
+    sid = _session(coding, repo, "Build the CSV export with a long enough first message.")
+    coding.capture(str(repo), [Message("agent", "I chose to stream rows. The export now "
+                                                "takes 140 ms instead of 730 ms in "
+                                                "`export/run.py`.")], source="claude-code")
+    model = Scripted(["## Goal and current task\n- export [#1]"])
+    coding.update_working_memory(sid, model=model, force=True)
+    facts = model.sent[0].split("# KEY FACTS IN THIS PART", 1)[1]
+    assert "140 ms instead of 730 ms" in facts and "[#" in facts
