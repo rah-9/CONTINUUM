@@ -13,7 +13,7 @@ INTEGRATIONS = ROOT / "integrations"
 
 
 def _servers(path: Path) -> dict:
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     return data.get("mcpServers") or data["servers"]
 
 
@@ -25,8 +25,8 @@ def test_mcp_client_configs_launch_continuum_mcp():
         server = _servers(path)["continuum"]
         assert server["command"] == "continuum" and server["args"] == ["mcp"], path
         # copied verbatim, a config must work: no placeholder paths to forget to edit
-        assert "/absolute/path" not in path.read_text(), path
-    codex_text = (INTEGRATIONS / "codex" / "config.toml").read_text()
+        assert "/absolute/path" not in path.read_text(encoding="utf-8"), path
+    codex_text = (INTEGRATIONS / "codex" / "config.toml").read_text(encoding="utf-8")
     codex = tomllib.loads(codex_text)
     assert codex["mcp_servers"]["continuum"]["args"] == ["mcp"]
     assert "/absolute/path" not in codex_text
@@ -54,25 +54,27 @@ def test_cloud_setup_script_is_valid_bash():
     if bash is None:
         pytest.skip("no bash on this machine (the script runs in Linux containers)")
     subprocess.run([bash, "-n", str(script)], check=True)
-    text = script.read_text()
+    text = script.read_text(encoding="utf-8")
     assert "uv tool install" in text and "--python 3.12" in text  # PEP 668 / old pythons
 
 
 def test_claude_code_plugin_and_marketplace():
     plugin = json.loads((INTEGRATIONS / "claude-code" / ".claude-plugin" /
-                         "plugin.json").read_text())
+                         "plugin.json").read_text(encoding="utf-8"))
     assert plugin["name"] == "continuum"
-    market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
+    market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     [entry] = market["plugins"]
     assert (ROOT / entry["source"] / ".claude-plugin" / "plugin.json").is_file()
-    skill = (INTEGRATIONS / "claude-code" / "skills" / "continuum" / "SKILL.md").read_text()
+    skill = (INTEGRATIONS / "claude-code" / "skills" / "continuum" / "SKILL.md").read_text(
+        encoding="utf-8")
     assert skill.startswith("---\nname: continuum\ndescription: ")
     assert "do not decide for the user" in skill.lower()
 
 
 def test_agent_rules_and_skill_teach_the_coding_handoff_protocol():
-    rules = (INTEGRATIONS / "AGENT_RULES.md").read_text()
-    skill = (INTEGRATIONS / "claude-code" / "skills" / "continuum" / "SKILL.md").read_text()
+    rules = (INTEGRATIONS / "AGENT_RULES.md").read_text(encoding="utf-8")
+    skill = (INTEGRATIONS / "claude-code" / "skills" / "continuum" / "SKILL.md").read_text(
+        encoding="utf-8")
     for text in (rules, skill):
         for tool in ("coding_resume", "coding_run_check", "coding_complete_task", "next_step"):
             assert tool in text
@@ -81,12 +83,13 @@ def test_agent_rules_and_skill_teach_the_coding_handoff_protocol():
     project = _servers(INTEGRATIONS / "claude-code" / "project.mcp.json")["continuum"]
     # cloud: the secret from the environment; local: falls back to the local default
     assert project["env"]["CONTINUUM_DATABASE_URL"].startswith("${CONTINUUM_DATABASE_URL:-")
-    assert "postgresql://" not in (INTEGRATIONS / "cloud" / "setup.sh").read_text()
+    assert "postgresql://" not in (INTEGRATIONS / "cloud" / "setup.sh").read_text(encoding="utf-8")
 
 
 def test_apps_journal_the_chat_through_the_hook_command():
     """Switching apps (Claude Code <-> Codex) needs both to journal the conversation."""
-    hooks = json.loads((INTEGRATIONS / "claude-code" / "hooks" / "hooks.json").read_text())
+    hooks = json.loads((INTEGRATIONS / "claude-code" / "hooks" / "hooks.json").read_text(
+        encoding="utf-8"))
     from continuum.coding.install import CLAUDE_HOOK_EVENTS, TOOL_EVENTS
 
     assert set(hooks["hooks"]) == set(CLAUDE_HOOK_EVENTS)    # plugin and setup agree
@@ -95,7 +98,7 @@ def test_apps_journal_the_chat_through_the_hook_command():
         assert commands == ["continuum hook claude-code"], event
         if event in TOOL_EVENTS:                             # every tool, MCP included
             assert [g.get("matcher") for g in hooks["hooks"][event]] == ["*"], event
-    codex_text = (INTEGRATIONS / "codex" / "config.toml").read_text()
+    codex_text = (INTEGRATIONS / "codex" / "config.toml").read_text(encoding="utf-8")
     codex = tomllib.loads(codex_text)
     assert codex["mcp_servers"]["continuum"]["args"] == ["mcp"]
     # hooks come from .codex/hooks.json (setup); notify is only the fallback, commented out
@@ -104,7 +107,8 @@ def test_apps_journal_the_chat_through_the_hook_command():
 
 def test_packaged_agent_rules_match_the_published_rules():
     packaged = ROOT / "src" / "continuum" / "coding" / "agent_rules.md"
-    assert packaged.read_text() == (INTEGRATIONS / "AGENT_RULES.md").read_text()
+    published = (INTEGRATIONS / "AGENT_RULES.md").read_text(encoding="utf-8")
+    assert packaged.read_text(encoding="utf-8") == published
 
 
 def test_every_continuum_command_in_install_md_exists():
@@ -114,7 +118,7 @@ def test_every_continuum_command_in_install_md_exists():
     import subprocess
     import sys
 
-    text = (ROOT / "INSTALL.md").read_text()
+    text = (ROOT / "INSTALL.md").read_text(encoding="utf-8")
     commands = set(re.findall(r"(?m)(?:^|`|\s)continuum ((?:[a-z][a-z-]*)(?: [a-z][a-z-]*)?)",
                               text))
     assert {"doctor", "mcp", "coding setup", "coding brief"} <= commands
@@ -126,6 +130,6 @@ def test_every_continuum_command_in_install_md_exists():
 
 
 def test_the_plugin_mcp_server_has_a_database_default():
-    cfg = json.loads((INTEGRATIONS / "claude-code" / ".mcp.json").read_text())
+    cfg = json.loads((INTEGRATIONS / "claude-code" / ".mcp.json").read_text(encoding="utf-8"))
     env = cfg["mcpServers"]["continuum"]["env"]
     assert env["CONTINUUM_DATABASE_URL"].startswith("${CONTINUUM_DATABASE_URL:-postgresql://")

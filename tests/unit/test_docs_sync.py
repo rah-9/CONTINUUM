@@ -9,9 +9,10 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_docs_ddl_matches_schema_sql():
-    doc = (ROOT / "docs" / "03-STATE-SCHEMA.md").read_text()
+    doc = (ROOT / "docs" / "03-STATE-SCHEMA.md").read_text(encoding="utf-8")
     section = doc[doc.index("## 3. PostgreSQL DDL"):]
     block = re.search(r"```sql\n(.*?)\n```", section, re.S)
     assert block is not None
-    sql = (ROOT / "src" / "continuum" / "core" / "schema.sql").read_text().rstrip("\n")
+    sql = (ROOT / "src" / "continuum" / "core" / "schema.sql").read_text(
+        encoding="utf-8").rstrip("\n")
     assert block.group(1) == sql

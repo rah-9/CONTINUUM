@@ -141,7 +141,7 @@ def _config_with(tmp_path, tasks: dict[str, str], models: str | None = None) -> 
 
 
 def test_k5_bad_task_files_are_reported_not_fatal(schema, tmp_path):
-    good = (CONFIG / "tasks" / "inventory_upload_v1.yaml").read_text()
+    good = (CONFIG / "tasks" / "inventory_upload_v1.yaml").read_text(encoding="utf-8")
     cfg = _config_with(tmp_path, {"good.yaml": good, "empty.yaml": "",
                                   "noid.yaml": "description: x\n",
                                   "badfactory.yaml": "task_id: t1\nfactory: no_such_mod:f\n"})
@@ -157,7 +157,7 @@ def test_k5_bad_task_files_are_reported_not_fatal(schema, tmp_path):
 
 
 def test_k5_broken_models_yaml_does_not_break_read_only_inspection(schema, tmp_path):
-    good = (CONFIG / "tasks" / "inventory_upload_v1.yaml").read_text().replace(
+    good = (CONFIG / "tasks" / "inventory_upload_v1.yaml").read_text(encoding="utf-8").replace(
         "fake_models: true", "fake_models: false")
     cfg = _config_with(tmp_path, {"t.yaml": good}, models="- not a mapping\n")
     with Continuum(_settings(schema, tmp_path, cfg)) as s:

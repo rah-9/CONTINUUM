@@ -134,7 +134,8 @@ def test_nf2_secrets_never_persisted_or_logged(make_lab, monkeypatch, tmp_path):
         dump = conn.execute(b"SELECT string_agg(payload_json::text, '') AS t FROM events"
                             ).fetchone()["t"]
     assert SECRET not in dump
-    blobs = "".join(p.read_text() for p in (lab.root / "workspaces").rglob("*.json"))
+    blobs = "".join(p.read_text(encoding="utf-8")
+                    for p in (lab.root / "workspaces").rglob("*.json"))
     assert "[REDACTED]" in blobs and SECRET not in blobs
     assert SECRET not in stream.getvalue()
 

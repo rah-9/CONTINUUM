@@ -16,14 +16,14 @@ REQUIRED_PREFIXES = {
 
 
 def _test_names(path: Path) -> set[str]:
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     return {n.name for n in ast.walk(tree)
             if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
             and n.name.startswith("test_")}
 
 
 def test_every_requirement_is_traced_to_existing_tests():
-    matrix = yaml.safe_load((ROOT / "tests" / "traceability.yaml").read_text())
+    matrix = yaml.safe_load((ROOT / "tests" / "traceability.yaml").read_text(encoding="utf-8"))
     ids = {key.split("_", 1)[0] for key in matrix}
     assert ids == set(REQUIRED_PREFIXES), sorted(set(REQUIRED_PREFIXES) ^ ids)
     for requirement, nodes in matrix.items():

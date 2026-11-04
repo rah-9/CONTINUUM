@@ -213,7 +213,7 @@ def test_s4_a_hook_never_breaks_or_stalls_the_agent(tmp_path):
                              text=True, timeout=60)
         assert out.returncode == 0 and out.stdout == "", out.stderr
         assert time.monotonic() - started < 20
-    assert "hook" in (tmp_path / "home" / "hooks.log").read_text()
+    assert "hook" in (tmp_path / "home" / "hooks.log").read_text(encoding="utf-8")
 
 
 def test_s4b_hook_cli_round_trip_over_a_real_database(schema, repo, tmp_path):
@@ -233,7 +233,7 @@ def test_s4b_hook_cli_round_trip_over_a_real_database(schema, repo, tmp_path):
     start.stdout = start.stdout.decode("utf-8")
     log = tmp_path / "home" / "hooks.log"
     assert REQ_1 in start.stdout and "Continuum coding brief" in start.stdout, (
-        log.read_text() if log.exists() else "no hooks.log",
+        log.read_text(encoding="utf-8") if log.exists() else "no hooks.log",
         sorted(p.name for p in (tmp_path / "home").rglob("*")))
 
 
@@ -338,17 +338,17 @@ def test_s10_setup_wires_any_repo_idempotently_and_keeps_existing_config(tmp_pat
          "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "notify-send done"}]}]}}))
     first = setup(str(root))
     assert first["files"]["AGENTS.md"] == "updated"
-    agents = (root / "AGENTS.md").read_text()
+    agents = (root / "AGENTS.md").read_text(encoding="utf-8")
     assert agents.startswith("# Team rules\n\nUse tabs.\n") and BEGIN in agents
     assert "coding_resume" in agents and "coding_recall" in agents
-    assert "@AGENTS.md" in (root / "CLAUDE.md").read_text()
-    settings = json.loads((root / ".claude" / "settings.json").read_text())
+    assert "@AGENTS.md" in (root / "CLAUDE.md").read_text(encoding="utf-8")
+    settings = json.loads((root / ".claude" / "settings.json").read_text(encoding="utf-8"))
     assert settings["permissions"] == {"allow": ["Bash(make:*)"]}
     stop = [h["command"] for g in settings["hooks"]["Stop"] for h in g["hooks"]]
     assert stop == ["notify-send done", HOOK_COMMAND]
     assert set(settings["hooks"]) >= {"SessionStart", "UserPromptSubmit", "PreCompact"}
-    assert json.loads((root / ".mcp.json").read_text())["mcpServers"]["continuum"]["args"] \
-        == ["mcp"]
+    mcp = json.loads((root / ".mcp.json").read_text(encoding="utf-8"))
+    assert mcp["mcpServers"]["continuum"]["args"] == ["mcp"]
     assert 'notify = ["continuum", "hook", "codex"]' in first["codex"]["add_to_user_config"]
     second = setup(str(root))
     assert set(second["files"].values()) <= {"unchanged",
@@ -727,7 +727,7 @@ def test_s4c_the_spool_keeps_order_quarantines_bad_entries_and_waits_for_the_dat
     assert len(list((spool.spool_dir() / "failed").glob("*.json"))) == 1
     assert _said(coding.brief(coding.latest_active(root))) == ["first request",
                                                                 "third request"]
-    assert "not applied" in (tmp_path / "home" / "hooks.log").read_text()
+    assert "not applied" in (tmp_path / "home" / "hooks.log").read_text(encoding="utf-8")
 
     spool.write({"app": "claude-code", "snapshot": None, "payload": {
         "hook_event_name": "UserPromptSubmit", "cwd": root, "prompt": "later"}})

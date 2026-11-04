@@ -303,7 +303,7 @@ def test_h18_concurrent_first_use_migrations_do_not_fail(store):
 
 
 def test_h19_schema_version_constant_matches_schema_sql():
-    sql = (Path(repo_mod.__file__).parents[1] / "core" / "schema.sql").read_text()
+    sql = (Path(repo_mod.__file__).parents[1] / "core" / "schema.sql").read_text(encoding="utf-8")
     assert f"'schema_version', '{Store.SCHEMA_VERSION}'" in sql
 
 

@@ -325,14 +325,14 @@ def test_setup_installs_hooks_for_codex_gemini_and_cursor(tmp_path):
     from continuum.coding import install
 
     out = install.setup(str(tmp_path))
-    codex = json.loads((tmp_path / ".codex" / "hooks.json").read_text())
+    codex = json.loads((tmp_path / ".codex" / "hooks.json").read_text(encoding="utf-8"))
     start = codex["hooks"]["SessionStart"][0]["hooks"][0]
     assert start["command"] == "continuum hook codex" and start["additionalContextLimit"]
     assert codex["hooks"]["PreToolUse"][0]["matcher"] == "*"
-    gemini = json.loads((tmp_path / ".gemini" / "settings.json").read_text())
+    gemini = json.loads((tmp_path / ".gemini" / "settings.json").read_text(encoding="utf-8"))
     assert gemini["hooks"]["BeforeTool"][0]["hooks"][0]["timeout"] == 15_000   # ms
     assert gemini["hooks"]["BeforeTool"][0]["matcher"] == ".*"
-    cursor = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
+    cursor = json.loads((tmp_path / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
     assert cursor["version"] == 1
     assert cursor["hooks"]["preToolUse"] == [{"command": "continuum hook cursor",
                                               "timeout": 15}]
