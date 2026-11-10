@@ -64,6 +64,7 @@ Human decisions never travel over MCP. For those, the agent calls `pending_decis
 | `CONTINUUM_HOOKS` | on | `off` disables `continuum hook` (chat capture and the session-start brief) |
 | `CONTINUUM_LEASE_TTL_SECONDS` | `30` | heartbeat renews every TTL/3 |
 | `CONTINUUM_MEMORY_MODEL` | `openrouter:nvidia/nemotron-3-nano-30b-a3b:free` if `OPENROUTER_API_KEY` is set, else `digest` (no model) | the model that keeps the working memory (D-048): `claude-cli:<model>`, `litellm:<provider/model>`, `<provider>/<model>` (e.g. `ollama/qwen3:4b`), `fake`, `off` |
+| `CONTINUUM_EMBED_MODEL` | off | an embedding model for the digest (D-050): `sentence-transformers/all-MiniLM-L6-v2` (needs `pip install 'continuum[semantic]'`) or `model2vec:minishlab/potion-base-8M`; local, free, downloaded once |
 | `CONTINUUM_MEMORY_API_BASE` | none | an OpenAI-compatible or self-hosted endpoint for a LiteLLM memory model |
 | Provider keys | none | e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`; redacted everywhere |
 

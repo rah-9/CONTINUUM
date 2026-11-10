@@ -113,6 +113,15 @@ leaves your machine, nothing to pay. To have a model write the memory instead:
 | a local model server (llama.cpp, LM Studio, Ollama, vLLM) | `CONTINUUM_MEMORY_MODEL=openai-compatible:<model>` and `CONTINUUM_MEMORY_API_BASE=http://localhost:8080/v1` | free, offline |
 | no model | `CONTINUUM_MEMORY_MODEL=digest` (the default without a key) | free, offline |
 
+**Optional: understanding by meaning.** An embedding model (not a language model: local,
+free, writes nothing) lets the digest rank what answers your request and drop
+paraphrases:
+
+```bash
+uv tool install --force "continuum[mcp,semantic] @ git+https://github.com/rah-9/CONTINUUM"
+export CONTINUUM_EMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2   # downloaded once
+```
+
 Keep keys in the environment or your app's secret settings, never in a file in a
 repository. `continuum doctor` shows the mode and whether the key is set (never the key).
 

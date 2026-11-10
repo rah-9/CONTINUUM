@@ -39,7 +39,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from continuum.coding import segments
+from continuum.coding import embed, segments
 
 DIGEST_CHARS = 24_000      # as measured in eval/compression_test
 BRIEF_CHARS = 16_000       # in the brief: the work, beside the user's words (~4k tokens)
@@ -66,6 +66,9 @@ _PREFIX = re.compile(r"^#(\d+) (USER|ASSISTANT|TOOL|OUTCOME UNKNOWN|AGENT NOTE|C
 
 MUST = ("request", "answer", "paste", "unknown")   # the user's words, decisions, pastes,
                                                    # and calls whose outcome is unknown
+SEMANTIC_POOL = 600         # with an embedder: the best units by word statistics get a vector
+RELEVANCE_WEIGHT = 1.0      # score x (1 + this x similarity to what the user said that turn)
+PARAPHRASE = 0.82           # cosine at or above which two units say the same thing
 STATE_SHARE = 0.12          # the most of the budget the folded state may take ...
 STATE_MIN_BUDGET = 6_000    # ... and below this budget there is no room for it
 STATE_HEADING = "### State of the work (folded over the whole session)"
@@ -461,17 +464,46 @@ def _specifics(text: str) -> set[str]:
 class _Seen:
     shingles: set[tuple[str, ...]]
     specifics: set[str]
+    vector: embed.Vector | None = None
 
 
-def _redundant(u: Unit, seen: list[_Seen]) -> bool:
-    """Says the same as something already chosen: most of its wording overlaps AND it
+def _semantic(cands: list[Unit], embedder: embed.Embedder) -> dict[int, embed.Vector]:
+    """With an embedding model: a vector for the user's units and for the best
+    SEMANTIC_POOL other units, and a higher score for what the agent said that is close
+    in meaning to what the user said in that turn (the answer to a question, the result
+    of a request), whatever words it uses. Returns the vectors by ``id(unit)``; on any
+    embedding failure, nothing changes and the digest stays lexical."""
+    users = [u for u in cands if u.kind in ("request", "user")]
+    rest = sorted((u for u in cands if u.kind not in ("request", "user")),
+                  key=lambda u: -u.score)[:SEMANTIC_POOL]
+    chosen = [*users, *rest]
+    try:
+        vectors = embedder.embed([u.text for u in chosen])
+    except embed.EmbedError:
+        return {}
+    by_id = {id(u): v for u, v in zip(chosen, vectors, strict=True)}
+    asked: dict[int, list[embed.Vector]] = {}
+    for u in users:
+        asked.setdefault(u.turn, []).append(by_id[id(u)])
+    for u in rest:
+        if u.kind in ("report", "agent", "note") and u.turn in asked:
+            close = max(embed.cosine(by_id[id(u)], q) for q in asked[u.turn])
+            u.score *= 1 + RELEVANCE_WEIGHT * max(0.0, close)
+    return by_id
+
+
+def _redundant(u: Unit, seen: list[_Seen], vector: embed.Vector | None = None) -> bool:
+    """Says the same as something already chosen: most of its wording overlaps (or, with
+    an embedder, its meaning is the same: a paraphrase) AND it
     names no number, path or identifier the overlapping lines do not. "p95 fell from 840
     to 120 ms" and a later "p95 fell from 610 to 95 ms" are two facts, not one."""
     sh, sp = _shingles(u.text), _specifics(u.text)
     covered: set[str] = set()
     overlapping = False
     for s in seen:
-        if len(sh & s.shingles) > 0.5 * max(1, min(len(sh), len(s.shingles))):
+        if (len(sh & s.shingles) > 0.5 * max(1, min(len(sh), len(s.shingles)))
+                or (vector is not None and s.vector is not None
+                    and embed.cosine(vector, s.vector) >= PARAPHRASE)):
             overlapping = True
             covered |= s.specifics
     return overlapping and sp <= covered
@@ -514,10 +546,11 @@ def _fit_must(must: list[Unit], room: int, heading: int) -> tuple[list[Unit], in
 
 
 def build(lines: Iterable[tuple[int, str]], budget: int = DIGEST_CHARS, *,
-          user: bool = True) -> str:
+          user: bool = True, embedder: embed.Embedder | None = None) -> str:
     """The digest of ``lines`` in at most ``budget`` characters (Markdown). ``user=False``
     leaves out the user's own words and pastes (shown elsewhere in the brief); their
-    answers to questions and the unknown outcomes stay."""
+    answers to questions and the unknown outcomes stay. ``embedder`` adds meaning to the
+    word statistics (``_semantic``); without one the digest needs no model of any kind."""
     cands, facts = _parse(lines)
     if not cands or budget < 80:
         return ""
@@ -527,6 +560,7 @@ def build(lines: Iterable[tuple[int, str]], budget: int = DIGEST_CHARS, *,
         len(STATE_HEADING) + len(TIMELINE_HEADING) + 2 if state else 0)
     _score(cands)
     _mark_requests(cands)
+    vectors = _semantic(cands, embedder) if embedder is not None else {}
     if not user:
         cands = [u for u in cands if u.kind not in ("request", "user", "paste")]
         if not cands:
@@ -541,7 +575,7 @@ def build(lines: Iterable[tuple[int, str]], budget: int = DIGEST_CHARS, *,
     recent_from = order[int(len(order) * (1 - RECENT_TURNS))] if order else 0
     room = budget - 100 - state_cost                   # the "left out" note, the state
     chosen, dropped = _fit_must([u for u in cands if u.kind in MUST], room, heading)
-    seen = [_Seen(_shingles(u.text), _specifics(u.text)) for u in chosen]
+    seen = [_Seen(_shingles(u.text), _specifics(u.text), vectors.get(id(u))) for u in chosen]
     picks: Counter[int] = Counter(u.turn for u in chosen)
     # exact cost: each line plus its "- [#N] " prefix, each turn's heading once
     used = _cost(chosen, heading)
@@ -567,9 +601,9 @@ def build(lines: Iterable[tuple[int, str]], budget: int = DIGEST_CHARS, *,
                                   picks[u.turn], u))
             continue
         cost = _line_cost(u) + (heading if picks[u.turn] == 0 else 0)
-        if used + cost > room or _redundant(u, seen):
+        if used + cost > room or _redundant(u, seen, vectors.get(id(u))):
             continue
-        seen.append(_Seen(_shingles(u.text), _specifics(u.text)))
+        seen.append(_Seen(_shingles(u.text), _specifics(u.text), vectors.get(id(u))))
         chosen.append(u)
         used += cost
         picks[u.turn] += 1

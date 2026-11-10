@@ -436,6 +436,14 @@ print: in journal order, "- [#N] ...", no per-turn headings (they took a quarter
   exactly, so the budget is never exceeded and no line is cut
 ```
 
+**With an embedding model (optional, `CONTINUUM_EMBED_MODEL`, D-050).** The user's units
+and the best 600 others get a sentence vector. An agent unit's score is multiplied by
+`1 + cosine` to the closest thing the user said in that turn, so the answer to a question
+ranks by meaning. A unit whose cosine to a chosen unit is 0.82 or more counts as a
+repeat (a paraphrase), dropped unless it names something new. Vectors live for one
+build; a model that cannot load leaves the lexical digest. Not yet measured with a real
+model: `python -m continuum_lab.digest_bench --embed sentence-transformers/all-MiniLM-L6-v2`.
+
 No keyword lists decide importance: only structure (who said it, where, what kind of
 tool call) and statistics (specificity, rarity, redundancy). Every line is quoted from
 the journal (a commit is shown as "Commit: <subject>", an answer as "User decided: <q>

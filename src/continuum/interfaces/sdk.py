@@ -158,10 +158,13 @@ def _memory_status() -> dict[str, Any]:
     import os
     import shutil
 
+    from continuum.coding import embed
     from continuum.coding import working_memory as wm
 
     mode = wm.mode()
     out: dict[str, Any] = {"ok": True, "mode": mode}
+    embedder = embed.configured()
+    out["embeddings"] = embedder.name if embedder else "off (set CONTINUUM_EMBED_MODEL)"
     if mode == "digest":
         out["detail"] = "session digest, no model: offline and free"
     elif mode == "llm":
