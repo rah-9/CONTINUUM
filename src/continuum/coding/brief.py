@@ -655,7 +655,10 @@ def _render_digest(view: SessionView) -> list[str]:
         "own reports, so confirm before relying on them. `coding_show` opens any [#N]._",
         ""]
     # every digest line is one quoted line ("- [#N] ..."): it cannot pose as a heading
-    body = [ln if ln.startswith(("- ", "### Turn ")) else "- " + ln
+    from continuum.coding import digest as dg
+
+    own = (dg.STATE_HEADING, dg.TIMELINE_HEADING)     # the digest's own two headings
+    body = [ln if ln.startswith("- ") or ln in own else "- " + ln
             for ln in d["text"].splitlines() if ln.strip()]
     return [*head, *body]
 

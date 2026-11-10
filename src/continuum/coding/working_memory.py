@@ -402,7 +402,7 @@ def _input_line(raw: Any) -> str:
     out = {}
     for k in keys:
         v = raw[k]
-        if isinstance(v, str) and len(v) > 120:
+        if isinstance(v, str) and len(v) > 120 and k not in _LEAD_KEYS:
             v = f"{' '.join(v[:60].split())}… ({len(v)} chars)"
         out[k] = v
     return json.dumps(out, ensure_ascii=False, default=str)

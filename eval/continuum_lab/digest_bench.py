@@ -33,6 +33,8 @@ from typing import Any
 KINDS = ("requirement", "decision", "measurement", "file_changed", "commit", "pull_request",
          "error_fixed", "test_summary", "root_cause", "pasted_error", "pasted_config",
          "changed_value", "unknown_outcome")
+# the current state of things that changed many times: only the latest counts
+STATE_KINDS = ("latest_result", "pr_merged")
 
 WORDS = (
     "invoice", "ledger", "tenant", "shard", "export", "importer", "quota", "webhook",
@@ -214,17 +216,42 @@ def session(seed: int, turns: int, facts_per_kind: int = 2) -> Session:
     plan = [k for k in KINDS for _ in range(facts_per_kind)]
     slots = r.sample(range(turns), min(len(plan), turns))
     at = dict(zip(slots, plan, strict=False))
+    # two things whose state changes through the session
+    check = f"make {_w(r)}-check"
+    check_turns = set(r.sample(range(turns), min(turns, max(4, turns // 8))))
+    pr_n, pr_title = r.randint(500, 900), f"Rework {_w(r)} {_w(r)} pipeline"
+    pr_open, pr_merge = sorted(r.sample(range(turns), 2))
+    last_count = ""
     for t in range(turns):
+        if t in check_turns:
+            last_count = f"{r.randint(1000, 4999)} passed"
+            flaky = r.random() < 0.3
+            s.add(f"TOOL Bash [{'error' if flaky else 'ok'}]: cd /repo && {check} 2>&1 | tail -3"
+                  f" => {last_count}{', 2 failed' if flaky else ''} in {r.randint(20, 90)}.0s")
+            if flaky:
+                last_count = f"{r.randint(1000, 4999)} passed"
+                s.add(f"TOOL Bash [ok]: cd /repo && {check} 2>&1 | tail -3 => {last_count} "
+                      f"in {r.randint(20, 90)}.0s")
+        if t == pr_open:
+            s.add('TOOL mcp__github__create_pull_request [ok]: {"title": "' + pr_title + '"} => '
+                  f'{{"url": "https://github.com/o/r/pull/{pr_n}"}}')
+        if t == pr_merge:
+            s.add(f'TOOL mcp__github__merge_pull_request [ok]: {{"pullNumber": {pr_n}}} => '
+                  '{"merged": true}')
         if t in at:
             _plant(at[t], s, r, t)
         else:
             _noise_turn(s, r, r.choice([
                 f"can you look at the {_w(r)} module", f"next, the {_w(r)} {_w(r)} please",
                 *CHATTER]))
+    s.facts.append(Fact("latest_result", [check, last_count], turns))
+    s.facts.append(Fact("pr_merged", [f"#{pr_n}", "merged"], turns))
     return s
 
 
 def kept(memory: str, fact: Fact) -> bool:
+    if fact.kind in STATE_KINDS:       # the keys together, on one line of the memory
+        return any(all(k in line for k in fact.keys) for line in memory.splitlines())
     return all(re.search(re.escape(k), memory) for k in fact.keys)
 
 
@@ -245,8 +272,9 @@ def run(build: Callable[[list[tuple[int, str]], int], str], seeds: list[int],
                 ok = kept(memory, f)
                 by_kind[f.kind][0] += ok
                 by_kind[f.kind][1] += 1
-                by_len[n][0] += ok
-                by_len[n][1] += 1
+                if f.kind in KINDS:               # the 13 kinds; state kinds apart
+                    by_len[n][0] += ok
+                    by_len[n][1] += 1
     return {"by_kind": dict(by_kind), "by_length": dict(by_len), "max_seconds": seconds}
 
 
@@ -258,6 +286,9 @@ def _report(name: str, res: dict[str, Any]) -> None:
         tot[0] += a
         tot[1] += b
         print(f"  {k:<16} {a:>4}/{b:<4} {100 * a / max(b, 1):5.1f}%")
+    for k in STATE_KINDS:
+        a, b = res["by_kind"].get(k, [0, 0])
+        print(f"  {k:<16} {a:>4}/{b:<4} {100 * a / max(b, 1):5.1f}%   (current state)")
     for n, (a, b) in sorted(res["by_length"].items()):
         print(f"  {n:>3} turns        {a:>4}/{b:<4} {100 * a / max(b, 1):5.1f}%")
     print(f"  all              {tot[0]:>4}/{tot[1]:<4} {100 * tot[0] / max(tot[1], 1):5.1f}%"

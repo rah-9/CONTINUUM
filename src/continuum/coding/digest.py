@@ -36,7 +36,8 @@ import math
 import re
 from collections import Counter
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from continuum.coding import segments
 
@@ -57,13 +58,18 @@ _SPECIFIC = re.compile(
 # ("e.g. this" stays whole), or at a line break
 _SENT = re.compile(r"(?<=[.!?\u0964\u061f\u06d4\u3002\uff01\uff1f])\s+(?=[^a-z\s])"
                    r"|(?<=[\u3002\uff01\uff1f])|\n+")
-_COMMIT = re.compile(r"git commit[^\n]*?-m\s+(?:\"([^\"]+)\"|'([^']+)'|\"\$\(cat <<'?EOF'?\s*(.+))",
-                     re.S)
+_COMMIT = re.compile(r"git commit[^\n]*?(?:-m\s+(?:\"([^\"]+)\"|'([^']+)'"
+                     r"|\"\$\(cat <<'?EOF'?\s*(.+))"
+                     r"|-F\s+-\s*<<-?\s*['\"]?\w+['\"]?\s*\n(.+))", re.S)
 _CLAUSE = re.compile(r"(?<=[,;])\s+|\s+(?=(?:and|but|so|then|because|also)\s)")
 _PREFIX = re.compile(r"^#(\d+) (USER|ASSISTANT|TOOL|OUTCOME UNKNOWN|AGENT NOTE|CHECK)[: ]\s?")
 
 MUST = ("request", "answer", "paste", "unknown")   # the user's words, decisions, pastes,
                                                    # and calls whose outcome is unknown
+STATE_SHARE = 0.12          # the most of the budget the folded state may take ...
+STATE_MIN_BUDGET = 6_000    # ... and below this budget there is no room for it
+STATE_HEADING = "### State of the work (folded over the whole session)"
+TIMELINE_HEADING = "### Timeline (oldest first)"
 MUST_SHARE = 0.6            # the most of the room the always-kept units may take
 
 PRIOR = {"request": 3.0, "user": 2.5, "answer": 3.0, "paste": 3.0, "report": 2.2,
@@ -78,6 +84,17 @@ class Unit:
     text: str
     turn: int
     score: float = 0.0
+
+
+@dataclass
+class Facts:
+    """What the tool calls did, folded over the whole session (``_state_lines``)."""
+
+    edits: list[tuple[int, str]] = field(default_factory=list)            # (seq, path)
+    commits: list[tuple[int, str]] = field(default_factory=list)          # (seq, subject)
+    prs: dict[str, dict[str, Any]] = field(default_factory=dict)          # number -> state
+    runs: dict[str, dict[str, Any]] = field(default_factory=dict)         # family -> state
+    unknown: list[tuple[int, str]] = field(default_factory=list)
 
 
 _LATIN_WORD = re.compile(r"[a-z][a-z0-9_]{2,}")
@@ -180,8 +197,42 @@ def _command(body: str) -> str:
     return f"{m.group(1)} {m.group(2).strip()}" if m else ""
 
 
+_SHELL_TOOLS = frozenset({"Bash", "Shell", "shell", "run_command", "exec", "local_shell",
+                          "run_shell_command", "run_terminal_cmd"})
+_LEAD = re.compile(r"^(?:\s*(?:cd\s+\S+|export\s+\S+|source\s+\S+|[A-Z_][A-Z0-9_]*=\S*)"
+                   r"\s*(?:&&|;)\s*)+")
+_TRAIL = re.compile(r"(?:\s*2>&1)?(?:\s*\|\s*(?:tail|head|grep|cat|tee|sed|awk|cut|sort|wc)"
+                    r"\b[^|&;]*)*\s*$")
+_WRAPPER = re.compile(r"^(?:(?:timeout|nice|time)\s+(?:-\S+\s+)*[\d.]*[smh]?\s*|sudo\s+|"
+                      r"[A-Z_][A-Z0-9_]*=\S*\s+)+")
+
+
+def family(command: str) -> str:
+    """Which check a command is, so its repeated runs fold into one line: the last
+    command of the chain, without what sets the scene (``cd``, variables, ``timeout``),
+    what trims the output (``| tail``), its flags and its program's directory:
+    ``cd x && timeout 600 .venv/bin/pytest -q tests/unit 2>&1 | tail -3`` -> ``pytest
+    tests/unit``. Inline scripts (heredocs, ``python -c``) are one-offs: no family."""
+    if "<<" in command or "\n" in command.strip() or re.search(r"\s-[ce]\s", command):
+        return ""
+    core = _TRAIL.sub("", _LEAD.sub("", command.strip())).strip()
+    last = re.split(r"&&|;", core)[-1].strip()
+    words = _WRAPPER.sub("", last).split("|")[0].split()
+    if (not words or not re.fullmatch(r"[\w./+-]+", words[0])
+            or words[0] in ("done", "fi", "do", "then", "else", "esac", "}")):
+        return ""
+    name = " ".join([words[0].rsplit("/", 1)[-1],
+                     *(w for w in words[1:] if not w.startswith("-") and ">" not in w)])
+    return name if len(name) <= 120 else ""
+
+
 def units(lines: Iterable[tuple[int, str]]) -> list[Unit]:
     """Candidate units from ``working_memory.history_lines`` output, with turn numbers."""
+    return _parse(lines)[0]
+
+
+def _parse(lines: Iterable[tuple[int, str]]) -> tuple[list[Unit], Facts]:
+    facts = Facts()
     rows = list(lines)
     # the agent's last message before the next user message is its report for the turn
     last_agent: dict[int, int] = {}
@@ -229,20 +280,37 @@ def units(lines: Iterable[tuple[int, str]]) -> list[Unit]:
                            for part in text.split(" | "))
             elif kind == "edit":
                 edits.setdefault(turn, []).append((seq, text))
+                facts.edits.append((seq, text))
             elif kind == "failure":
                 unit = Unit(seq, "failure", _clip(text), turn)
                 failed[_command(body)] = unit
                 out.append(unit)
+                _run(facts, body, seq, text.split(" => ", 1)[-1] if " => " in text else "",
+                     ok=False)
             else:
-                if kind == "result" and _command(body) in failed:
-                    before = failed.pop(_command(body))
-                    before.text = _clip(f"{before.text} (passed at #{seq})")
+                if kind == "result":
+                    if _command(body) in failed:
+                        before = failed.pop(_command(body))
+                        before.text = _clip(f"{before.text} (passed at #{seq})")
+                    _run(facts, body, seq, text.rsplit(" => ", 1)[-1], ok=True)
+                elif text.startswith("Commit: "):
+                    facts.commits.append((seq, text[8:]))
+                elif text.startswith("PR"):
+                    m_pr = re.match(r"PR #(\d+|\?)(?: opened: (.*)| merged)", text)
+                    if m_pr:
+                        pr = facts.prs.setdefault(m_pr.group(1), {"seq": seq})
+                        pr["seq"] = seq
+                        if m_pr.group(2):
+                            pr["title"] = m_pr.group(2)
+                        else:
+                            pr["merged"] = True
                 out.append(Unit(seq, kind, _clip(text), turn))
         elif who == "CHECK":
             out.append(Unit(seq, "result", _clip("Check " + body), turn))
         elif who == "OUTCOME UNKNOWN":
             # a call that may have acted outside: the next model must not repeat it
             out.append(Unit(seq, "unknown", _clip("Outcome unknown: " + body), turn))
+            facts.unknown.append((seq, body))
         elif who == "AGENT NOTE":
             out.append(Unit(seq, "note", _clip(body), turn))
     for t, files in edits.items():
@@ -251,7 +319,79 @@ def units(lines: Iterable[tuple[int, str]]) -> list[Unit]:
         shown = ", ".join(names[:12]) + (f" (+{len(names) - 12} more)" if len(names) > 12
                                          else "")
         out.append(Unit(files[0][0], "edit", _clip("Changed: " + shown, UNIT_CHARS * 2), t))
-    return out
+    return out, facts
+
+
+def _short(path: str) -> str:
+    """A path by its last three parts: enough to find the file, a third of the length."""
+    parts = path.split("/")
+    return path if len(parts) <= 3 else "/".join(parts[-3:])
+
+
+def _run(facts: Facts, body: str, seq: int, result: str, *, ok: bool) -> None:
+    m = re.match(r"(\S+) \[\w+\]: (.*?)(?: => |$)", body, re.S)
+    if not m:
+        return
+    if m.group(1) not in _SHELL_TOOLS:
+        return                                 # only commands recur as checks
+    name = family(m.group(2))
+    if not name:
+        return
+    # a test summary that counts failures is a failure, whatever the exit status of the
+    # pipeline that printed it ("... | tail -3" exits 0)
+    if ok and re.search(r"\b[1-9]\d* (?:failed|errors?|failures?)\b", result):
+        ok = False
+    run = facts.runs.setdefault(name, {"runs": 0, "failed": 0})
+    run["runs"] += 1
+    run["failed"] += not ok
+    run.update(seq=seq, ok=ok, result=" ".join(result.split())[-160:])
+
+
+def _state_lines(facts: Facts, room: int) -> list[str]:
+    """The state of the work, folded over the whole session: one line per thing, its
+    latest state and how it got there, instead of one line per event. Most urgent first;
+    lines that do not fit ``room`` are left to the timeline."""
+    out: list[str] = []
+    # a command that recurs is a check; a one-off is in the timeline if it mattered
+    recurring = {n: r for n, r in facts.runs.items() if r["runs"] >= 2}
+    broken = sorted((r["seq"], n, r) for n, r in recurring.items() if not r["ok"])
+    for seq, name, r in broken[-5:]:
+        out.append(f"- [#{seq}] Last run failed: `{_clip(name, 90)}` => {r['result']} "
+                   f"({r['failed']} of {r['runs']} runs failed)")
+    passing = sorted(((r["seq"], n, r) for n, r in recurring.items() if r["ok"]),
+                     reverse=True)
+    for seq, name, r in passing[:8]:
+        history = f" ({r['runs']} runs, {r['failed']} failed earlier)" if r["failed"] else (
+            f" ({r['runs']} runs)" if r["runs"] > 1 else "")
+        out.append(f"- [#{seq}] Latest `{_clip(name, 90)}` => {r['result']}{history}")
+    prs = sorted(facts.prs.items(), key=lambda kv: kv[1]["seq"])
+    if prs:
+        shown = [f"#{n} {('merged' if pr.get('merged') else 'opened')}"
+                 + (f" ({_clip(pr['title'], 70)})" if pr.get("title") else "")
+                 for n, pr in prs[-8:]]
+        more = f"; {len(prs) - 8} earlier" if len(prs) > 8 else ""
+        out.append(f"- [#{prs[-1][1]['seq']}] Pull requests: " + "; ".join(shown) + more)
+    if facts.commits:
+        last = "; ".join(_clip(subj, 80) for _, subj in facts.commits[-5:])
+        more = f" ({len(facts.commits)} in all)" if len(facts.commits) > 5 else ""
+        out.append(f"- [#{facts.commits[-1][0]}] Latest commits{more}: {last}")
+    if facts.edits:
+        count: Counter[str] = Counter(path for _, path in facts.edits)
+        recent = list(dict.fromkeys(path for _, path in reversed(facts.edits)))[:8]
+        most = [path for path, n in count.most_common(8) if n > 1 and path not in recent]
+        names = [(_short(p) + (f" x{count[p]}" if count[p] > 1 else ""))
+                 for p in [*recent, *most]]
+        more = f" (+{len(count) - len(names)} more)" if len(count) > len(names) else ""
+        out.append(f"- [#{facts.edits[-1][0]}] Files changed, newest first then most "
+                   f"edited: " + ", ".join(names) + more)
+    kept: list[str] = []
+    used = 0
+    for line in out:
+        if used + len(line) + 1 > room:
+            continue
+        kept.append(line)
+        used += len(line) + 1
+    return kept
 
 
 def _user_units(seq: int, body: str, turn: int) -> list[Unit]:
@@ -378,24 +518,28 @@ def build(lines: Iterable[tuple[int, str]], budget: int = DIGEST_CHARS, *,
     """The digest of ``lines`` in at most ``budget`` characters (Markdown). ``user=False``
     leaves out the user's own words and pastes (shown elsewhere in the brief); their
     answers to questions and the unknown outcomes stay."""
-    cands = units(lines)
+    cands, facts = _parse(lines)
     if not cands or budget < 80:
         return ""
+    state = (_state_lines(facts, int(budget * STATE_SHARE))
+             if budget >= STATE_MIN_BUDGET else [])
+    state_cost = sum(len(x) + 1 for x in state) + (
+        len(STATE_HEADING) + len(TIMELINE_HEADING) + 2 if state else 0)
     _score(cands)
     _mark_requests(cands)
     if not user:
         cands = [u for u in cands if u.kind not in ("request", "user", "paste")]
         if not cands:
             return ""
-    # the longest heading this session can print: "### Turn T (#first to #last)\n"
-    top_seq = max(u.seq for u in cands)
-    heading = len(f"### Turn {max(u.turn for u in cands)} (#{top_seq} to #{top_seq})") + 1
+    # no per-turn headings: each line has its [#N] and the USER lines mark the turns;
+    # headings took a quarter of a small digest
+    heading = 0
     turns: dict[int, list[Unit]] = {}
     for u in cands:
         turns.setdefault(u.turn, []).append(u)
     order = sorted(turns)
     recent_from = order[int(len(order) * (1 - RECENT_TURNS))] if order else 0
-    room = budget - 100                                # the "left out" note
+    room = budget - 100 - state_cost                   # the "left out" note, the state
     chosen, dropped = _fit_must([u for u in cands if u.kind in MUST], room, heading)
     seen = [_Seen(_shingles(u.text), _specifics(u.text)) for u in chosen]
     picks: Counter[int] = Counter(u.turn for u in chosen)
@@ -404,7 +548,14 @@ def build(lines: Iterable[tuple[int, str]], budget: int = DIGEST_CHARS, *,
     # global greedy by value per character, with diminishing returns inside a turn
     # (submodular coverage): a turn full of facts can take more room, yet every turn is
     # reached before any one turn is exhausted
-    pool = [u for u in cands if u.kind not in MUST]
+    # what the state already says is not said again in the timeline
+    cited = {int(n) for line in state for n in re.findall(r"^- \[#(\d+)\]", line)}
+    shown = "\n".join(state)
+    pool = [u for u in cands if u.kind not in MUST
+            and not (u.kind in ("result", "failure") and u.seq in cited)
+            and not (u.kind == "outcome" and u.text.removeprefix("Commit: ")[:70] in shown)
+            and not (u.kind == "edit" and all(
+                f.split(" (+")[0] in shown for f in u.text.removeprefix("Changed: ").split(", ")))]
     base = {id(u): u.score * (RECENT_BOOST if u.turn >= recent_from else 1.0)
             / (len(u.text) + DENSITY_PAD) for u in pool}
     heap = [(-base[id(u)], i, 0, u) for i, u in enumerate(pool)]
@@ -422,7 +573,7 @@ def build(lines: Iterable[tuple[int, str]], budget: int = DIGEST_CHARS, *,
         chosen.append(u)
         used += cost
         picks[u.turn] += 1
-    blocks: list[str] = []
+    blocks: list[str] = [STATE_HEADING, *state, TIMELINE_HEADING] if state else []
     if dropped:
         blocks.append(f"- ({dropped} less specific line(s) of the user's left out for "
                       "space: `coding_recall` finds them)")
@@ -434,7 +585,6 @@ def build(lines: Iterable[tuple[int, str]], budget: int = DIGEST_CHARS, *,
         mine = sorted(by_turn.get(t, []), key=lambda x: position[id(x)])
         if not mine:
             continue
-        blocks.append(f"### Turn {t} (#{mine[0].seq} to #{mine[-1].seq})")
         blocks.extend(f"- [#{u.seq}] {_label(u)}{u.text}" for u in mine)
     out = "\n".join(blocks)
     if len(out) > budget:                              # never cut a line in half
