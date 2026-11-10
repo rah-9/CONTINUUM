@@ -77,18 +77,25 @@ counts when its value is still in the memory.
 
 | Memory size | Session digest | First digest version | Last N characters of the session |
 |---|---|---|---|
-| 16,000 chars (~4k tokens) | **100%** | 59.7% | 30.6% |
-| 8,000 chars (~2k tokens) | **89.2%** | 30.8% | 16.1% |
-| 4,000 chars (~1k tokens) | **57.8%** | 15.7% | 8.6% |
+| 16,000 chars (~4k tokens) | **100%** | 59.1% | 29.6% |
+| 8,000 chars (~2k tokens) | **83.7%** | 30.3% | 14.9% |
+| 4,000 chars (~1k tokens) | **62.1%** | 15.7% | 8.0% |
+
+The benchmark was made harder for this table (each session also re-runs a check many
+times and opens and merges a pull request); the previous digest scores 94.8% / 78.5% /
+48.2% on it. The memory now starts with the **state of the work**, folded over the whole
+session: the latest result of each repeated check and how often it failed, each pull
+request as opened or merged, the latest commits, the files changed.
 
 By kind of fact, at 8,000 characters:
 
 | Kept by the digest | Kinds |
 |---|---|
 | **100%** | the user's decisions, pasted errors and config, changed values, measurements, changed files, pull requests, calls with an unknown outcome |
-| 99% | test and build summaries |
-| 92% | the user's requirements |
-| 67-70% | commits; errors that were later fixed |
+| 100% | the latest result of a repeated check; whether a pull request was merged |
+| 99% | the user's requirements |
+| 54% | commits; superseded test summaries (the latest is kept) |
+| 42% | errors that were later fixed |
 | 32% | root causes stated only in the agent's prose (the weakest) |
 
 **A real 255k-token session**: this project's own development chat. There were 32
@@ -101,8 +108,8 @@ held the test's answer key, and is withdrawn.
 |---|---|---|
 | Working memory written by a model (Haiku) | **24/32, 25/32** | 20/32 |
 | The same, with search of the journal | 24/32 | |
-| **Session digest, no model** | to be run with a free model | **19/32** |
-| **The whole brief with the digest** (what a new model actually gets) | to be run with a free model | **18/32** |
+| **Session digest, no model** | to be run with a free model | **18/32** |
+| **The whole brief with the digest** (what a new model actually gets) | to be run with a free model | **17/32** |
 | The last 6k tokens of the chat | 21/32 | 12/32 |
 | A one-shot summary | 17/32 | 22/32 |
 | Rule-based brief (before 1.0.0rc5) + search | 17/32 | |
@@ -319,7 +326,7 @@ API keys come only from the environment. They are redacted before anything is st
 
 ## Verified
 
-`make check`: ruff and `mypy --strict` clean, **522 passed** (5 live-provider tests are opt-in), on
+`make check`: ruff and `mypy --strict` clean, **527 passed** (5 live-provider tests are opt-in), on
 Linux, Windows and macOS in CI. The layers:
 - unit
 - integration

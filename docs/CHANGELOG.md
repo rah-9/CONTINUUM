@@ -17,10 +17,13 @@ Memory without a model, and free models only by default (D-049).
 - Model memory: each part is sent with its key facts (the part's most specific statements, picked by the digest, with sources), and any user decision or unknown outcome the model dropped is restored from the journal.
 - In the brief, the digest covers the work and leaves the user's words to "What the user asked" (they were shown twice); words and sentences in any script are recognised.
 
+- **State of the work** in the digest: repeated runs of a check fold into its latest result and failure count, pull requests into opened/merged, plus the latest commits and changed files, one line each; per-turn headings are gone. Harder benchmark (a re-run check and a merged PR in every session): 100% / 83.7% / 62.1% at 16k / 8k / 4k characters, from 94.8% / 78.5% / 48.2%.
+
 ### Removed
 - Unused code: two error classes, a lab-only runtime method, a manifest loader, an evidence helper, a lock property and two fault-injection helpers.
 
 ### Fixed
+- Commits written with a heredoc (`git commit -F - <<EOF`) were not recognised (1 of 24 on the real session); a test summary counting failures behind a pipe (`| tail`) was taken as a pass; long file paths were cut in tool lines.
 - A failure was never linked to the later success of a long command (the two were cut at different lengths); they are now matched on the full call.
 - A session with six-digit event numbers could make the digest's headings longer than counted, so its newest line was cut; headings are now counted from the session's own numbers.
 - `continuum doctor` (and other commands) printed the connection pool's retry errors over and over when the database was down; they now report it once.

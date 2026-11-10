@@ -422,7 +422,17 @@ always kept (requests, pastes, answers, unknown outcomes), up to 60% of the room
 then, globally by score / (length + 60), x 0.9 per unit already taken from that turn,
   x 1.6 for the newest fifth of the turns, skipping a unit whose wording overlaps a
   chosen one by > 50% unless it names a number, path or identifier they do not
-print: turn by turn in journal order, "- [#N] ...", each heading and line counted
+state of the work (budgets of 6,000+ chars, at most 12% of the room), folded over the
+  whole session, one line per thing instead of one per event:
+    each check (a command run 2+ times; same command = same last command of the chain
+      without cd/variables/timeout, output trimming, flags and program directory):
+      "Latest `pytest tests/unit` => 120 passed (14 runs, 3 failed earlier)" or "Last run
+      failed: ..."; a summary that counts failures is a failure whatever the exit status
+    pull requests: "#41 merged (title); #42 opened (title)"
+    latest 5 commit subjects and the count; files changed, newest then most edited
+  what the state says is not repeated in the timeline
+print: in journal order, "- [#N] ...", no per-turn headings (they took a quarter of a
+  small digest; the USER lines mark the turns); every line counted
   exactly, so the budget is never exceeded and no line is cut
 ```
 
@@ -435,15 +445,21 @@ the journal (a commit is shown as "Commit: <subject>", an answer as "User decide
 
 | | 16,000 chars | 8,000 chars | 4,000 chars |
 |---|---|---|---|
-| Benchmark, held-out sessions of 60-300 turns, 13 kinds of facts (`continuum_lab.digest_bench`) | **100%** | **89.2%** | **57.8%** |
-| The same, last N characters of the session | 30.6% | 16.1% | 8.6% |
-| The same, first version of the digest | 59.7% | 30.8% | 15.7% |
+| Benchmark, held-out sessions of 60-300 turns, 13 kinds of facts (`continuum_lab.digest_bench`) | **100%** | **83.7%** | **62.1%** |
+| The same, before state folding and without headings' removal | 94.8% | 78.5% | 48.2% |
+| The same, first version of the digest | 59.1% | 30.3% | 15.7% |
+| The same, last N characters of the session | 29.6% | 14.9% | 8.0% |
+
+(The benchmark was made harder in this round: every session now also has a check that is
+re-run through the session and a pull request opened and later merged, so the numbers
+are not comparable with earlier tables. The two "current state" facts, the check's
+latest result and the PR being merged, are kept in 100% at 16k and 8k.)
 
 At 8,000 characters for 300 turns, root causes stated in the agent's prose are the
 weakest kind (26%); the user's decisions, pastes, measurements, changed files, test
 results and unknown outcomes are kept in 98-100%. On the real 255k-token session the
-offline check (`eval/compression_test`) gives 19/32 at 24,000 characters (the
-model-written memory 20/32), and the whole product brief with the digest 18/32.
+offline check (`eval/compression_test`) gives 18/32 at 24,000 characters (the
+model-written memory 20/32), and the whole product brief with the digest 17/32 (each within 1 of the previous version: noise).
 
 In the brief the digest is built with `user=False`: the user's own words and pastes are
 already in "What the user asked" (`memory.consolidate`), so the digest's 16,000

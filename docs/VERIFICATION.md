@@ -91,7 +91,7 @@ eval/handoff_trials/export_feature/judge.sh <project>    # judge a real model-sw
 
 ## Latest results (2026-11-03, v1.0.0rc5)
 
-- `make check`: ruff clean, `mypy --strict` clean. **522 passed**, 5 live tests skipped (opt-in). The session digest is tested for determinism, budget (a property test over random journals), quoting only journal text, keeping every user request and decision, and covering the whole session; the OpenAI-compatible client against a local server, including a rate limit that never shows the key.
+- `make check`: ruff clean, `mypy --strict` clean. **527 passed**, 5 live tests skipped (opt-in). The session digest is tested for determinism, budget (a property test over random journals), quoting only journal text, keeping every user request and decision, and covering the whole session; the OpenAI-compatible client against a local server, including a rate limit that never shows the key.
 - Session digest on the 255k-token session: offline coverage 20/32 at 24k characters, equal to the model-written memory ([`eval/compression_test/RESULTS.md`](../eval/compression_test/RESULTS.md)).
 
 ## Results of 2026-11-02 (v1.0.0rc4)
