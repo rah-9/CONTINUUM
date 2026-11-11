@@ -1138,10 +1138,14 @@ class CodingContinuity:
             lines = wm.history_lines(events)
             # the user's words are already in "What the user asked" (memory.consolidate):
             # the digest spends its room on the work
-            text = dg.build(lines, dg.BRIEF_CHARS, user=False)
+            from continuum.coding import embed
+
+            embedder = embed.configured()      # optional: meaning, not only words (D-050)
+            text = dg.build(lines, dg.BRIEF_CHARS, user=False, embedder=embedder)
             if text:
                 view.digest = {"text": text, "up_to_seq": lines[-1][0], "chars": len(text),
-                               "method": "extractive digest (no model)"}
+                               "method": "extractive digest (no model)",
+                               "embeddings": embedder.name if embedder else None}
         body = view.to_dict()
         body["markdown"] = render_markdown(view, body)
         return body

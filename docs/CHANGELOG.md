@@ -19,6 +19,8 @@ Memory without a model, and free models only by default (D-049).
 
 - **State of the work** in the digest: repeated runs of a check fold into its latest result and failure count, pull requests into opened/merged, plus the latest commits and changed files, one line each; per-turn headings are gone. Harder benchmark (a re-run check and a merged PR in every session): 100% / 83.7% / 62.1% at 16k / 8k / 4k characters, from 94.8% / 78.5% / 48.2%.
 
+- **Optional sentence embeddings** (`CONTINUUM_EMBED_MODEL`, D-050): with `sentence-transformers` (extra `continuum[semantic]`) or `model2vec`, the digest ranks what answers the user's request by meaning and drops paraphrases. Off by default; not yet measured with a real model (`python -m continuum_lab.digest_bench --embed <model>`).
+
 ### Removed
 - Unused code: two error classes, a lab-only runtime method, a manifest loader, an evidence helper, a lock property and two fault-injection helpers.
 

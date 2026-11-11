@@ -320,13 +320,14 @@ The 22 MCP tools are:
 | `CONTINUUM_OWNER_ID` | `ctl-<host>-<pid>-<random>` | lease identity; must be unique per process if set |
 | `CONTINUUM_HOOKS` | on | `off` disables app hooks (capture, session-start brief, refusals) |
 | `CONTINUUM_MEMORY_MODEL` | a free OpenRouter model if `OPENROUTER_API_KEY` is set, else `digest` | the session's memory: `digest` (no model), `openrouter:<model>` (only `:free` models unless `CONTINUUM_MEMORY_ALLOW_PAID=1`), `openai-compatible:<model>`, `<provider>/<model>` via LiteLLM, `claude-cli:<model>`, or `off` |
+| `CONTINUUM_EMBED_MODEL` | off | optional sentence-embedding model for the digest (`sentence-transformers/all-MiniLM-L6-v2`, or `model2vec:<model>`): ranks by meaning and drops paraphrases; local and free |
 | `CONTINUUM_MEMORY_API_BASE` | unset | the server for `openai-compatible:` (a local llama.cpp, vLLM, LM Studio or Ollama) |
 
 API keys come only from the environment. They are redacted before anything is stored, as are URL passwords that look like secrets and well-known token formats pasted into chat. Full reference: [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
 ## Verified
 
-`make check`: ruff and `mypy --strict` clean, **527 passed** (5 live-provider tests are opt-in), on
+`make check`: ruff and `mypy --strict` clean, **533 passed** (5 live-provider tests are opt-in), on
 Linux, Windows and macOS in CI. The layers:
 - unit
 - integration

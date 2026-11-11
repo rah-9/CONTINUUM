@@ -302,6 +302,8 @@ def main() -> None:
     ap.add_argument("--seeds", default="100-119")
     ap.add_argument("--budget", type=int, default=16_000)
     ap.add_argument("--lengths", default="20,60,150")
+    ap.add_argument("--embed", default="", help="an embedding model to compare with, e.g. "
+                    "sentence-transformers/all-MiniLM-L6-v2 or model2vec:minishlab/potion-base-8M")
     ap.add_argument("--per-kind", type=int, default=2, help="facts of each kind per session")
     a = ap.parse_args()
     lo, _, hi = a.seeds.partition("-")
@@ -315,6 +317,21 @@ def main() -> None:
             run(tail, seeds, lengths, a.budget, a.per_kind))
     _report(f"session digest at {a.budget} characters",
             run(digest.build, seeds, lengths, a.budget, a.per_kind))
+    if a.embed:
+        import os
+
+        from continuum.coding import embed
+
+        os.environ["CONTINUUM_EMBED_MODEL"] = a.embed
+        model = embed.configured()
+        assert model is not None
+        model.embed(["warm up"])                 # fail here, loudly, if it cannot load
+
+        def semantic(lines: list[tuple[int, str]], budget: int) -> str:
+            return digest.build(lines, budget, embedder=model)
+
+        _report(f"session digest with {model.name} at {a.budget} characters",
+                run(semantic, seeds, lengths, a.budget, a.per_kind))
 
 
 if __name__ == "__main__":

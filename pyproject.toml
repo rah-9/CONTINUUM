@@ -27,6 +27,7 @@ dependencies = [
 http = ["fastapi>=0.115", "uvicorn>=0.30"]
 live = ["litellm>=1.50"]
 mcp = ["mcp>=2,<3"]
+semantic = ["sentence-transformers>=3"]
 dev = [
   "pytest>=8",
   "hypothesis>=6.100",
@@ -88,5 +89,6 @@ packages = ["continuum", "continuum_lab"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["litellm.*", "jsonschema.*", "mcp.*", "uvicorn.*"]
+module = ["litellm.*", "jsonschema.*", "mcp.*", "uvicorn.*", "sentence_transformers.*",
+          "model2vec.*"]
 ignore_missing_imports = true
