@@ -113,13 +113,14 @@ leaves your machine, nothing to pay. To have a model write the memory instead:
 | a local model server (llama.cpp, LM Studio, Ollama, vLLM) | `CONTINUUM_MEMORY_MODEL=openai-compatible:<model>` and `CONTINUUM_MEMORY_API_BASE=http://localhost:8080/v1` | free, offline |
 | no model | `CONTINUUM_MEMORY_MODEL=digest` (the default without a key) | free, offline |
 
-**Optional: understanding by meaning.** An embedding model (not a language model: local,
-free, writes nothing) lets the digest rank what answers your request and drop
-paraphrases:
+**Recommended: memory organised by meaning.** A small local embedding model (not a
+language model: it writes nothing, runs on your CPU, costs nothing) lets the memory
+find the topics of a session. Install and download it once; it then works offline:
 
 ```bash
-uv tool install --force "continuum[mcp,semantic] @ git+https://github.com/rah-9/CONTINUUM"
-export CONTINUUM_EMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2   # downloaded once
+uv tool install --force "continuum[mcp,semantic-lite] @ git+https://github.com/rah-9/CONTINUUM"
+continuum models pull            # model2vec:minishlab/potion-base-8M, ~30 MB, once
+continuum models list            # which model the memory uses
 ```
 
 Keep keys in the environment or your app's secret settings, never in a file in a

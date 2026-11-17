@@ -19,12 +19,13 @@ Memory without a model, and free models only by default (D-049).
 
 - **State of the work** in the digest: repeated runs of a check fold into its latest result and failure count, pull requests into opened/merged, plus the latest commits and changed files, one line each; per-turn headings are gone. Harder benchmark (a re-run check and a merged PR in every session): 100% / 83.7% / 62.1% at 16k / 8k / 4k characters, from 94.8% / 78.5% / 48.2%.
 
-- **Optional sentence embeddings** (`CONTINUUM_EMBED_MODEL`, D-050): with `sentence-transformers` (extra `continuum[semantic]`) or `model2vec`, the digest ranks what answers the user's request by meaning and drops paraphrases. Off by default; not yet measured with a real model (`python -m continuum_lab.digest_bench --embed <model>`).
+- **Semantic session memory** (D-050): with an embedding model (default: `model2vec:minishlab/potion-base-8M`, downloaded once with `continuum models pull`), the memory is organised by meaning: topics (threads of the session, named by their distinctive words), statements weighted by how central they are to their topic and by closeness to the user's newest message, paraphrases kept once. No language model. On the real session a free model answered 12/24 from it vs 9-10/24 from the lexical digest and 2/24 from the last 16k characters. `continuum models pull | list`.
 
 ### Removed
 - Unused code: two error classes, a lab-only runtime method, a manifest loader, an evidence helper, a lock property and two fault-injection helpers.
 
 ### Fixed
+- The default free OpenRouter model (`nvidia/nemotron-3-nano-30b-a3b:free`) no longer exists (HTTP 404): the default is now `nvidia/nemotron-3.5-lightning:free` with two free fallbacks, and when all are gone a free model OpenRouter lists is used.
 - Commits written with a heredoc (`git commit -F - <<EOF`) were not recognised (1 of 24 on the real session); a test summary counting failures behind a pipe (`| tail`) was taken as a pass; long file paths were cut in tool lines.
 - A failure was never linked to the later success of a long command (the two were cut at different lengths); they are now matched on the full call.
 - A session with six-digit event numbers could make the digest's headings longer than counted, so its newest line was cut; headings are now counted from the session's own numbers.

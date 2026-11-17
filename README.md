@@ -54,7 +54,20 @@ and still delivered the wrong thing.
 ### Session memory: compressing a long session (1.0.0rc5)
 
 A new model gets a few thousand tokens, not the whole session. Continuum fills them
-with a memory of the **whole** session, in one of two ways:
+with a memory of the **whole** session. With an embedding model installed (a small local
+model that turns each sentence into a vector of its meaning; not a language model), the
+memory is **organised by topic**: the threads of the session are found by meaning even
+when interleaved, each named by its key words, statements ranked by how central they are
+to their thread and by what the user is asking now, paraphrases kept once.
+
+| Memory of a real 283k-character session in 16,000 characters (24 questions, a free model answers, 2 runs) | Correct |
+|---|---|
+| **Topic memory** (embedding model `potion-base-8M`, no language model) | **12/24, 12/24** |
+| Topic memory with `all-MiniLM-L6-v2` | 9/24, 11/24 |
+| Lexical digest (no model of any kind) | 9/24, 10/24 |
+| The last 16,000 characters of the chat | 2/24 |
+
+Without an embedding model, the memory is one of these two:
 
 - **Session digest, no model** (the default): Continuum's own extractive algorithm.
   It keeps the user's requests, decisions and pastes. Then it picks the most specific
@@ -320,14 +333,14 @@ The 22 MCP tools are:
 | `CONTINUUM_OWNER_ID` | `ctl-<host>-<pid>-<random>` | lease identity; must be unique per process if set |
 | `CONTINUUM_HOOKS` | on | `off` disables app hooks (capture, session-start brief, refusals) |
 | `CONTINUUM_MEMORY_MODEL` | a free OpenRouter model if `OPENROUTER_API_KEY` is set, else `digest` | the session's memory: `digest` (no model), `openrouter:<model>` (only `:free` models unless `CONTINUUM_MEMORY_ALLOW_PAID=1`), `openai-compatible:<model>`, `<provider>/<model>` via LiteLLM, `claude-cli:<model>`, or `off` |
-| `CONTINUUM_EMBED_MODEL` | off | optional sentence-embedding model for the digest (`sentence-transformers/all-MiniLM-L6-v2`, or `model2vec:<model>`): ranks by meaning and drops paraphrases; local and free |
+| `CONTINUUM_EMBED_MODEL` | `auto` (the first downloaded default model) | the embedding model that organises the memory by meaning: `model2vec:minishlab/potion-base-8M` (default), `sentence-transformers/all-MiniLM-L6-v2`, or `off`; download once with `continuum models pull` |
 | `CONTINUUM_MEMORY_API_BASE` | unset | the server for `openai-compatible:` (a local llama.cpp, vLLM, LM Studio or Ollama) |
 
 API keys come only from the environment. They are redacted before anything is stored, as are URL passwords that look like secrets and well-known token formats pasted into chat. Full reference: [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
 ## Verified
 
-`make check`: ruff and `mypy --strict` clean, **533 passed** (5 live-provider tests are opt-in), on
+`make check`: ruff and `mypy --strict` clean, **536 passed** (5 live-provider tests are opt-in), on
 Linux, Windows and macOS in CI. The layers:
 - unit
 - integration

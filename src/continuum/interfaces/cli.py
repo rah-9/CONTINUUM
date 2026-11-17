@@ -160,6 +160,12 @@ def build_parser() -> argparse.ArgumentParser:
     shw.add_argument("--seq", type=int)
     shw.add_argument("--blob")
     shw.add_argument("--offset", type=int, default=0)
+    mdl = sub.add_parser("models", help="embedding models for the session memory (D-050): "
+                                        "download once, then they work offline")
+    msub = mdl.add_subparsers(dest="models_cmd", required=True)
+    pl = msub.add_parser("pull", help="download a model into the local cache")
+    pl.add_argument("model", nargs="?", default="model2vec:minishlab/potion-base-8M")
+    msub.add_parser("list", help="the known models, and which one the memory uses")
     mem = csub.add_parser("memory", help="the session's memory: the model-written working "
                                          "memory (D-048) or, without a model, the "
                                          "session digest (D-049); show it or update it")
@@ -282,6 +288,21 @@ def _main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError) as exc:
             _print({"error": str(exc), "code": "setup_failed"})
             return 2
+        return 0
+    if args.cmd == "models":                       # files only, no database
+        from continuum.coding import embed
+
+        if args.models_cmd == "pull":
+            try:
+                _print(embed.pull(args.model))
+            except embed.EmbedError as exc:
+                _print({"error": str(exc), "code": "model_unavailable"})
+                return 2
+            return 0
+        used = embed.configured()
+        _print({"in_use": used.name if used else None,
+                "default_order": list(embed.DEFAULT_MODELS),
+                "known": embed.KNOWN_MODELS})
         return 0
     sdk: Continuum | None = None
     try:

@@ -67,9 +67,10 @@ RETRIES = 3                    # per call, on rate limits, server errors, droppe
 RETRY_BASE_WAIT = 5.0          # seconds, doubled each time
 RETRY_MAX_WAIT = 60.0
 GROW_LIMIT = 2.0               # while reading a backlog the memory may grow to this x cap
-DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-nano-30b-a3b:free"
-# tried in order when the default is unavailable; free models only
-DEFAULT_FALLBACKS = ("nvidia/nemotron-nano-9b-v2:free", "qwen/qwen3-30b-a3b:free")
+DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3.5-lightning:free"
+# tried in order when the default is unavailable; free models only. OpenRouter's free
+# list changes: when every one of these is gone, a free model it lists now is used
+DEFAULT_FALLBACKS = ("google/gemma-4-31b-it:free", "nvidia/nemotron-3-ultra-550b-a55b:free")
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
 SECTIONS = ("Goal and current task", "User decisions, preferences and constraints",
@@ -216,7 +217,34 @@ class FallbackSummarizer:
                 return model.complete(instruction, data)
             except MemoryModelError as exc:
                 errors.append(str(exc))
+        # every named free model is gone (OpenRouter's free list changes): ask it
+        if all("HTTP 404" in e for e in errors) and all(
+                isinstance(m, OpenAICompatibleSummarizer) and m.label == "openrouter"
+                for m in self.models):
+            tried = {m.model for m in self.models if isinstance(m, OpenAICompatibleSummarizer)}
+            for name in free_openrouter_models():
+                if name in tried:
+                    continue
+                try:
+                    return OpenAICompatibleSummarizer(name).complete(instruction, data)
+                except MemoryModelError as exc:
+                    errors.append(str(exc))
+                    if "HTTP 404" not in str(exc):
+                        break
         raise MemoryModelError("; ".join(errors)[:400])
+
+
+def free_openrouter_models(limit: int = 3) -> list[str]:
+    """The free models OpenRouter lists now, largest context first (no key needed)."""
+    try:
+        with urllib.request.urlopen(f"{OPENROUTER_BASE}/models",  # noqa: S310
+                                    timeout=30) as resp:
+            data = json.loads(resp.read()).get("data", [])
+    except (OSError, ValueError):
+        return []
+    free = [m for m in data if str(m.get("id", "")).endswith(":free")]
+    free.sort(key=lambda m: -(m.get("context_length") or 0))
+    return [str(m["id"]) for m in free[:limit]]
 
 
 @dataclass

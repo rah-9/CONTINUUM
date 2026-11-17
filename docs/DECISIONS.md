@@ -590,19 +590,18 @@ The audit also found correctness gaps: NUL bytes, submodules, non-UTF-8 names, c
 
 **Rejected.** A trained compression model of our own: needs training data and compute we do not have, and an extractive method already matches the model memory on the offline check. Paraphrasing without a model (templates): would invent wording. Keeping Claude Code's command as the default: spends a paid plan without being asked.
 
-## D-050 — Optional sentence embeddings in the digest; never required
+## D-050 — Semantic session memory: an embedding model organises the memory; no language model
 
-**Context.** The digest ranks by word statistics, so it cannot tell that an agent sentence answers the user's question when the two share no words, or that two sentences say the same thing differently. A lexical attempt at the first (boost replies when the message contains "?") failed on real voice-typed chat. Sentence-embedding models do exactly this, locally and for free; they are not language models and write nothing.
+**Context.** The digest chooses statements by word statistics and prints them in time order: a long session reads as a timeline, not as the threads of work it contains. The person asked for a memory with real understanding, without a language model, using sentence-transformers as the backbone. Embedding models give each sentence a vector of its meaning; they write nothing, run locally on a CPU and cost nothing per use.
 
 **Decision.**
-- `CONTINUUM_EMBED_MODEL` (default off) names an embedding model: `sentence-transformers/<model>` (new optional extra `continuum[semantic]`) or `model2vec:<model>` (static embeddings, no network at run time, loads in milliseconds).
-- With one, the digest (a) multiplies the score of the agent's units by `1 + cosine` to the closest thing the user said in that turn, and (b) treats a unit whose cosine to a chosen unit is 0.82 or more as a repeat, under the same rule as before: dropped only if it names nothing new. Only the user's units and the best 600 others by word statistics are embedded. No vector database: vectors live for one build.
-- Any failure (package missing, model not downloaded) leaves the lexical digest. Tests use a deterministic stand-in embedder.
-- **Dependency rationale:** `sentence-transformers` brings PyTorch (hundreds of MB), so it is an extra and never imported unless configured. A short-lived process (a hook) pays the model's load time on each brief; `model2vec` is the option for that.
+- **Pipeline** (`semantic.py`): the same units, state and always-kept rules as the digest; the content-bearing statements (specific, or rarer than the session's median; exact repeats once) are embedded; online clustering in journal order groups them into topics (threads, even when interleaved with other work), each named by class-based TF-IDF; a statement's score grows with its centrality in its topic and with its topic's closeness to a `focus` (the user's newest message); selection stays global (`digest.select`), with a statement that says what a chosen one says, in any words and naming nothing new, kept once; the result is printed by topic, each heading with its importance rank and span.
+- **Thresholds are calibrated per model and per session** (percentiles of the session's own pair similarities: 95th joins a topic, 99.7th is "the same statement"): models put unrelated sentences at 0.0 (MiniLM, potion) or 0.4 (bge).
+- **Models:** `CONTINUUM_EMBED_MODEL=auto` (default) uses the first downloaded of `model2vec:minishlab/potion-base-8M` (static, ~30 MB, no PyTorch, ~1 s to load) and `sentence-transformers/all-MiniLM-L6-v2`; downloaded once with `continuum models pull`, offline after. A brief never downloads; with no model it is the lexical digest. Models that need to run downloaded code are never loaded. Extras: `semantic-lite` (model2vec), `semantic` (both, brings PyTorch).
+- **Below 8,000 characters** the memory is the lexical digest: the topic structure costs more room than it saves there (benchmark at 4,000: 49.0% vs 60.8%).
+- **Tried and rejected:** fixed per-topic shares of the room (starved small threads: 68% vs 82.5% at 8k); a separate overview list (repeated the headings); topics weighted by size (repeated filler formed the biggest topics).
 
-**Not yet measured with a real model:** the build environment cannot download one. `python -m continuum_lab.digest_bench --embed <model>` compares it with the lexical digest.
-
-**Rejected.** Making embeddings the default (a heavy dependency for every install); a vector database (AGENTS.md); embedding every unit (seconds per brief on long sessions).
+**Measured** (real session, Nov 2-17, 283k characters into 16,000; 24 known-answer questions written after the cut; a free OpenRouter model answers; two runs): topic memory with potion-base-8M **12/24, 12/24**; with MiniLM 9/24, 11/24; lexical digest 9/24, 10/24; the last 16,000 characters 2/24. Benchmark of 13 fact kinds, held out: 99.9% / 80.6% at 16k / 8k (lexical 100% / 82.5%): the topic memory keeps nearly the same facts and a reader understands it better.
 
 ---
 

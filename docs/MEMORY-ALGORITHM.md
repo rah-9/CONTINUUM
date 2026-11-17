@@ -436,13 +436,34 @@ print: in journal order, "- [#N] ...", no per-turn headings (they took a quarter
   exactly, so the budget is never exceeded and no line is cut
 ```
 
-**With an embedding model (optional, `CONTINUUM_EMBED_MODEL`, D-050).** The user's units
-and the best 600 others get a sentence vector. An agent unit's score is multiplied by
-`1 + cosine` to the closest thing the user said in that turn, so the answer to a question
-ranks by meaning. A unit whose cosine to a chosen unit is 0.82 or more counts as a
-repeat (a paraphrase), dropped unless it names something new. Vectors live for one
-build; a model that cannot load leaves the lexical digest. Not yet measured with a real
-model: `python -m continuum_lab.digest_bench --embed sentence-transformers/all-MiniLM-L6-v2`.
+### 3.4d Semantic session memory (`semantic`, `embed`; D-050)
+
+With an embedding model downloaded (`continuum models pull`; the default
+`model2vec:minishlab/potion-base-8M`), the memory of 8,000+ characters is organised by
+meaning. No language model is involved and every line is still quoted with its `[#N]`.
+
+```
+units, state, always-kept: as the digest (3.4c)
+content = statements naming something specific or rarer than the median; repeats once
+vectors = embed(always-kept + the best 1,500 content statements)
+thresholds from this session: topic = 95th percentile of pair similarity,
+                              same statement = 99.7th percentile
+topics = online clustering in journal order (join the nearest centroid >= topic
+         threshold, else start a topic); groups of one join their nearest or "Other";
+         at most budget/1,200 topics (3..16); named by class-based TF-IDF
+score x= 1 + 0.6 x centrality in its topic;  x= 1 + closeness of its topic to the focus
+         (the user's newest message)
+select globally (digest.select); also skip a statement whose similarity to a chosen
+         one >= the same-statement threshold and that names nothing new
+print: the state, then the topics in the order the session took them up, each headed
+         "Topic: name (importance r of n; #first to #last)", facts in journal order
+```
+
+Measured on the real session (Nov 2-17, 283k characters into 16,000, 24 questions
+written after the cut, a free OpenRouter model answering, two runs): topic memory with
+potion-base-8M 12/24 and 12/24; with MiniLM 9 and 11; the lexical digest 9 and 10; the
+last 16,000 characters 2/24. On the 13-kind benchmark it keeps 99.9% / 80.6% of facts
+at 16k / 8k (lexical 100% / 82.5%); below 8,000 characters it is the lexical digest.
 
 No keyword lists decide importance: only structure (who said it, where, what kind of
 tool call) and statistics (specificity, rarity, redundancy). Every line is quoted from

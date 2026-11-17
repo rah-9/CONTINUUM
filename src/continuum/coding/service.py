@@ -1140,11 +1140,16 @@ class CodingContinuity:
             # the digest spends its room on the work
             from continuum.coding import embed
 
-            embedder = embed.configured()      # optional: meaning, not only words (D-050)
-            text = dg.build(lines, dg.BRIEF_CHARS, user=False, embedder=embedder)
+            embedder = embed.configured()      # meaning, when a model is installed (D-050)
+            # what the user asks now puts its topics first
+            focus = next((line.split(" USER: ", 1)[1] for _, line in reversed(lines)
+                          if " USER: " in line[:16]), None)
+            text = dg.build(lines, dg.BRIEF_CHARS, user=False, embedder=embedder,
+                            focus=focus)
             if text:
                 view.digest = {"text": text, "up_to_seq": lines[-1][0], "chars": len(text),
-                               "method": "extractive digest (no model)",
+                               "method": ("semantic memory" if embedder else
+                                          "extractive digest") + " (no language model)",
                                "embeddings": embedder.name if embedder else None}
         body = view.to_dict()
         body["markdown"] = render_markdown(view, body)
