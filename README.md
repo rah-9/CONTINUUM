@@ -204,7 +204,8 @@ docker run -d --name continuum-pg -p 5432:5432 -e POSTGRES_USER=continuum \
 export CONTINUUM_DATABASE_URL=postgresql://continuum:continuum@localhost:5432/continuum
 
 # 2. Install (Linux, macOS, Windows) and check
-uv tool install "continuum[mcp] @ git+https://github.com/rah-9/CONTINUUM"   # or: pipx install …
+uv tool install "continuum[mcp,semantic-lite] @ git+https://github.com/rah-9/CONTINUUM"   # or: pipx install …
+continuum models pull     # once: the embedding model that organises the memory (~30 MB, offline after)
 continuum doctor
 
 # 3. Once per repository: rules (AGENTS.md + CLAUDE.md), .mcp.json, and capture hooks
@@ -367,6 +368,8 @@ eval/handoff_trials/capture_fidelity/run.sh <dir> <claude-wrapper>   # Trial 7: 
 python -m continuum_lab.memory_bench                      # long-chat memory benchmark
 python -m continuum_lab.digest_bench --budget 8000 --lengths 60,150,300 --per-kind 4
                                                           # session memory, 13 fact kinds
+python -m continuum_lab.digest_bench --embed model2vec:minishlab/potion-base-8M
+                                                          # the same, with the topic memory
 ```
 
 ## Repository layout
