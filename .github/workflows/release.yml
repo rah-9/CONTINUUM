@@ -32,8 +32,8 @@ jobs:
     env:
       CONTINUUM_DATABASE_URL: postgresql://continuum:continuum@localhost:5432/continuum_test
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
       - name: Build wheel and sdist
@@ -55,7 +55,7 @@ jobs:
           /tmp/smoke/bin/continuum coding brief --repo /tmp/repo | grep -q "It must work."
       - name: Checksums
         run: cd dist && sha256sum * > SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: continuum-dist
           path: dist/
