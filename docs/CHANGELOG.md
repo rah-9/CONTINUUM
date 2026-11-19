@@ -5,6 +5,7 @@
 Memory without a model, and free models only by default (D-049).
 
 ### Added
+- **Standalone skill `agent-continuity`** (`standalone-skills/`): a separate, sellable `SKILL.md` skill with a one-file, standard-library journal (user's own words, content-fingerprinted checks, effect ledger that blocks after a lost push or deploy). Independent of the `continuum` package, PostgreSQL and the MCP server; no change to Continuum's state, events or runtime.
 - **Session digest (no model):** Continuum's own extractive compression of the whole session: every user request and decision, then the most specific statements of each turn, without near-duplicates, across the whole timeline, each with its `[#N]`. Default when no model is configured; ~0.15 s for a 1M-character session; offline check 20/32, equal to the model-written memory.
 - **OpenRouter and any OpenAI-compatible server** as the memory model, with a built-in client (no extra package): `openrouter:<model>` (free `:free` models only unless `CONTINUUM_MEMORY_ALLOW_PAID=1`), `openai-compatible:<model>` with `CONTINUUM_MEMORY_API_BASE`.
 - `eval/compression_test`: `build digest`, `build product`, an offline `coverage` score, and model calls through OpenRouter or any OpenAI-compatible server.
