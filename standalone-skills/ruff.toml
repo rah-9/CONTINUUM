@@ -1,0 +1,8 @@
+# The standalone skills ship to other people's machines: keep them Python 3.9-compatible
+# and standard-library only, so the repo's py312 lint rules do not apply here.
+line-length = 100
+target-version = "py39"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["UP006", "UP035", "UP045", "UP007", "RUF001", "RUF003", "SIM105"]
